@@ -27,6 +27,16 @@ CLASS_KIND = {
 }
 
 
+def has(obj, name):
+    # Live raises RuntimeError (not AttributeError) for properties an object
+    # of that class lacks, e.g. "Main track has no 'mute' property"
+    try:
+        getattr(obj, name)
+        return True
+    except Exception:
+        return False
+
+
 def now_ms():
     return time.time() * 1000.0
 
@@ -91,8 +101,11 @@ class Bridge(object):
     def _listen(self, i, obj, kind):
         hooks = []
         for prop in KINDS.get(kind, []):
-            add = getattr(obj, "add_%s_listener" % prop, None)
-            if add is None:
+            if not has(obj, prop):
+                continue
+            try:
+                add = getattr(obj, "add_%s_listener" % prop)
+            except Exception:
                 continue
             fn = self._make_listener(i, prop)
             try:
@@ -215,7 +228,7 @@ class Bridge(object):
         obj, kind = self.objs[i]
         props = {}
         for prop in KINDS.get(kind, []) + sorted(self.extra.get(i, ())):
-            if not hasattr(obj, prop):
+            if not has(obj, prop):
                 continue
             props[prop] = self.read(i, prop)
         return {"k": kind, "p": props}

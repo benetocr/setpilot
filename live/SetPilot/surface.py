@@ -138,6 +138,15 @@ class SetPilotSurface(object):
         except Exception:
             pass
 
+    def _log_once(self, msg):
+        # the same error every 100 ms helps nobody: once, then every 30 s
+        now = time.time()
+        seen = getattr(self, "_seen", {})
+        self._seen = seen
+        if now - seen.get(msg, 0) > 30:
+            seen[msg] = now
+            self.log(msg)
+
     # ------------------------------------------------------------ server events
     def _on_connect(self, client):
         self.server.send(client, self.bridge.hello())
@@ -174,7 +183,7 @@ class SetPilotSurface(object):
                 self.log("timing: tick avg %.0f ms, p95 %.0f, max %.0f; position msgs %d; clients %d" % (
                     t.get("avg", 0), t.get("p95", 0), t.get("max", 0), p["time_msgs"], len(self.server.authed_clients())))
         except Exception as e:
-            self.log("tick failed: %s" % e)
+            self._log_once("tick failed: %s" % e)
 
     def receive_midi(self, midi_bytes):
         if len(midi_bytes) == 3 and midi_bytes[0] == (0xB0 | DOORBELL_CHANNEL) and midi_bytes[1] == DOORBELL_CC:

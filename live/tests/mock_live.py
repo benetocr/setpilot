@@ -165,6 +165,21 @@ class Track(Observable):
         self.arrangement_clips = tuple(c for c in self.arrangement_clips if c is not clip)
 
 
+class MasterTrack(Track):
+    # like Live: asking the main track for what it lacks raises RuntimeError
+    MISSING = ("mute", "solo", "arrangement_clips", "add_mute_listener", "add_solo_listener", "add_arrangement_clips_listener")
+
+    def __getattribute__(self, name):
+        if name in MasterTrack.MISSING:
+            raise RuntimeError("Main track has no '%s' property!" % name.replace("add_", "").replace("_listener", ""))
+        return Track.__getattribute__(self, name)
+
+    def __getattr__(self, name):
+        if name in MasterTrack.MISSING:
+            raise RuntimeError("Main track has no '%s' property!" % name)
+        return Track.__getattr__(self, name)
+
+
 class CuePoint(Observable):
     _props = ("name", "time")
 
@@ -203,7 +218,7 @@ class Song(Observable):
         Observable.__init__(self, current_song_time=0.0, is_playing=False, tempo=120.0, signature_numerator=4,
                             signature_denominator=4, loop=False, loop_start=0.0, loop_length=16.0,
                             clip_trigger_quantization=4, back_to_arranger=False, cue_points=(), tracks=())
-        self.master_track = Track("Main")
+        self.master_track = MasterTrack("Main")
         self.last_event_time = 0.0
         self.song_length = 0.0
 

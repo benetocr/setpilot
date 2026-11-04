@@ -64,6 +64,13 @@ class SnapshotTest(unittest.TestCase):
         # master track is there with its mixer
         self.assertIn("$", song["p"]["master_track"])
 
+    def test_main_track_without_mute(self):
+        h = Harness()
+        mid = h.snap["o"][str(h.snap["roots"]["song"])]["p"]["master_track"]["$"]
+        self.assertNotIn("mute", h.snap["o"][str(mid)]["p"])
+        h.song.master_track.output_meter_level = 0.5
+        h.tick()     # must not fail
+
     def test_snapshot_is_json(self):
         json.dumps(Harness().snap)
 
