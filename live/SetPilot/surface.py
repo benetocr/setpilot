@@ -29,6 +29,47 @@ HOME = os.path.expanduser("~")
 DATA = os.path.join(HOME, ".setpilot")
 DISCOVERY = os.path.join(DATA, "bridge.json")
 LOG = os.path.join(DATA, "bridge.log")
+# a copy of the log and the self-check next to the script, where the app
+# (and support) can always find them
+HERE = os.path.dirname(os.path.abspath(__file__))
+LOCAL_LOG = os.path.join(HERE, "bridge.log")
+SELFCHECK = os.path.join(HERE, "selfcheck.json")
+
+
+def _doc(obj, name):
+    try:
+        f = getattr(obj, name)
+    except Exception:
+        return None
+    return (getattr(f, "__doc__", None) or "present").strip().split("\n")[0][:300]
+
+
+def self_check(song, app):
+    """What this Live offers the bridge, without changing anything."""
+    out = {"python": sys.version.split()[0], "live": _live_version(app) if app else ""}
+    try:
+        out["warp_marker_class"] = bool(Live and hasattr(Live.Clip, "WarpMarker"))
+        api = {}
+        tr = song.tracks[0] if len(song.tracks) else None
+        if Live is not None:
+            for cls, names in ((Live.Clip.Clip, ("add_warp_marker", "move_warp_marker", "remove_warp_marker", "warp_markers")),
+                               (Live.Track.Track, ("create_audio_clip", "delete_clip", "arrangement_clips")),
+                               (Live.Song.Song, ("create_audio_track", "set_or_delete_cue"))):
+                for n in names:
+                    api[cls.__name__ + "." + n] = _doc(cls, n)
+        out["api"] = api
+        out["tracks"] = len(song.tracks)
+        out["cues"] = len(song.cue_points)
+        clips = 0
+        for t in song.tracks:
+            try:
+                clips += len(t.arrangement_clips)
+            except Exception:
+                pass
+        out["arrangement_clips"] = clips
+    except Exception as e:
+        out["error"] = str(e)
+    return out
 
 
 def _token():
@@ -64,16 +105,31 @@ class SetPilotSurface(object):
         self.server.on_connect = self._on_connect
         self.server.on_message = self._on_message
         self.server.start({"live": version, "python": sys.version.split()[0], "script": "1.0.0"})
-        self.log("SetPilot bridge started, Live %s, Python %s" % (version, sys.version.split()[0]))
+        self.log("SetPilot bridge started, Live %s, Python %s, port %s" % (version, sys.version.split()[0], self.server.port))
+        self._checked_at = 0
+        try:
+            sc = self_check(c_instance.song(), app)
+            sc["port"] = self.server.port
+            sc["objects"] = len(self.bridge.objs)
+            with open(SELFCHECK, "w") as f:
+                json.dump(sc, f, indent=1)
+        except Exception as e:
+            self.log("self check failed: %s" % e)
 
     # ------------------------------------------------------------ logging
     def log(self, msg):
+        line = time.strftime("%Y-%m-%d %H:%M:%S ") + str(msg) + "\n"
+        try:
+            with open(LOCAL_LOG, "a") as f:
+                f.write(line)
+        except Exception:
+            pass
         try:
             if self._log_file is None:
                 if not os.path.isdir(DATA):
                     os.makedirs(DATA)
                 self._log_file = open(LOG, "a")
-            self._log_file.write(time.strftime("%Y-%m-%d %H:%M:%S ") + str(msg) + "\n")
+            self._log_file.write(line)
             self._log_file.flush()
         except Exception:
             pass
@@ -110,6 +166,13 @@ class SetPilotSurface(object):
             self.server.poll(handle=True)
             self.bridge.tick(self._reply)
             self.server.poll(handle=False)
+            now = time.time()
+            if now - self._checked_at > 30:
+                self._checked_at = now
+                p = self.bridge.probe()
+                t = p.get("tick_ms") or {}
+                self.log("timing: tick avg %.0f ms, p95 %.0f, max %.0f; position msgs %d; clients %d" % (
+                    t.get("avg", 0), t.get("p95", 0), t.get("max", 0), p["time_msgs"], len(self.server.authed_clients())))
         except Exception as e:
             self.log("tick failed: %s" % e)
 
