@@ -32,6 +32,20 @@ async function main() {
 		await new Promise(r => setTimeout(r, 1500));   // give Live a moment to see the new MIDI port
 		out.withDoorbell = await link.measure(20);
 	}
+	// --hold N: keep the MIDI port open N seconds, measuring every 5 s, so
+	// Live can be pointed at it and the doorbell checked
+	const hold = Number((process.argv.find(a => a.startsWith("--hold=")) || "=0").split("=")[1]);
+	if (bell && hold) {
+		out.hold = [];
+		const end = Date.now() + hold * 1000;
+		while (Date.now() < end) {
+			const m = await link.measure(10);
+			out.hold.push({ t: Math.round((Date.now() - t0) / 1000), p50: m && m.p50, p95: m && m.p95, doorbells: m && m.live && m.live.doorbells });
+			fs.writeFileSync(path.join(__dirname, "..", "probe-result.json"), JSON.stringify(out, null, 2));
+			console.log(JSON.stringify(out.hold[out.hold.length - 1]));
+			await new Promise(r => setTimeout(r, 5000));
+		}
+	}
 	let times = 0;
 	link.on("message", m => { if (m.t === "time") times++; });
 	await new Promise(r => setTimeout(r, 2000));
