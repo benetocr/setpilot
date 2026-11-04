@@ -31,7 +31,7 @@ async function until(fn, ms = 8000, what = "condition") {
 async function run(mode, port) {
 	const home = fs.mkdtempSync(path.join(os.tmpdir(), "sp-e2e-"));
 	const bell = 18900 + Math.floor(Math.random() * 90);
-	const env = Object.assign({}, process.env, { HOME: home, SETPILOT_DATA: path.join(home, "data"), SETPILOT_PORT: String(port) });
+	const env = Object.assign({}, process.env, { HOME: home, SETPILOT_DATA: path.join(home, "data"), SETPILOT_PORT: String(port), SETPILOT_SKIP_SETUP: "1" });
 	const live = spawn("python3", [path.join(ROOT, "live/tests/run_mock_live.py"), "--tick", "100", ...(mode === "doorbell" ? ["--doorbell", String(bell)] : [])], { env });
 	const mutes = [];
 	let liveOut = "";

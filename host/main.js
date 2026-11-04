@@ -12,6 +12,8 @@ const Module = require("module");
 const { Worker, MessageChannel } = require("worker_threads");
 const { LiveLink } = require("./live_link");
 const { makeDoorbell } = require("./doorbell");
+const { setup } = require("../installer/setup");
+const { announce } = require("./announce");
 
 function dataDir() {
 	if (process.env.SETPILOT_DATA) return process.env.SETPILOT_DATA;
@@ -32,6 +34,18 @@ function startHost({ log: logOut = console.log } = {}) {
 		logOut(line);
 	};
 
+	// ---------------------------------------------------------------- setup
+	// put the Remote Script where Live looks for it (only when missing or old)
+	const status = { live: "searching", liveInfo: null, latency: null, started: Date.now(), setup: null };
+	if (process.env.SETPILOT_SKIP_SETUP !== "1") {
+		try {
+			const r = setup();
+			status.setup = r;
+			for (const i of r.installed) if (i.changed) log("installed the SetPilot Remote Script in", i.dir);
+			for (const st of r.steps) log("setup:", st.text);
+		} catch (e) { log("setup failed:", e.message); }
+	}
+
 	// core/setpilot_server.js asks for "max-api": give it ours
 	const shimPath = require.resolve("./maxapi_shim");
 	const resolve = Module._resolveFilename;
@@ -46,7 +60,6 @@ function startHost({ log: logOut = console.log } = {}) {
 	const toBridge = x => { port1.postMessage(x); Atomics.add(signal, 0, 1); Atomics.notify(signal, 0); };
 	let dictReq = 0;
 	const dictWait = new Map();
-	const status = { live: "searching", liveInfo: null, latency: null, started: Date.now() };
 
 	const doorbell = makeDoorbell(process.env.SETPILOT_DOORBELL, log);
 	const link = new LiveLink({ doorbell: doorbell && doorbell.ring, log }).start();
@@ -106,10 +119,19 @@ function startHost({ log: logOut = console.log } = {}) {
 
 	// ---------------------------------------------------------------- dashboard
 	require(path.join(__dirname, "..", "core", "setpilot_server.js"));
+	let ann = null;
+	maxApi._bus.on("outlet", args => {
+		if (args[0] !== "ui" || args[1] !== "url" || ann) return;
+		const port = Number(String(args[2]).split(":").pop());
+		ann = announce(port, log);
+		status.dashboard = { url: ann.url, friendly: ann.friendly };
+		log("dashboard:", ann.url, "(also " + ann.friendly + ")");
+		if (process.stdout.isTTY) ann.qr().then(q => q && console.log(q));
+	});
 
 	return {
 		link, worker, status, log, dataDir: DATA,
-		stop() { clearInterval(recal); link.stop(); worker.terminate(); if (doorbell) doorbell.close(); }
+		stop() { clearInterval(recal); link.stop(); worker.terminate(); if (doorbell) doorbell.close(); if (ann) ann.stop(); }
 	};
 }
 
