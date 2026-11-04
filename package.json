@@ -1,0 +1,14 @@
+{
+  "name": "setpilot-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SetPilot: playback companion for Ableton Live",
+  "main": "host/main.js",
+  "scripts": {
+    "start": "node host/main.js",
+    "test": "node dev/test_engine.js && SP_BRIDGE=1 node dev/test_engine.js && python3 -m unittest discover -s live/tests && node dev/e2e.js",
+    "test:latency": "SP_BRIDGE=1 SP_WRITE_DELAY=5 node dev/test_engine.js"
+  },
+  "engines": { "node": ">=18" },
+  "optionalDependencies": {}
+}

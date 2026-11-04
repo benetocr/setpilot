@@ -1,0 +1,17 @@
+{
+  "protocol": 1,
+  "kinds": {
+    "song": ["current_song_time", "is_playing", "tempo", "signature_numerator", "signature_denominator", "loop", "loop_start", "loop_length", "clip_trigger_quantization", "back_to_arranger", "last_event_time", "song_length", "cue_points", "tracks", "master_track"],
+    "track": ["name", "mute", "solo", "color", "has_midi_input", "is_foldable", "is_grouped", "output_meter_level", "arrangement_clips", "mixer_device", "output_routing_type", "output_routing_channel", "available_output_routing_types", "available_output_routing_channels"],
+    "mixer": ["volume", "panning"],
+    "param": ["value", "automation_state"],
+    "clip": ["start_time", "end_time", "file_path", "sample_rate", "sample_length", "looping", "loop_start", "loop_end", "start_marker", "end_marker", "warping", "warp_mode", "pitch_coarse", "is_audio_clip", "muted", "gain_display_string", "warp_markers"],
+    "cue": ["name", "time"],
+    "view": []
+  },
+  "lists": ["cue_points", "tracks", "arrangement_clips"],
+  "refs": ["master_track", "mixer_device", "volume", "panning", "view", "canonical_parent"],
+  "routing": ["output_routing_type", "output_routing_channel", "available_output_routing_types", "available_output_routing_channels"],
+  "fast": ["current_song_time", "output_meter_level"],
+  "async_calls": ["start_playing", "stop_playing", "continue_playing", "jump", "zoom_view", "re_enable_automation"]
+}

@@ -1,0 +1,122 @@
+// SetPilot app host: connects to Live through the SetPilot Remote Script,
+// runs the engine on its own thread and serves the dashboard.
+//   node host/main.js
+// Environment (all optional): SETPILOT_DATA (data folder), SETPILOT_PORT
+// (dashboard port), SETPILOT_DOORBELL ("udp:<port>" in tests; the app's MIDI
+// port otherwise).
+
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const Module = require("module");
+const { Worker, MessageChannel } = require("worker_threads");
+const { LiveLink } = require("./live_link");
+const { makeDoorbell } = require("./doorbell");
+
+function dataDir() {
+	if (process.env.SETPILOT_DATA) return process.env.SETPILOT_DATA;
+	const home = os.homedir();
+	if (process.platform === "darwin") return path.join(home, "Library", "Application Support", "SetPilot");
+	if (process.platform === "win32") return path.join(process.env.APPDATA || path.join(home, "AppData", "Roaming"), "SetPilot");
+	return path.join(home, ".local", "share", "SetPilot");
+}
+
+function startHost({ log: logOut = console.log } = {}) {
+	const DATA = dataDir();
+	fs.mkdirSync(DATA, { recursive: true });
+	process.env.SETPILOT_DATA = DATA;
+	const LOG = path.join(DATA, "host.log");
+	const log = (...m) => {
+		const line = new Date().toISOString() + " " + m.join(" ");
+		fs.appendFile(LOG, line + "\n", () => {});
+		logOut(line);
+	};
+
+	// core/setpilot_server.js asks for "max-api": give it ours
+	const shimPath = require.resolve("./maxapi_shim");
+	const resolve = Module._resolveFilename;
+	Module._resolveFilename = function (req, ...rest) { return req === "max-api" ? shimPath : resolve.call(this, req, ...rest); };
+	const maxApi = require("./maxapi_shim");
+
+	// ---------------------------------------------------------------- engine thread
+	const sab = new SharedArrayBuffer(4);
+	const signal = new Int32Array(sab);
+	const { port1, port2 } = new MessageChannel();
+	const worker = new Worker(path.join(__dirname, "engine_worker.js"), { workerData: { sab, bridgePort: port2 }, transferList: [port2] });
+	const toBridge = x => { port1.postMessage(x); Atomics.add(signal, 0, 1); Atomics.notify(signal, 0); };
+	let dictReq = 0;
+	const dictWait = new Map();
+	const status = { live: "searching", liveInfo: null, latency: null, started: Date.now() };
+
+	const doorbell = makeDoorbell(process.env.SETPILOT_DOORBELL, log);
+	const link = new LiveLink({ doorbell: doorbell && doorbell.ring, log }).start();
+	link.on("state", (s, extra) => {
+		status.live = s;
+		if (s === "connected") { status.liveInfo = extra; toBridge({ state: "connected" }); log("Live connected", extra && extra.live ? "(Live " + extra.live + ")" : ""); }
+	});
+	link.on("disconnected", why => { toBridge({ state: "disconnected" }); log("Live disconnected:", why); });
+	link.on("message", m => toBridge({ in: m }));
+	port1.on("message", x => {
+		if (!x.out) return;
+		if (!link.send(x.out) && x.out.q != null) toBridge({ in: { t: "res", q: x.out.q, ok: false, err: "not connected" } });
+	});
+
+	worker.on("message", m => {
+		if (m.outlet) {
+			const [n, flat] = m.outlet;
+			if (n === 0) maxApi._dispatch(flat);
+			else audio.emit("engine", flat);          // outlet 1: cue player messages
+		} else if (m.messnamed) audio.emit("messnamed", m.messnamed[0], m.messnamed[1]);
+		else if (m.post) { if (process.env.SP_DEBUG) log("[engine]", m.post); }
+		else if (m.dict) { const w = dictWait.get(m.dict.id); dictWait.delete(m.dict.id); if (w) w(m.dict.value); }
+		else if (m.live === "ready") { log("engine ready,", m.objects, "objects from Live"); calibrate(); }
+		else if (m.live === "disconnected") status.latency = null;
+	});
+	worker.on("error", e => log("engine thread failed:", e.stack || e.message));
+	worker.on("exit", code => log("engine thread exited", code));
+
+	maxApi._bus.on("outlet", args => {
+		const [where, ...rest] = args;
+		if (where === "js") worker.postMessage({ send: [rest[0], rest.slice(1)] });
+		else if (where === "ui") { if (rest[0] === "status") status.text = rest.slice(1).join(" "); if (rest[0] === "url") status.url = rest[1]; }
+	});
+	maxApi._bus.on("post", s => log(s));
+	maxApi._bus.on("getDict", (name, cb) => { const id = ++dictReq; dictWait.set(id, cb); worker.postMessage({ getDict: { id, name } }); });
+	maxApi._bus.on("setDict", (name, value) => worker.postMessage({ setDict: [name, value] }));
+
+	// ---------------------------------------------------------------- audio side
+	// SetPilot's own click, cue voice and tail come from the SetPilot plugin
+	// (next phase). Until it is there the engine sees no player devices and
+	// uses the song's own click and guide, as it does without them in Max.
+	const { EventEmitter } = require("events");
+	const audio = new EventEmitter();
+
+	// ---------------------------------------------------------------- timing
+	// Measure how long Live takes to carry out a command and tell the engine,
+	// so timed changes (band in after a count-in, stop at the end) are asked
+	// for that much earlier. Repeated now and then while stopped.
+	async function calibrate() {
+		const m = await link.measure(15);
+		if (!m) return;
+		status.latency = m;
+		worker.postMessage({ send: ["latency", [m.p50]] });
+		log("Live answers in", m.p50, "ms (95%:", m.p95 + " ms," + (m.doorbell ? " doorbell" : " no doorbell") + ")");
+	}
+	const recal = setInterval(() => { if (link.state === "connected") calibrate(); }, 60000);
+
+	// ---------------------------------------------------------------- dashboard
+	require(path.join(__dirname, "..", "core", "setpilot_server.js"));
+
+	return {
+		link, worker, status, log, dataDir: DATA,
+		stop() { clearInterval(recal); link.stop(); worker.terminate(); if (doorbell) doorbell.close(); }
+	};
+}
+
+module.exports = { startHost, dataDir };
+
+if (require.main === module) {
+	const h = startHost();
+	process.on("SIGINT", () => { h.stop(); process.exit(0); });
+	process.on("SIGTERM", () => { h.stop(); process.exit(0); });
+}

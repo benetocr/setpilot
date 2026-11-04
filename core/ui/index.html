@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SetPilot">
+<meta name="theme-color" content="#15171f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>SetPilot</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app" id="app">
+  <header class="topbar">
+    <button class="icon-btn only-narrow" id="btnSetlist" data-i18n-label="setlist">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+    </button>
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M4 22 L12 10 L18 18 L22 12 L28 22"/></svg>
+    <div class="song-id">
+      <h1 id="songTitle"></h1>
+      <div class="song-chips">
+        <button class="chip" id="keyStat" hidden><span id="key">G</span></button>
+        <button class="chip" id="statTempo"><span id="tempo">--</span><small data-i18n="bpm">BPM</small></button>
+        <span class="chip plain" id="meterChip"><span id="meter">4/4</span></span>
+      </div>
+    </div>
+    <div class="beat-lights" id="beatLights" aria-hidden="true"></div>
+    <div class="bar-count"><span id="barBeat">1.1</span></div>
+    <div class="layout-switch" id="layoutSwitch" role="radiogroup" data-i18n-label="layout">
+      <button data-v="stage" role="radio" data-i18n-title="layoutStage"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="11" height="9" rx="2"/><rect x="16" y="4" width="5" height="9" rx="1.5"/><rect x="3" y="15" width="18" height="5" rx="1.5"/></svg></button>
+      <button data-v="console" role="radio" data-i18n-title="layoutConsole"><svg viewBox="0 0 24 24"><rect x="3" y="3.5" width="18" height="4" rx="1.5"/><rect x="3" y="10" width="18" height="6" rx="1.5"/><path d="M6 19v2M10 18v3M14 19v2M18 17.5v3.5"/></svg></button>
+    </div>
+    <div class="top-right">
+      <span class="clock" id="clock">--:--</span>
+      <span class="conn" id="liveChip" title=""><i></i><span id="liveText" data-i18n="connecting">Connecting…</span></span>
+      <button class="icon-btn" id="btnMixer" data-i18n-label="mixer">
+        <svg viewBox="0 0 24 24"><path d="M6 4v16M12 4v16M18 4v16"/><rect x="3.5" y="13" width="5" height="3" rx="1"/><rect x="9.5" y="7" width="5" height="3" rx="1"/><rect x="15.5" y="11" width="5" height="3" rx="1"/></svg>
+      </button>
+      <button class="icon-btn" id="btnSettings" data-i18n-label="settings" aria-expanded="false">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>
+      </button>
+    </div>
+    <div class="popover" id="settings" hidden>
+      <div class="set-group">
+        <p class="set-title" data-i18n="setGeneral">General</p>
+        <div class="set-row column">
+          <span><strong data-i18n="trDefault">When a song ends</strong></span>
+          <div class="tr-pick" id="optTrDefault" role="radiogroup"></div>
+          <small class="set-help" data-i18n="trDefaultHelp"></small>
+        </div>
+        <div class="set-row">
+          <span data-i18n="layout">Layout</span>
+          <div class="seg-ctl small" id="optLayout" role="radiogroup">
+            <button data-v="stage" role="radio" data-i18n="layoutStageShort">Stage</button>
+            <button data-v="console" role="radio" data-i18n="layoutConsoleShort">Console</button>
+          </div>
+        </div>
+        <div class="set-row">
+          <span data-i18n="language">Language</span>
+          <div class="seg-ctl small" id="optLang" role="radiogroup">
+            <button data-v="en" role="radio">English</button>
+            <button data-v="es" role="radio">Español</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="set-group">
+        <p class="set-title" data-i18n="setCues">Voice cues</p>
+        <div class="seg-ctl" id="optCueMode" role="radiogroup">
+          <button data-v="2" role="radio" data-i18n="cueAll">SetPilot</button>
+          <button data-v="1" role="radio" data-i18n="cueFix">Fix the Guide</button>
+          <button data-v="0" role="radio" data-i18n="cueOff">Off</button>
+        </div>
+        <p class="set-help" id="cueModeHelp"></p>
+        <div class="set-row">
+          <span data-i18n="cueSource">Source</span>
+          <div class="seg-ctl small" id="optCueSource" role="radiogroup">
+            <button data-v="1" role="radio" data-i18n="cueSrcGuide">The song's guide</button>
+            <button data-v="0" role="radio" data-i18n="cueSrcMac">Mac voice</button>
+          </div>
+        </div>
+        <p class="set-help" data-i18n="cueSourceHelp"></p>
+        <div class="set-row">
+          <span data-i18n="cueStyle">Style</span>
+          <div class="seg-ctl small" id="optCueStyle" role="radiogroup">
+            <button data-v="0" role="radio" data-i18n="cueStyleName">Name</button>
+            <button data-v="1" role="radio" data-i18n="cueStyleCount">Name, 2, 3, 4</button>
+          </div>
+        </div>
+        <div class="set-row">
+          <span data-i18n="anticipation">Lead time</span>
+          <div class="seg-ctl small" id="optCueBars" role="radiogroup">
+            <button data-v="1" role="radio" data-i18n="oneBar">1 bar</button>
+            <button data-v="2" role="radio" data-i18n="twoBars">2 bars</button>
+          </div>
+        </div>
+        <div class="set-row">
+          <span data-i18n="voiceLang">Voice</span>
+          <div class="seg-ctl small" id="optCueLang" role="radiogroup">
+            <button data-v="2" role="radio" data-i18n="english">English</button>
+            <button data-v="1" role="radio" data-i18n="spanish">Spanish</button>
+            <button data-v="0" role="radio" data-i18n="auto">Auto</button>
+          </div>
+        </div>
+        <p class="set-help" id="voiceInfo"></p>
+      </div>
+
+      <div class="set-group">
+        <p class="set-title" data-i18n="setClick">Click</p>
+        <label class="switch-row">
+          <span><strong data-i18n="clickOn">SetPilot click</strong><small data-i18n="clickOnHelp"></small></span>
+          <input type="checkbox" id="optClickOn" checked><i class="switch"></i>
+        </label>
+        <div class="set-row">
+          <span data-i18n="clickSound">Sound</span>
+          <div class="seg-ctl small" id="optClickSound" role="radiogroup">
+            <button data-v="0" role="radio" data-i18n="sBeep">Beep</button>
+            <button data-v="1" role="radio" data-i18n="sWood">Wood</button>
+            <button data-v="2" role="radio" data-i18n="sSoft">Soft</button>
+          </div>
+        </div>
+        <div class="set-row column">
+          <span data-i18n="subdivision">Subdivision</span>
+          <div class="seg-ctl" id="optClickSub" role="radiogroup">
+            <button data-v="1" role="radio" data-i18n="sub1">Quarter</button>
+            <button data-v="2" role="radio" data-i18n="sub2">Eighth</button>
+            <button data-v="3" role="radio" data-i18n="sub3">Triplet</button>
+            <button data-v="4" role="radio" data-i18n="sub4">16th</button>
+          </div>
+        </div>
+        <div class="set-row column">
+          <span data-i18n="accents">Beats</span>
+          <div class="beats" id="optAccents"></div>
+          <small class="set-help" data-i18n="accentsHelp"></small>
+        </div>
+        <div class="levels">
+          <label><span data-i18n="lvlMaster">Click level</span><input type="range" min="0" max="150" data-level="3"></label>
+          <label><span data-i18n="lvlAccent">Accent</span><input type="range" min="0" max="150" data-level="0"></label>
+          <label><span data-i18n="lvlBeat">Beat</span><input type="range" min="0" max="150" data-level="1"></label>
+          <label><span data-i18n="lvlSub">Subdivision</span><input type="range" min="0" max="150" data-level="2"></label>
+        </div>
+        <label class="switch-row">
+          <span><strong data-i18n="muteSongClick">Mute the songs' own click tracks</strong></span>
+          <input type="checkbox" id="optClickMute" checked><i class="switch"></i>
+        </label>
+      </div>
+
+      <div class="set-group">
+        <p class="set-title" data-i18n="setOutputs">Outputs per instrument</p>
+        <small class="set-help" data-i18n="outputsHelp"></small>
+        <div class="instr-list" id="optOutputs"></div>
+        <button class="text-btn" id="btnApplyOutputs" data-i18n="applyOutputs">Apply to all tracks now</button>
+      </div>
+      <div class="set-group">
+        <p class="set-title" data-i18n="setSetup">Setup</p>
+        <ul class="setup" id="setupList"></ul>
+      </div>
+
+      <button class="text-btn" id="btnFullscreen" data-i18n="fullscreen">Full screen</button>
+      <button class="text-btn" id="btnRefresh" data-i18n="reload">Reload locators</button>
+      <p class="hint" id="addr"></p>
+    </div>
+  </header>
+
+  <aside class="setlist" id="setlist">
+    <div class="setlist-head">
+      <h2 data-i18n="setlist">Setlist</h2>
+      <span class="setlist-meta" id="setlistMeta"></span>
+    </div>
+    <ol class="songs" id="songs"></ol>
+    <button class="add-song" id="btnAddSong"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span data-i18n="addSong">Add song</span></button>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <main class="stage" id="stage">
+    <section class="hero" id="hero">
+      <div class="now" id="nowPanel">
+        <div class="panel-top">
+          <span class="panel-k" id="nowLabel"></span>
+          <span class="times"><span id="elapsed">0:00</span><span class="times-sep"></span><span id="remaining">-0:00</span></span>
+        </div>
+        <div class="now-name" id="curName"></div>
+        <div class="now-foot">
+          <div class="meter-bar"><i id="nowFill"></i></div>
+          <div class="now-row">
+            <span class="now-left" id="curLeft"></span>
+            <div class="now-actions">
+              <button class="act" id="actRepeat" data-i18n-title="sheetRepeat"><span>1×</span><small data-i18n="actRepeat">Repeat</small></button>
+              <button class="act" id="actLoop" data-i18n-title="sheetLoop"><span class="inf">∞</span><small data-i18n="actLoop">Loop</small></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="next" id="nextPanel">
+        <div class="panel-top">
+          <span class="panel-k" id="nextLabel"></span>
+          <span class="cue-ico" id="nextCue" hidden><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/></svg><span id="nextCueText"></span></span>
+        </div>
+        <div class="next-name" id="nextName"></div>
+        <div class="next-foot">
+          <span class="countdown" id="countdown"></span>
+          <button class="chip-btn" id="btnCancel" hidden data-i18n="cancel">Cancel</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="map-wrap" id="mapWrap">
+      <svg class="arc" id="arc" preserveAspectRatio="none"></svg>
+      <div class="strip" id="strip"></div>
+      <div class="lane" id="lane"><div class="lane-bands" id="laneBands"></div><div class="lane-nums" id="laneNums"></div><i class="lane-done" id="laneDone"></i><i class="lane-head" id="laneHead"></i></div>
+    </section>
+
+    <section class="pads" id="tiles"></section>
+
+    <section class="songmap" id="songmap">
+      <div class="sm-bar">
+        <div class="sm-title"><span class="sm-k" data-i18n="songMap">Song map</span><span class="sm-edited" id="smEdited" hidden data-i18n="arrEdited">Edited arrangement</span><span class="sm-edited sm-med" id="smMed" hidden><span data-i18n="medley">Medley</span> · <b id="smMedName"></b></span><span class="sm-hint" id="smHint"></span></div>
+        <div class="sm-tools">
+          <div class="sm-grid" id="smGrid" role="radiogroup" hidden>
+            <span data-i18n="grid">Grid</span>
+            <button data-v="1" role="radio" data-i18n="gridBar">Bar</button>
+            <button data-v="0.5" role="radio">½</button>
+            <button data-v="0.25" role="radio" data-i18n="gridBeat">Beat</button>
+          </div>
+          <button class="sm-edit" id="smMedEdit" hidden><svg viewBox="0 0 24 24"><rect x="3" y="6" width="7" height="12" rx="2"/><rect x="14" y="6" width="7" height="12" rx="2"/><path d="M10 12h4"/></svg><span data-i18n="medEdit">Edit medley</span></button>
+          <button class="sm-edit" id="smArr" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="6" height="14" rx="1.5"/><rect x="11" y="5" width="4" height="14" rx="1.5"/><rect x="17" y="5" width="4" height="14" rx="1.5"/></svg><span data-i18n="arrangement">Arrangement</span></button>
+          <button class="sm-edit" id="smEdit" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg><span data-i18n="edit">Edit</span></button>
+        </div>
+      </div>
+      <div class="sm-body" id="smBody">
+        <div class="sm-labels" id="smLabels"></div>
+        <div class="sm-canvas" id="smCanvasWrap">
+          <canvas id="smCanvas"></canvas>
+          <div class="sm-regions" id="smRegions"></div>
+          <div class="sm-handles" id="smHandles"></div>
+          <i class="sm-head" id="smHead"></i>
+          <div class="sm-count" id="smCount"></div>
+          <div class="sm-tip" id="smTip" hidden></div>
+        </div>
+        <div class="sm-ruler" id="smRuler"></div>
+      </div>
+      <div class="arr-ed" id="arrEd" hidden>
+        <div class="ae-pool-row">
+          <span class="ae-k" data-i18n="aeOriginal">Original sections</span>
+          <div class="ae-pool" id="aePool"></div>
+        </div>
+        <div class="ae-lane-wrap"><div class="ae-lane" id="aeLane"></div><i class="ae-caret" id="aeCaret" hidden></i></div>
+        <div class="ae-foot">
+          <span class="ae-info" id="aeInfo"></span>
+          <span class="ae-help" data-i18n="aeHelp">Tap a section above to add it after the selected block, or drag it into place. Drag blocks to reorder.</span>
+          <button class="chip-btn small ghost" id="aeReset" data-i18n="aeReset">Restore original</button>
+          <button class="chip-btn small" id="aeDone" data-i18n="done">Done</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="empty" id="empty" hidden>
+      <h2 data-i18n="emptyTitle"></h2>
+      <p data-i18n="emptyText"></p>
+      <button class="cta" id="emptyAdd"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span data-i18n="addSong">Add song</span></button>
+      <details class="manual">
+        <summary data-i18n="emptyManual">Mark songs by hand instead</summary>
+        <ul class="example">
+          <li><code># My Song | 72 | G</code><span data-i18n="emptyEx1"></span></li>
+          <li><code>Intro</code> <code>Verse 1</code> <code>Chorus</code><span data-i18n="emptyEx2"></span></li>
+          <li><code>STOP</code><span data-i18n="emptyEx3"></span></li>
+        </ul>
+      </details>
+    </section>
+  </main>
+
+  <footer class="transport">
+    <div class="t-status" id="tStatus"><i class="t-dot"></i><span id="statusText"></span></div>
+    <div class="t-group">
+      <button class="t-btn" data-cmd="prevsong" aria-label="Previous song">
+        <svg viewBox="0 0 24 24"><path d="M6 5v14M19 5 9 12l10 7z"/></svg>
+      </button>
+      <button class="t-btn" data-cmd="prevsec" aria-label="Previous section">
+        <svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7"/></svg>
+      </button>
+      <button class="t-btn play" id="btnPlay" aria-label="Play">
+        <svg class="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
+        <svg class="i-stop" viewBox="0 0 24 24"><rect x="5.5" y="5.5" width="13" height="13" rx="2"/></svg>
+      </button>
+      <button class="t-btn" data-cmd="nextsec" aria-label="Next section">
+        <svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg>
+      </button>
+      <button class="t-btn" data-cmd="nextsong" aria-label="Next song">
+        <svg viewBox="0 0 24 24"><path d="M18 5v14M5 5l10 7-10 7z"/></svg>
+      </button>
+    </div>
+    <div class="t-extra">
+      <div class="t-now" id="tNow"><span class="tn-dot" id="tnDot"></span><span class="tn-cur" id="tnCur"></span><span class="tn-arrow">›</span><span class="tn-next" id="tnNext"></span><span class="tn-in" id="tnIn"></span></div>
+      <div class="count-in" id="countIn" role="radiogroup" data-i18n-title="countInHelp">
+        <span class="ci-k" data-i18n="countIn">Count-in</span>
+        <button data-v="1" role="radio">1</button>
+        <button data-v="2" role="radio">2</button>
+      </div>
+      <button class="fade-btn" id="btnFadeOut" data-i18n-title="fadeOutHelp"><svg viewBox="0 0 24 24"><path d="M3 6h3l12 12h3"/><path d="M3 18h18" opacity=".35"/></svg><span data-i18n="fadeOut">Fade out</span></button>
+      <button class="fade-btn" id="btnFadeIn" data-i18n-title="fadeInHelp"><svg viewBox="0 0 24 24"><path d="M3 18h3L18 6h3"/><path d="M3 18h18" opacity=".35"/></svg><span data-i18n="fadeIn">Fade in</span></button>
+    </div>
+    <div class="t-next" id="tNext">
+      <span class="next-k" data-i18n="afterLabel">After</span>
+      <span class="next-v" id="nextSong">—</span>
+    </div>
+  </footer>
+
+  <section class="dock" id="dock">
+    <button class="dock-head" id="dockToggle" aria-expanded="true">
+      <svg viewBox="0 0 24 24"><path d="M6 4v16M12 4v16M18 4v16"/><rect x="3.5" y="13" width="5" height="3" rx="1"/><rect x="9.5" y="7" width="5" height="3" rx="1"/><rect x="15.5" y="11" width="5" height="3" rx="1"/></svg>
+      <span data-i18n="mixer">Mixer</span>
+      <svg class="chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+    <div class="dock-auto" id="dockAuto" hidden>
+      <span class="da-dot"></span><span id="dockAutoText"></span>
+      <button class="chip-btn small" id="dockAutoClear" data-i18n="autoClear">Clear this section</button>
+      <button class="chip-btn small ghost" id="dockAutoDone" data-i18n="done">Done</button>
+    </div>
+    <div class="dock-body"><div class="dock-inner" id="dockInner"></div></div>
+  </section>
+
+  <div class="sheet" id="sheet" hidden>
+    <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+      <h3 id="sheetTitle"></h3>
+      <button class="sheet-btn" data-act="now"><span data-i18n="sheetNow">Go now</span> <small data-i18n="sheetNowSub"></small></button>
+      <button class="sheet-btn" data-act="queue"><span data-i18n="sheetQueue"></span></button>
+      <button class="sheet-btn" data-act="loop"><span data-i18n="sheetLoop"></span> <small>∞</small></button>
+      <button class="sheet-btn" data-act="repeat"><span data-i18n="sheetRepeat"></span> <small>1×</small></button>
+      <button class="sheet-btn ghost" data-act="close" data-i18n="close">Close</button>
+    </div>
+  </div>
+
+  <div class="sheet" id="tkSheet" hidden>
+    <div class="sheet-card tk-card" role="dialog" aria-modal="true" aria-labelledby="tkTitle">
+      <div class="tk-head">
+        <h3 id="tkTitle"></h3>
+        <button class="icon-btn" id="tkClose" data-i18n-label="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+
+      <p class="tk-lock" id="tkLock" hidden data-i18n="tkLocked">Stop the song to change its tempo or key.</p>
+      <div class="tk-block">
+        <div class="tk-label"><span data-i18n="tempo">Tempo</span><small id="tkTempoOrig"></small></div>
+        <div class="tk-main">
+          <button class="tk-step" data-tempo="-5">−5</button>
+          <button class="tk-step" data-tempo="-1">−1</button>
+          <div class="tk-value"><span id="tkTempo">72</span><small>BPM</small></div>
+          <button class="tk-step" data-tempo="1">+1</button>
+          <button class="tk-step" data-tempo="5">+5</button>
+        </div>
+        <input type="range" id="tkSlider" class="tk-slider" step="0.5">
+        <div class="tk-actions">
+          <button class="tk-act" id="tkTap" data-i18n="tap">Tap</button>
+          <button class="tk-act ghost" id="tkTempoReset" data-i18n="reset">Reset</button>
+        </div>
+      </div>
+
+      <div class="tk-block">
+        <div class="tk-label"><span data-i18n="keyTitle">Key</span><small id="tkKeyOrig"></small></div>
+        <div class="tk-main">
+          <button class="tk-step" data-semis="-1">−</button>
+          <div class="tk-value"><span id="tkKey">G</span><small id="tkSemis"></small></div>
+          <button class="tk-step" data-semis="1">+</button>
+        </div>
+        <div class="tk-keys" id="tkKeys"></div>
+        <div class="tk-actions">
+          <button class="tk-act ghost" id="tkKeyReset" data-i18n="reset">Reset</button>
+        </div>
+      </div>
+      <p class="set-help" data-i18n="tkHelp"></p>
+    </div>
+  </div>
+
+  <div class="sheet wiz-sheet" id="wizSheet" hidden>
+    <div class="sheet-card wiz-card" role="dialog" aria-modal="true" aria-labelledby="wizTitle">
+      <div class="wiz-head">
+        <h3 id="wizTitle" data-i18n="medWizard">Medley</h3>
+        <input class="wiz-name" id="wizName" maxlength="60" data-i18n-placeholder="medNamePh" placeholder="Name of the medley">
+        <button class="icon-btn" id="wizClose" data-i18n-label="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="wiz-settings">
+        <div class="wiz-field">
+          <span class="wf-k" data-i18n="medKey">Key</span>
+          <div class="wiz-step"><button type="button" id="wizKeyDown" aria-label="-1">−</button><b id="wizKey">–</b><button type="button" id="wizKeyUp" aria-label="+1">+</button></div>
+          <small class="wf-hint" id="wizKeyHint"></small>
+        </div>
+        <div class="wiz-field">
+          <span class="wf-k" data-i18n="tempo">Tempo</span>
+          <div class="wiz-step"><button type="button" id="wizBpmDown" aria-label="-1">−</button><input id="wizBpm" inputmode="decimal" aria-label="BPM"><button type="button" id="wizBpmUp" aria-label="+1">+</button></div>
+          <small class="wf-hint" id="wizBpmHint"></small>
+        </div>
+        <div class="wiz-field">
+          <span class="wf-k" data-i18n="medAfter">After the medley</span>
+          <div class="seg-ctl small" id="wizTr" role="radiogroup">
+            <button data-v="1" role="radio" data-i18n="medStop">Stop</button>
+            <button data-v="3" role="radio" data-i18n="medGoOn">Go on</button>
+          </div>
+        </div>
+      </div>
+      <div class="wiz-body">
+        <div class="wiz-pool">
+          <div class="wiz-pool-head"><span data-i18n="medSongs">Songs</span><button type="button" class="chip-btn small ghost" id="wizImport" data-i18n="medImport">Import a song</button></div>
+          <div class="wiz-songs" id="wizSongs"></div>
+        </div>
+        <div class="wiz-lane-wrap" id="wizLaneWrap">
+          <div class="wiz-lane" id="wizLane"></div>
+          <i class="ae-caret" id="wizCaret" hidden></i>
+          <div class="wiz-empty" id="wizEmpty" data-i18n="medEmpty">Drag sections here, or tap them</div>
+        </div>
+      </div>
+      <div class="wiz-foot">
+        <span class="wiz-info" id="wizInfo"></span>
+        <span class="wiz-help" data-i18n="medHelp">Tap a section to add it after the selected block. Drag blocks to reorder; the x removes one.</span>
+        <button type="button" class="chip-btn small ghost wiz-del" id="wizDelete" data-i18n="medDelete">Delete medley</button>
+        <button type="button" class="chip-btn small ghost" id="wizCancel" data-i18n="cancel">Cancel</button>
+        <button type="button" class="wiz-save" id="wizSave" data-i18n="medSave">Save medley</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sheet" id="addSheet" hidden>
+    <div class="sheet-card add-card" role="dialog" aria-modal="true" aria-labelledby="addTitle">
+      <div class="tk-head">
+        <h3 id="addTitle" data-i18n="addTitle">Add a song</h3>
+        <button class="icon-btn" id="addClose" data-i18n-label="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div id="addPick">
+        <button class="dropzone" id="dropZone" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 19h14"/></svg>
+          <strong data-i18n="dropTitle">Drop a Live Set here</strong>
+          <small data-i18n="dropSub">The .als file or the song's folder</small>
+        </button>
+        <input type="file" id="dropFile" accept=".als" hidden>
+        <p class="set-help" id="dropNote"></p>
+        <p class="set-help" data-i18n="addHelp"></p>
+        <ul class="sessions" id="sessions"></ul>
+      </div>
+      <div id="addForm" hidden>
+        <label class="field"><span data-i18n="addTitleField">Song name</span><input id="addName" type="text"></label>
+        <div class="field-row">
+          <label class="field"><span data-i18n="addKey">Key</span><input id="addKey" type="text" maxlength="3"></label>
+          <label class="field"><span data-i18n="addBpm">BPM</span><input id="addBpm" type="number" step="0.01" min="20" max="300"></label>
+        </div>
+        <div class="set-row column">
+          <span data-i18n="addGap">Space before it</span>
+          <div class="seg-ctl" id="addGap" role="radiogroup">
+            <button data-v="2" role="radio" data-i18n="bars2">2 bars</button>
+            <button data-v="4" role="radio" data-i18n="bars4">4 bars</button>
+            <button data-v="8" role="radio" data-i18n="bars8">8 bars</button>
+          </div>
+        </div>
+        <small class="set-help" data-i18n="addGapHelp"></small>
+        <div class="set-row column">
+          <span data-i18n="addInstr">Instruments</span>
+          <small class="set-help" data-i18n="addInstrHelp"></small>
+          <div class="instr-list" id="addInstr"></div>
+        </div>
+        <p class="set-help" id="addNote"></p>
+        <div class="tk-actions">
+          <button class="tk-act ghost" id="addBack" data-i18n="addBack">Back</button>
+          <button class="tk-act" id="addGo" data-i18n="addGo">Add to the set</button>
+        </div>
+      </div>
+      <div id="addProgress" hidden>
+        <p class="add-status" id="addStatus"></p>
+        <div class="bar"><i id="addBar"></i></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sheet" id="mixSheet" hidden>
+    <div class="sheet-card mix-card" role="dialog" aria-modal="true" aria-labelledby="mixTitle">
+      <div class="tk-head">
+        <h3 id="mixTitle" data-i18n="mixer">Mixer</h3>
+        <button class="icon-btn" id="mixClose" data-i18n-label="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="mix-strips" id="mixStrips"></div>
+      <p class="set-help" data-i18n="mixHelp"></p>
+    </div>
+  </div>
+
+  <div class="sheet" id="trSheet" hidden>
+    <div class="sheet-card tr-card" role="dialog" aria-modal="true" aria-labelledby="trTitle">
+      <div class="tk-head">
+        <h3 id="trTitle"></h3>
+        <button class="icon-btn" id="trClose" data-i18n-label="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="tr-list" id="trList"></div>
+      <p class="set-help" id="trNote"></p>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <div class="offline" id="offline" hidden>
+    <div>
+      <strong data-i18n="offlineTitle"></strong>
+      <span data-i18n="offlineText"></span>
+    </div>
+  </div>
+</div>
+<script src="i18n.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
