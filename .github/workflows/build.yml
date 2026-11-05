@@ -64,3 +64,23 @@ jobs:
         with:
           name: SetPilot-app-mac
           path: SetPilot-mac-arm64.zip
+
+  # the builds also go to the "builds" branch, so they can be fetched with git
+  publish:
+    needs: [tests, plugin-mac, app-mac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: out, merge-multiple: true }
+      - name: Commit to the builds branch
+        run: |
+          cd out
+          git init -q -b builds
+          git config user.name "SetPilot CI"
+          git config user.email "ci@setpilot.app"
+          echo "${GITHUB_SHA}" > COMMIT
+          git add -A
+          git commit -qm "Builds for ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}" builds
