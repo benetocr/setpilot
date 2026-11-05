@@ -10,6 +10,32 @@ _ptr = itertools.count(0x7f0000001000, 16)
 _in_notify = [0]
 
 
+class Vector(object):
+    """Like Live's list types (TrackVector...): iterable, sized, indexable,
+    but not a Python list or tuple."""
+    def __init__(self, items):
+        self._items = tuple(items)
+
+    def __iter__(self):
+        return iter(self._items)
+
+    def __len__(self):
+        return len(self._items)
+
+    def __getitem__(self, i):
+        return self._items[i]
+
+    def __add__(self, other):
+        return Vector(self._items + tuple(other))
+
+    def __eq__(self, other):
+        return isinstance(other, Vector) and other._items == self._items
+
+
+class TrackVector(Vector):
+    pass
+
+
 class LiveError(RuntimeError):
     pass
 
@@ -29,7 +55,8 @@ class Observable(object):
     def __getattr__(self, name):
         v = object.__getattribute__(self, "_v")
         if name in v:
-            return v[name]
+            x = v[name]
+            return TrackVector(x) if isinstance(x, tuple) else x
         for pre, fn in (("add_", self._add), ("remove_", self._remove)):
             if name.startswith(pre) and name.endswith("_listener") and name[len(pre):-9] in self._props:
                 prop = name[len(pre):-9]

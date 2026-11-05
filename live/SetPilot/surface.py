@@ -21,6 +21,7 @@ try:
 except ImportError:  # tests
     Live = None
 
+SCRIPT_VERSION = "1.0.1"
 PORT_NAME = "SetPilot Bridge"
 DOORBELL_CHANNEL = 15   # MIDI channel 16
 DOORBELL_CC = 119
@@ -104,8 +105,8 @@ class SetPilotSurface(object):
                              live_version=version, warp_marker_factory=factory)
         self.server.on_connect = self._on_connect
         self.server.on_message = self._on_message
-        self.server.start({"live": version, "python": sys.version.split()[0], "script": "1.0.0"})
-        self.log("SetPilot bridge started, Live %s, Python %s, port %s" % (version, sys.version.split()[0], self.server.port))
+        self.server.start({"live": version, "python": sys.version.split()[0], "script": SCRIPT_VERSION})
+        self.log("SetPilot bridge " + SCRIPT_VERSION + " started, Live %s, Python %s, port %s" % (version, sys.version.split()[0], self.server.port))
         self._checked_at = 0
         try:
             sc = self_check(c_instance.song(), app)

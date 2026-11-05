@@ -200,6 +200,13 @@ class Bridge(object):
             return v
         if isinstance(v, (list, tuple)):
             return [self.wire(x) for x in v]
+        # Live's lists (song.tracks, cue_points, arrangement_clips...) are its
+        # own vector classes, not Python lists
+        if type(v).__name__.endswith("Vector") or (hasattr(v, "__iter__") and hasattr(v, "__len__") and not hasattr(v, "_live_ptr")):
+            try:
+                return [self.wire(x) for x in list(v)]
+            except Exception:
+                pass
         if hasattr(v, "beat_time") and hasattr(v, "sample_time"):
             return {"beat_time": float(v.beat_time), "sample_time": float(v.sample_time)}
         k = CLASS_KIND.get(type(v).__name__)
@@ -235,7 +242,7 @@ class Bridge(object):
 
     # ------------------------------------------------------------ outgoing
     def hello(self):
-        return {"t": "hello", "v": SPEC["protocol"], "live": self.live_version, "script": "1.0.0"}
+        return {"t": "hello", "v": SPEC["protocol"], "live": self.live_version, "script": "1.0.1"}
 
     def snapshot(self):
         self.sweep()
