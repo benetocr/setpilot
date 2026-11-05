@@ -191,6 +191,9 @@ class Clip(Observable):
         ms = list(self.warp_markers)
         for k, m in enumerate(ms):
             if abs(m.beat_time - beat) < 1e-6:
+                # Live 12: the helper marker 1/32 beat after another stays and can't move
+                if k > 0 and m.beat_time - ms[k - 1].beat_time < 0.1:
+                    raise LiveError("The shadow marker can't be moved.")
                 ms[k] = WarpMarker(m.beat_time + distance, m.sample_time)
                 self.warp_markers = tuple(ms)
                 return

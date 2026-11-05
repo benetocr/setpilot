@@ -2778,11 +2778,20 @@ function rewarp(clip, step) {
 	for (var i = 0; i < cur.length; i++) plan.push({ beat: cur[i].beat, sec: cur[i].sec, target: beatForSec(src, cur[i].sec) });
 	var moved = 0;
 	// rightward moves from the last marker back, then leftward moves from the first: no marker crosses another
+	// Live's own helper ("shadow") marker, 1/32 beat after another, can't be
+	// moved (Live 12 says so); skip it, and never let one refusal stop the rest
+	var refused = 0;
+	function move(m) {
+		try { clip.call("move_warp_marker", m.beat, m.target - m.beat); moved++; }
+		catch (e) { refused++; }
+	}
 	for (var r = plan.length - 1; r >= 0; r--) {
-		if (plan[r].target > plan[r].beat + 0.0005) { clip.call("move_warp_marker", plan[r].beat, plan[r].target - plan[r].beat); moved++; }
+		if (r > 0 && plan[r].beat - plan[r - 1].beat < 0.1) continue;
+		if (plan[r].target > plan[r].beat + 0.0005) move(plan[r]);
 	}
 	for (var l = 0; l < plan.length; l++) {
-		if (plan[l].target < plan[l].beat - 0.0005) { clip.call("move_warp_marker", plan[l].beat, plan[l].target - plan[l].beat); moved++; }
+		if (l > 0 && plan[l].beat - plan[l - 1].beat < 0.1) continue;
+		if (plan[l].target < plan[l].beat - 0.0005) move(plan[l]);
 	}
 	// check: every marker where it should be
 	var after = markersOf(clip), worst = 0, bad = -1;
@@ -2790,7 +2799,7 @@ function rewarp(clip, step) {
 		var off = Math.abs(after[k].beat - beatForSec(src, after[k].sec));
 		if (off > worst) { worst = off; if (off > 0.01 && bad < 0) bad = k; }
 	}
-	var msg = "rewarp " + step.name + ": " + before + " -> " + after.length + " markers, " + moved + " moved, off by " + Math.round(worst * 1000) / 1000 + " beats";
+	var msg = "rewarp " + step.name + ": " + before + " -> " + after.length + " markers, " + moved + " moved" + (refused ? ", " + refused + " refused by Live" : "") + ", off by " + Math.round(worst * 1000) / 1000 + " beats";
 	if (bad >= 0) {
 		var f = function (x) { return x ? x.beat.toFixed(3) + "@" + x.sec.toFixed(3) + "->" + beatForSec(src, x.sec).toFixed(3) : "-"; };
 		msg += " (first bad #" + bad + ": " + f(after[bad - 1]) + " | " + f(after[bad]) + " | " + f(after[bad + 1]) + ")";
@@ -3151,6 +3160,9 @@ function runJob() {
 	} else if (step.type == "clip") {
 		var tid = job.dest[step.key];
 		trackApi.id = tid;
+		// once only: a failure after this point must not put the clip in twice
+		if (step.created) { job.i++; return; }
+		step.created = 1;
 		trackApi.call("create_audio_clip", step.file, step.pos);
 		var raw = trackApi.get("arrangement_clips") || [];
 		for (var k = 0; k < raw.length; k++) {
