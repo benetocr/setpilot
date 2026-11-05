@@ -11,6 +11,7 @@ const { parentPort, workerData, receiveMessageOnPort } = require("worker_threads
 const { Mirror } = require("../bridge/mirror");
 const { makeLiveAPI } = require("../bridge/facade");
 const { loadEngine } = require("./engine_vm");
+const { AudioRouter } = require("./audio_router");
 
 const bridge = workerData.bridgePort;
 const signal = new Int32Array(workerData.sab);
@@ -41,8 +42,17 @@ function request(msg) {
 const mirror = new Mirror({ send: msg => bridge.postMessage({ out: msg }), request });
 
 const OWN_RE = /^(SP Cues|SetPilot)$/i;
+let eng = null;
+const router = new AudioRouter({
+	mirror,
+	send: (role, msg) => parentPort.postMessage({ plugin: { role, msg } }),
+	reply: (cmd, args) => { if (started) eng.send(cmd, args); }
+});
 const LiveAPI = makeLiveAPI(mirror, {
+	// the engine's "own track" is where the Cues plugin sits
 	ownTrack: m => {
+		const cues = router.roleTracks().cues;
+		if (cues) return cues;
 		const song = m.objs.get(m.roots.song);
 		for (const ref of (song && song.p.tracks) || []) {
 			const tr = m.objs.get(ref.$);
@@ -52,10 +62,10 @@ const LiveAPI = makeLiveAPI(mirror, {
 	}
 });
 
-const eng = loadEngine({
+eng = loadEngine({
 	LiveAPI,
-	onOutlet: (n, flat) => parentPort.postMessage({ outlet: [n, flat] }),
-	onMessnamed: (name, args) => parentPort.postMessage({ messnamed: [name, args] }),
+	onOutlet: (n, flat) => { if (n === 1) router.outlet1(flat); else parentPort.postMessage({ outlet: [n, flat] }); },
+	onMessnamed: (name, args) => router.messnamed(name, args),
 	onPost: s => parentPort.postMessage({ post: s })
 });
 
@@ -75,6 +85,7 @@ function onBridge(x) {
 		// a new snapshot: first connection, or Live reopened / loaded another set
 		eng.init();
 		started = true;
+		eng.send("voiceplayer", [router.connected.cues ? 1 : 0]);
 		parentPort.postMessage({ live: "ready", info: mirror.info, objects: mirror.objs.size, again: wasReady || undefined });
 	}
 }
@@ -85,5 +96,7 @@ parentPort.on("message", m => {
 	if (m.send) { if (started) eng.send(m.send[0], m.send[1]); return; }
 	if (m.setDict) { eng.dicts[m.setDict[0]] = m.setDict[1]; return; }
 	if (m.getDict) { parentPort.postMessage({ dict: { id: m.getDict.id, value: eng.dicts[m.getDict.name] || null } }); return; }
+	if (m.pluginRoles) { router.setConnected(m.pluginRoles); return; }
+	if (m.pluginEvent) { router.event(m.pluginEvent.role, m.pluginEvent.m); return; }
 	if (m.stats) { parentPort.postMessage({ stats: { id: m.stats.id, value: mirror.stats } }); return; }
 });

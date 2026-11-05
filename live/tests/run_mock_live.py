@@ -61,9 +61,15 @@ def main():
     ap.add_argument("--tick", type=float, default=100.0)
     ap.add_argument("--doorbell", type=int, default=0)
     ap.add_argument("--seconds", type=float, default=600)
+    ap.add_argument("--plugins", action="store_true", help="SetPilot Audio on SP Cues (Cues), Guide (Guide) and Click (Click)")
     a = ap.parse_args()
 
     song = build_song()
+    if a.plugins:
+        by = {t.name: t for t in song.tracks}
+        by["SP Cues"].devices = (mock_live.setpilot_audio("Cues"),)
+        by["Guide"].devices = (mock_live.setpilot_audio("Guide"),)
+        by["Click"].devices = (mock_live.setpilot_audio("Click"),)
     surface = SetPilotSurface(CInstance(song))
     bell = None
     if a.doorbell:

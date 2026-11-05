@@ -14,6 +14,7 @@ const { LiveLink } = require("./live_link");
 const { makeDoorbell } = require("./doorbell");
 const { setup } = require("../installer/setup");
 const { announce } = require("./announce");
+const { PluginServer } = require("./plugin_server");
 
 function dataDir() {
 	if (process.env.SETPILOT_DATA) return process.env.SETPILOT_DATA;
@@ -75,17 +76,13 @@ function startHost({ log: logOut = console.log } = {}) {
 	});
 
 	worker.on("message", m => {
-		if (m.outlet) {
-			const [n, flat] = m.outlet;
-			if (n === 0) maxApi._dispatch(flat);
-			else audio.emit("engine", flat);          // outlet 1: cue player messages
-		} else if (m.messnamed) audio.emit("messnamed", m.messnamed[0], m.messnamed[1]);
+		if (m.outlet) { if (m.outlet[0] === 0) maxApi._dispatch(m.outlet[1]); }
+		else if (m.plugin) plugins.send(m.plugin.role, m.plugin.msg);
 		else if (m.post) { if (process.env.SP_DEBUG) log("[engine]", m.post); }
 		else if (m.dict) { const w = dictWait.get(m.dict.id); dictWait.delete(m.dict.id); if (w) w(m.dict.value); }
 		else if (m.live === "ready") {
 			log("engine ready,", m.objects, "objects from Live");
-			// no SetPilot audio plugin yet: keep the song's own Guide audible
-			worker.postMessage({ send: ["voiceplayer", [0]] });
+			worker.postMessage({ pluginRoles: plugins.roles() });
 			calibrate();
 		}
 		else if (m.live === "disconnected") status.latency = null;
@@ -103,11 +100,16 @@ function startHost({ log: logOut = console.log } = {}) {
 	maxApi._bus.on("setDict", (name, value) => worker.postMessage({ setDict: [name, value] }));
 
 	// ---------------------------------------------------------------- audio side
-	// SetPilot's own click, cue voice and tail come from the SetPilot plugin
-	// (next phase). Until it is there the engine sees no player devices and
-	// uses the song's own click and guide, as it does without them in Max.
-	const { EventEmitter } = require("events");
-	const audio = new EventEmitter();
+	// SetPilot Audio plugins (click, cues, guide gate, tail) connect here; the
+	// engine thread decides what they play
+	const plugins = new PluginServer({ log }).start();
+	status.plugins = {};
+	plugins.on("roles", roles => {
+		status.plugins = roles;
+		worker.postMessage({ pluginRoles: roles });
+		log("plugins:", Object.keys(roles).join(", ") || "none");
+	});
+	plugins.on("event", (role, m) => worker.postMessage({ pluginEvent: { role, m } }));
 
 	// ---------------------------------------------------------------- timing
 	// Measure how long Live takes to carry out a command and tell the engine,
@@ -143,7 +145,7 @@ function startHost({ log: logOut = console.log } = {}) {
 			clearInterval(recal);
 			worker.postMessage({ send: ["notifydeleted", []] });
 			await new Promise(r => setTimeout(r, 400));
-			link.stop(); worker.terminate(); if (doorbell) doorbell.close(); if (ann) ann.stop();
+			link.stop(); worker.terminate(); plugins.stop(); if (doorbell) doorbell.close(); if (ann) ann.stop();
 		}
 	};
 }
