@@ -6,3 +6,4 @@ live/SetPilot/bridge.log
 live/SetPilot/selfcheck.json
 probe-result.json
 data/
+dist/

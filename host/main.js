@@ -129,13 +129,14 @@ function startHost({ log: logOut = console.log } = {}) {
 		if (args[0] !== "ui" || args[1] !== "url" || ann) return;
 		const port = Number(String(args[2]).split(":").pop());
 		ann = announce(port, log);
-		status.dashboard = { url: ann.url, friendly: ann.friendly };
+		status.dashboard = { url: ann.url, friendly: ann.friendly, local: "http://localhost:" + port };
 		log("dashboard:", ann.url, "(also " + ann.friendly + ")");
 		if (process.stdout.isTTY) ann.qr().then(q => q && console.log(q));
 	});
 
 	return {
 		link, worker, status, log, dataDir: DATA,
+		qrSvg: () => (ann ? ann.qrSvg() : Promise.resolve("")),
 		// put back what the engine changed in the set (muted Guide, faders
 		// mid-fade...), give Live a moment to apply it, then close
 		async stop() {

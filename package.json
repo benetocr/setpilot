@@ -3,11 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "description": "SetPilot: playback companion for Ableton Live",
-  "main": "host/main.js",
+  "main": "desktop/main.js",
   "scripts": {
     "start": "node host/main.js",
     "test": "node dev/test_engine.js && SP_BRIDGE=1 node dev/test_engine.js && python3 -m unittest discover -s live/tests && node dev/test_setup.js && node dev/e2e.js",
-    "test:latency": "SP_BRIDGE=1 SP_WRITE_DELAY=5 node dev/test_engine.js"
+    "test:latency": "SP_BRIDGE=1 SP_WRITE_DELAY=5 node dev/test_engine.js",
+    "app": "electron desktop/main.js",
+    "dist": "electron-builder --mac zip --arm64 --x64"
   },
   "engines": {
     "node": ">=18"
@@ -18,5 +20,48 @@
   },
   "optionalDependencies": {
     "@julusian/midi": "^3.6.1"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "productName": "SetPilot",
+  "author": "SetPilot",
+  "build": {
+    "appId": "app.setpilot.desktop",
+    "productName": "SetPilot",
+    "asar": false,
+    "npmRebuild": false,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "core/**",
+      "bridge/**",
+      "host/**",
+      "live/SetPilot/*.py",
+      "live/SetPilot/spec.json",
+      "installer/**",
+      "desktop/**",
+      "package.json",
+      "!**/*.log",
+      "!desktop/make_icons.js"
+    ],
+    "mac": {
+      "target": [
+        "zip"
+      ],
+      "category": "public.app-category.music",
+      "icon": "desktop/assets/icon.png",
+      "identity": null,
+      "extendInfo": {
+        "LSUIElement": true,
+        "NSLocalNetworkUsageDescription": "SetPilot shows its dashboard to your phones and tablets on this network.",
+        "NSBonjourServices": [
+          "_http._tcp"
+        ]
+      }
+    },
+    "publish": null
   }
 }

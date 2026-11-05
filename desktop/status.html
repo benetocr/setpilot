@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'">
+<title>SetPilot</title>
+<style>
+@font-face { font-family: Archivo; src: url("../core/ui/fonts/archivo-latin-wdth-normal.woff2") format("woff2"); font-weight: 100 900; font-stretch: 62% 125%; }
+:root {
+  --stage: #15171f; --deck: #1c1f29; --raise: #252a37; --edge: #323849;
+  --text: #f3f4f8; --dim: #9ca2b6; --faint: #646b82;
+  --live: #5be49b; --queued: #ffb547;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--stage); color: var(--text); font: 14px/1.45 Archivo, -apple-system, system-ui, sans-serif; -webkit-user-select: none; user-select: none; }
+body { padding: 44px 28px 24px; display: flex; flex-direction: column; gap: 22px; -webkit-app-region: drag; }
+button, a { -webkit-app-region: no-drag; }
+
+.state { display: flex; align-items: center; gap: 16px; }
+.mark { width: 56px; height: 56px; flex: none; border-radius: 14px; background: var(--deck); display: grid; place-items: center; }
+.mark svg { width: 38px; }
+.mark path { stroke: var(--faint); transition: stroke .4s; }
+.on .mark path { stroke: var(--live); }
+.on .mark { box-shadow: 0 0 0 1px #5be49b33, 0 0 28px -6px #5be49b66; }
+.searching .mark path { stroke: var(--queued); animation: breathe 1.6s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .searching .mark path { animation: none; } }
+.state h1 { margin: 0; font-size: 22px; font-weight: 640; font-stretch: 92%; letter-spacing: -.01em; }
+.state p { margin: 2px 0 0; color: var(--dim); }
+
+.facts { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--deck); border-radius: 12px; }
+.facts div { padding: 12px 14px; }
+.facts div + div { border-left: 1px solid var(--edge); }
+.facts b { display: block; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.facts span { color: var(--faint); font-size: 12px; }
+
+.reach { display: flex; gap: 18px; align-items: center; }
+.qr { width: 132px; height: 132px; flex: none; background: #fff; border-radius: 10px; padding: 8px; }
+.qr svg { width: 100%; height: 100%; display: block; }
+.qr:empty { background: var(--deck); }
+.reach h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+.reach p { margin: 0 0 12px; color: var(--dim); font-size: 13px; }
+.reach code { font: 12px/1.4 ui-monospace, Menlo, monospace; color: var(--text); word-break: break-all; }
+button { font: inherit; font-weight: 600; color: var(--stage); background: var(--live); border: 0; border-radius: 8px; padding: 9px 14px; cursor: pointer; }
+button:disabled { background: var(--raise); color: var(--faint); cursor: default; }
+button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+.steps { display: none; background: var(--deck); border-left: 3px solid var(--queued); border-radius: 0 10px 10px 0; padding: 12px 14px; color: var(--dim); font-size: 13px; }
+.steps.show { display: block; }
+.steps p { margin: 0; }
+.steps p + p { margin-top: 6px; }
+.foot { margin-top: auto; color: var(--faint); font-size: 12px; }
+</style>
+</head>
+<body class="searching">
+  <section class="state">
+    <div class="mark"><svg viewBox="64 160 384 224"><path d="M96 352 L208 192 L288 304 L344 224 L416 352" fill="none" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    <div><h1 id="title"></h1><p id="sub"></p></div>
+  </section>
+
+  <section class="facts">
+    <div><b id="f-live">–</b><span id="l-live"></span></div>
+    <div><b id="f-ms">–</b><span id="l-ms"></span></div>
+    <div><b id="f-songs">–</b><span id="l-songs"></span></div>
+  </section>
+
+  <section class="reach">
+    <div class="qr" id="qr"></div>
+    <div>
+      <h2 id="r-title"></h2>
+      <p id="r-text"></p>
+      <code id="url"></code>
+    </div>
+  </section>
+  <button id="open" disabled></button>
+
+  <section class="steps" id="steps"></section>
+  <p class="foot" id="foot"></p>
+
+<script src="status.js"></script>
+</body>
+</html>
