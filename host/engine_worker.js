@@ -19,7 +19,7 @@ const signal = new Int32Array(workerData.sab);
 let connected = false;
 let q = 0;
 
-const SLOW = new Set(["create_audio_clip", "create_audio_track"]);
+const SLOW = new Set(["create_audio_clip", "create_audio_track", "add_cue", "delete_cue", "insert_plugin"]);
 
 function request(msg) {
 	if (!connected) return { ok: false, err: "Live is not connected" };
@@ -87,6 +87,7 @@ function onBridge(x) {
 		eng.init();
 		started = true;
 		eng.send("voiceplayer", [router.connected.cues ? 1 : 0]);
+		eng.send("cueops", [1]);
 		parentPort.postMessage({ live: "ready", info: mirror.info, objects: mirror.objs.size, again: wasReady || undefined });
 	}
 }

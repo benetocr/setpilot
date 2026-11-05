@@ -62,6 +62,9 @@ def route_wire(rt):
     return {"display_name": getattr(rt, "display_name", ""), "identifier": route_id(rt)}
 
 
+CUE_OPS = ("add_cue", "delete_cue")
+
+
 class Bridge(object):
     def __init__(self, song, app=None, send=None, log=None, live_version="", warp_marker_factory=None):
         self.song = song
@@ -83,6 +86,7 @@ class Bridge(object):
         self.last_meter_flush = 0
         self.meter_dirty = set()
         self.roots = {}
+        self.cue_ops = []      # locator work spread over Live's ticks (see run_cue_ops)
         self.stats = {"ticks": 0, "tick_ms": [], "doorbells": 0, "time_msgs": 0, "cmds": 0, "cmd_lag_ms": []}
         self.marker_style = None
         self._last_tick = None
@@ -375,6 +379,11 @@ class Bridge(object):
             if len(lags) > 200:
                 del lags[:100]
             q = msg.get("q")
+            if msg.get("t") == "call" and msg.get("f") in CUE_OPS:
+                a = msg.get("a") or []
+                self.cue_ops.append({"f": msg["f"], "time": float(a[0]), "name": a[1] if len(a) > 1 else None,
+                                     "client": client, "q": q, "w": msg.get("w"), "stage": 0, "tries": 0, "waited": 0})
+                continue
             try:
                 v = self.execute(msg)
                 ok, err = True, None
@@ -398,6 +407,68 @@ class Bridge(object):
 
     # A short record of what the app asked Live to do (not the frequent fader
     # and position writes), for support. Errors always.
+    # Locators. Live only has "set or delete the locator at the playhead", and
+    # with the transport stopped it applies a new playhead position a moment
+    # later. So each add or delete is a small job spread over Live's ticks:
+    # move the playhead, wait until Live is really there, toggle, check.
+    def _cue_at(self, t):
+        for c in self._safe(lambda: list(self.song.cue_points), []):
+            if abs(float(c.time) - t) < 1e-3:
+                return c
+        return None
+
+    def run_cue_ops(self, reply):
+        if not self.cue_ops:
+            return
+        op = self.cue_ops[0]
+        s = self.song
+        done = None
+        try:
+            if s.is_playing:
+                raise RuntimeError("locators can only be changed while stopped")
+            here = self._cue_at(op["time"])
+            want_there = op["f"] == "add_cue"
+            if (here is not None) == want_there and op["stage"] != 1:
+                if want_there and op["name"] is not None and here.name != op["name"]:
+                    here.name = op["name"]
+                done = {"$": self.ref(here, "cue")} if here is not None else None
+            elif op["stage"] == 0:
+                s.current_song_time = op["time"]
+                op["stage"] = 1
+                op["waited"] = 0
+            elif op["stage"] == 1:
+                op["waited"] += 1
+                # one full tick after the move, and Live says it is there
+                if op["waited"] >= 1 and abs(float(s.current_song_time) - op["time"]) < 1e-3:
+                    s.set_or_delete_cue()
+                    op["stage"] = 2
+                elif op["waited"] > 10:
+                    op["stage"] = 0
+                    op["tries"] += 1
+            else:
+                # toggled last tick: the check at the top settles it, or try again
+                op["tries"] += 1
+                op["stage"] = 0
+            if op["tries"] > 4:
+                raise RuntimeError("Live did not %s the locator at %s" % ("add" if op["f"] == "add_cue" else "delete", op["time"]))
+        except Exception as e:
+            self.cue_ops.pop(0)
+            if op.get("w"):
+                self.aw = max(self.aw, int(op["w"]))
+            self.log("%s %s FAILED: %s" % (op["f"], op["time"], e))
+            if op["q"] is not None:
+                reply(op["client"], {"t": "res", "q": op["q"], "ok": False, "err": str(e), "aw": self.aw})
+            return
+        if done is not None or (op["f"] == "delete_cue" and op["stage"] != 1 and self._cue_at(op["time"]) is None):
+            self.cue_ops.pop(0)
+            if op.get("w"):
+                self.aw = max(self.aw, int(op["w"]))
+            self.log("%s %s %s" % (op["f"], op["time"], json.dumps(op["name"]) if op["name"] else ""))
+            self.mark_structure()
+            self.flush()
+            if op["q"] is not None:
+                reply(op["client"], {"t": "res", "q": op["q"], "ok": True, "v": done, "aw": self.aw})
+
     def _trace(self, msg, ok, err, v):
         t = msg.get("t")
         if t in ("ping", "get") and ok:
@@ -575,6 +646,7 @@ class Bridge(object):
         self._last_tick = t
         self.stats["ticks"] += 1
         self.run_inbox(reply)
+        self.run_cue_ops(reply)
         self.flush()
         if not self.song.is_playing and t - self.last_time_sent > 250:
             self.last_time_sent = t

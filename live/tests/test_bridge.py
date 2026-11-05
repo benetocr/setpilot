@@ -135,6 +135,51 @@ class InsertPluginTest(unittest.TestCase):
         self.assertIn("rescan", h.replies[-1]["err"])
 
 
+class CueOpsTest(unittest.TestCase):
+    def run_until_reply(self, h, q, ticks=20):
+        for _ in range(ticks):
+            h.tick()
+            for r in h.replies:
+                if r.get("q") == q:
+                    return r
+        self.fail("no answer")
+
+    def test_add_cue_waits_for_the_playhead_and_names_it(self):
+        h = Harness()
+        n = len(h.song.cue_points)
+        h.cmd(t="call", q=1, w=1, id=h.snap["roots"]["song"], f="add_cue", a=[200.0, "# New | 80"])
+        r = self.run_until_reply(h, 1)
+        self.assertTrue(r["ok"], r)
+        cues = list(h.song.cue_points)
+        self.assertEqual(len(cues), n + 1)
+        new = [c for c in cues if abs(c.time - 200) < 1e-6][0]
+        self.assertEqual(new.name, "# New | 80")
+        self.assertEqual(r["v"], {"$": h.id_of(new)})
+
+    def test_many_cues_in_a_row_never_delete_each_other(self):
+        h = Harness()
+        n = len(h.song.cue_points)
+        for k, t in enumerate([100.0, 116.0, 132.0, 148.0]):
+            h.cmd(t="call", q=10 + k, id=h.snap["roots"]["song"], f="add_cue", a=[t, "S%d" % k])
+        self.run_until_reply(h, 13, ticks=60)
+        names = sorted(c.name for c in h.song.cue_points if c.time >= 100)
+        self.assertEqual(names, ["S0", "S1", "S2", "S3"])
+        self.assertEqual(len(h.song.cue_points), n + 4)
+
+    def test_existing_cue_is_renamed_not_toggled(self):
+        h = Harness()
+        h.cmd(t="call", q=1, id=h.snap["roots"]["song"], f="add_cue", a=[16.0, "Verso"])
+        self.run_until_reply(h, 1)
+        self.assertEqual([c.name for c in h.song.cue_points if c.time == 16][0], "Verso")
+
+    def test_delete_cue(self):
+        h = Harness()
+        h.cmd(t="call", q=1, id=h.snap["roots"]["song"], f="delete_cue", a=[16.0])
+        r = self.run_until_reply(h, 1)
+        self.assertTrue(r["ok"], r)
+        self.assertFalse(any(abs(c.time - 16) < 1e-6 for c in h.song.cue_points))
+
+
 class WriteTest(unittest.TestCase):
     def test_writes_wait_for_the_tick_and_report_back(self):
         h = Harness()

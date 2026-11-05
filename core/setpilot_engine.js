@@ -43,6 +43,10 @@ var TICK_MS = 20;
 // (LiveAPI writes are immediate); the app measures it through its bridge
 // and sends "latency <ms>" so timed changes are asked for that much earlier.
 var writeLead = 0;
+// The app's Live bridge can add, name and delete a locator as one safe step
+// ("add_cue" / "delete_cue"); inside Max we do it ourselves, tick by tick.
+var cueOps = 0;
+function cueops(v) { cueOps = num(v) ? 1 : 0; log("locator steps by the bridge: " + (cueOps ? "on" : "off")); }
 var QUANT_ONE_BAR = 4; // clip_trigger_quantization enum: 4 = 1 Bar
 
 var song = null;      // LiveAPI on live_set
@@ -3209,6 +3213,10 @@ function runJob() {
 				fitClipEnd(clipApi, step.markers, step.maxEnd, step.length);
 			}
 		}
+	} else if (step.type == "cue" && cueOps) {
+		song.call("add_cue", step.time, step.name);
+	} else if (step.type == "uncue" && cueOps) {
+		song.call("delete_cue", step.time);
 	} else if (step.type == "cue") {
 		// Live applies a new playhead position on its own schedule, so a locator
 		// takes three ticks: move, create, name.
@@ -3329,8 +3337,9 @@ function clearCueStep() {
 	var cues = readCues(), target = null;
 	for (var i = 0; i < cues.length; i++) if (cues[i].time >= clearCues - 0.001) { target = cues[i]; break; }
 	if (!target) { log("clear: locators removed"); clearCues = -1; structSig = ""; dirty = true; return; }
-	if (Math.abs(num(getProp("current_song_time")) - target.time) > 0.01) { setProp("current_song_time", target.time); return; }
+	if (!cueOps && Math.abs(num(getProp("current_song_time")) - target.time) > 0.01) { setProp("current_song_time", target.time); return; }
 	log("clear locator " + target.name + " at " + target.time);
+	if (cueOps) { song.call("delete_cue", target.time); return; }
 	song.call("set_or_delete_cue");
 }
 
