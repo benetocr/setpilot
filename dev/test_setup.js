@@ -19,7 +19,7 @@ function mac({ customLib, selected } = {}) {
 	fs.mkdirSync(path.join(home, "Music", "Ableton", "User Library"), { recursive: true });
 	if (customLib) {
 		fs.mkdirSync(customLib, { recursive: true });
-		put(path.join(prefs, "Library.cfg"), `<?xml version="1.0"?><Ableton><ContentLibrary><UserLibrary><LibraryProject><ProjectPath Value="${customLib}" /></LibraryProject></UserLibrary></ContentLibrary></Ableton>`);
+		put(path.join(prefs, "Library.cfg"), `<?xml version="1.0"?><Ableton><ContentLibrary><UserLibrary>\n\t<LibraryProject Id="0">\n\t\t<ProjectLocation />\n\t\t<ProjectName Value="${path.basename(customLib)}" />\n\t\t<ProjectPath Value="${path.dirname(customLib)}" />\n\t</LibraryProject>\n</UserLibrary></ContentLibrary></Ableton>`);
 	}
 	put(path.join(prefs, "Preferences.cfg"), Buffer.concat([Buffer.from([0, 1, 2]), selected ? Buffer.from("SetPilot", "utf16le") : Buffer.from("Push2", "utf16le"), Buffer.from([9])]));
 	return { platform: "darwin", home, apps: [apps], running: false };
@@ -85,8 +85,15 @@ test("Windows: Live in ProgramData, prefs in AppData, library in Documents", () 
 	assert.ok(fs.existsSync(path.join(home, "Documents", "Ableton", "User Library", "Remote Scripts", "SetPilot", "surface.py")));
 });
 
-test("Library.cfg parsing", () => {
-	assert.strictEqual(S.userLibraryFromCfg('<UserLibrary><X Value="/a/b/User Library" /></UserLibrary>'), "/a/b/User Library");
+test("Live's log tells which slot uses SetPilot and its MIDI input", () => {
+	const o = mac();
+	const prefs = path.join(o.home, "Library", "Preferences", "Ableton", "Live 12.1.5");
+	put(path.join(prefs, "Log.txt"), 'x\n  MidiRemoteScript 1 [Control Surface="Push2" Input="None" Output="None"]\n  MidiRemoteScript 2 [Control Surface="None" Input="None" Output="None"]\nlater\n  MidiRemoteScript 1 [Control Surface="Push2" Input="None" Output="None"]\n  MidiRemoteScript 2 [Control Surface="SetPilot" Input="SetPilot Bridge" Output="None"]\n');
+	assert.deepStrictEqual(S.surfaceState(o), { selected: true, slot: 2, input: "SetPilot Bridge" });
+});
+
+test("Library.cfg parsing (Live 12: folder and name apart)", () => {
+	assert.strictEqual(S.userLibraryFromCfg('<UserLibrary>\n<LibraryProject Id="0">\n<ProjectLocation />\n<ProjectName Value="User Library" />\n<ProjectPath Value="/Users/elvin/Music/Ableton" />\n</LibraryProject></UserLibrary>'), "/Users/elvin/Music/Ableton/User Library");
 	assert.strictEqual(S.userLibraryFromCfg("nothing"), null);
 });
 

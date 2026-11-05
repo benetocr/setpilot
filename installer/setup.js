@@ -75,11 +75,17 @@ function defaultUserLibrary(o) {
 	return e.platform === "win32" ? path.join(e.home, "Documents", "Ableton", "User Library") : path.join(e.home, "Music", "Ableton", "User Library");
 }
 
-// Library.cfg names the User Library when the user moved it
+// Library.cfg names the User Library when the user moved it. Live 12 writes
+// the parent folder and the name apart:
+//   <ProjectName Value="User Library" /> <ProjectPath Value="/Users/x/Music/Ableton" />
 function userLibraryFromCfg(cfgText) {
-	const block = (cfgText.match(/<UserLibrary>([\s\S]*?)<\/UserLibrary>/) || [])[1] || cfgText;
-	const vals = [...block.matchAll(/Value="([^"]+)"/g)].map(m => m[1]).filter(v => /[\/\\]/.test(v));
-	return vals.find(v => /User Library/i.test(v)) || vals[0] || null;
+	const block = (cfgText.match(/<UserLibrary>([\s\S]*?)<\/UserLibrary>/) || [])[1];
+	if (!block) return null;
+	const val = tag => (block.match(new RegExp("<" + tag + "\\s+Value=\"([^\"]*)\"")) || [])[1];
+	const dir = val("ProjectPath"), name = val("ProjectName");
+	if (dir && name) return path.join(dir, name);
+	if (dir) return dir;
+	return null;
 }
 
 function findUserLibraries(o) {
@@ -96,8 +102,9 @@ function findUserLibraries(o) {
 }
 
 // ---------------------------------------------------------------- the script
+// only the script itself: the folder may also hold its log and self-check
 function sourceFiles() {
-	return ls(SCRIPT_SRC).filter(f => /\.(py|json)$/.test(f)).sort();
+	return ls(SCRIPT_SRC).filter(f => /\.py$/.test(f) || f === "spec.json").sort();
 }
 
 function sourceHash() {
@@ -129,16 +136,30 @@ function installScript(userLibrary) {
 }
 
 // ---------------------------------------------------------------- is it selected?
-// Live writes the chosen control surfaces into Preferences.cfg (binary). The
-// script's name appears there, as plain or UTF-16 text, once a slot uses it.
-function surfaceSelected(o) {
+// Live writes its control surface slots to Log.txt in plain text on every
+// start and settings change:
+//   MidiRemoteScript 2 [Control Surface="SetPilot" Input="SetPilot Bridge" ...]
+// The last such block is the current state. Preferences.cfg (binary) is the
+// fallback.
+function surfaceState(o) {
 	const p = prefsDirs(o)[0];
-	if (!p) return null;
+	if (!p) return { selected: null };
+	try {
+		const log = fs.readFileSync(path.join(p.dir, "Log.txt"), "utf8");
+		const re = /MidiRemoteScript (\d+) \[Control Surface="([^"]*)" Input="([^"]*)" Output="([^"]*)"\]/g;
+		const slots = {};
+		let m;
+		while ((m = re.exec(log))) slots[m[1]] = { surface: m[2], input: m[3], output: m[4] };
+		const mine = Object.entries(slots).find(([, v]) => v.surface === SCRIPT_NAME);
+		if (Object.keys(slots).length) return { selected: !!mine, slot: mine ? Number(mine[0]) : null, input: mine ? mine[1].input : null };
+	} catch (e) { }
 	try {
 		const buf = fs.readFileSync(path.join(p.dir, "Preferences.cfg"));
-		return buf.includes(Buffer.from(SCRIPT_NAME, "latin1")) || buf.includes(Buffer.from(SCRIPT_NAME, "utf16le"));
-	} catch (e) { return null; }
+		return { selected: buf.includes(Buffer.from(SCRIPT_NAME, "latin1")) || buf.includes(Buffer.from(SCRIPT_NAME, "utf16le")) };
+	} catch (e) { return { selected: null }; }
 }
+
+function surfaceSelected(o) { return surfaceState(o).selected; }
 
 function liveRunning(o) {
 	const e = env(o);
@@ -153,7 +174,8 @@ function liveRunning(o) {
 function setup(o = {}) {
 	const live = findLive(o);
 	const libs = findUserLibraries(o);
-	const res = { live, userLibraries: libs, installed: [], selected: surfaceSelected(o), running: o.running != null ? o.running : liveRunning(o), steps: [] };
+	const surf = surfaceState(o);
+	const res = { live, userLibraries: libs, installed: [], selected: surf.selected, surface: surf, running: o.running != null ? o.running : liveRunning(o), steps: [] };
 	if (!o.checkOnly) {
 		for (const lib of libs) {
 			try {
@@ -166,11 +188,12 @@ function setup(o = {}) {
 	const changed = res.installed.some(r => r.changed);
 	if (!live.length && (o.platform || process.platform) !== "linux") res.steps.push({ id: "no-live", text: "Ableton Live was not found on this computer." });
 	if (changed && res.running) res.steps.push({ id: "restart-live", text: "Restart Live once so it loads SetPilot." });
+	if (res.selected && surf.input && surf.input !== "SetPilot Bridge") res.steps.push({ id: "input", text: "SetPilot is selected but its MIDI input is " + surf.input + "; choose SetPilot Bridge for the fastest response." });
 	if (res.selected === false) res.steps.push({ id: "auto-select", text: "Live will pick SetPilot by itself when it starts. If it does not, choose SetPilot under Settings > Link, Tempo & MIDI > Control Surface." });
 	return res;
 }
 
-module.exports = { setup, findLive, prefsDirs, findUserLibraries, userLibraryFromCfg, installScript, surfaceSelected, sourceHash, defaultUserLibrary };
+module.exports = { setup, findLive, prefsDirs, findUserLibraries, userLibraryFromCfg, installScript, surfaceSelected, surfaceState, sourceHash, defaultUserLibrary };
 
 if (require.main === module) {
 	const r = setup({ checkOnly: process.argv.includes("--check") });

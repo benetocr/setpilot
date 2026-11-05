@@ -2,3 +2,7 @@ node_modules/
 __pycache__/
 *.pyc
 dist/
+live/SetPilot/bridge.log
+live/SetPilot/selfcheck.json
+probe-result.json
+data/
