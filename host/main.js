@@ -28,7 +28,19 @@ function startHost({ log: logOut = console.log } = {}) {
 	const DATA = dataDir();
 	fs.mkdirSync(DATA, { recursive: true });
 	process.env.SETPILOT_DATA = DATA;
-	const LOG = path.join(DATA, "host.log");
+	// Logs go where support (and the user) can find them: next to SetPilot's
+	// things in the User Library when there is one, else the data folder.
+	let LOG_DIR = DATA;
+	try {
+		const libs = require("../installer/setup").findUserLibraries();
+		const lib = libs.find(l => fs.existsSync(l));
+		if (lib) { LOG_DIR = path.join(lib, "SetPilot", "Logs"); fs.mkdirSync(LOG_DIR, { recursive: true }); }
+	} catch (e) { }
+	for (const f of ["host.log", "setpilot.log"]) {
+		try { if (fs.statSync(path.join(LOG_DIR, f)).size > 5e6) fs.renameSync(path.join(LOG_DIR, f), path.join(LOG_DIR, f + ".old")); } catch (e) { }
+	}
+	if (!process.env.SETPILOT_LOG) process.env.SETPILOT_LOG = path.join(LOG_DIR, "setpilot.log");
+	const LOG = path.join(LOG_DIR, "host.log");
 	const log = (...m) => {
 		const line = new Date().toISOString() + " " + m.join(" ");
 		fs.appendFile(LOG, line + "\n", () => {});

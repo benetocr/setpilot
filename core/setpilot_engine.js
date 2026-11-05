@@ -3247,15 +3247,15 @@ function runJob() {
 	} else if (step.type == "done") {
 		setProp("current_song_time", job.P);
 		var title = job.title;
+		var ck = job.checked || { ok: 0, total: 0 };
 		// keep each stem's original timing, to repair the warp later if needed
 		if (!songOpts[title]) songOpts[title] = { bpm: 0, semis: 0 };
 		songOpts[title].warp = job.warp;
 		needStore = true;
-		guard("outputs", applyOutputs)("");
 		job = null;
+		guard("outputs", applyOutputs)("");
 		structSig = "";
 		dirty = true;
-		var ck = job.checked || { ok: 0, total: 0 };
 		importMsg("done", title, ck.ok, ck.total);
 		log("import done: " + title + " (" + ck.ok + "/" + ck.total + " clips checked)");
 		// Live may finish analysing a long file after the import: look again soon

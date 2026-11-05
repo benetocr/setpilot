@@ -307,7 +307,7 @@ module.exports = { start };
 
 // ---------------------------------------------------------------- inside Max
 if (maxApi) {
-	const LOG = path.join(DATA_DIR, "setpilot.log");
+	const LOG = process.env.SETPILOT_LOG || path.join(DATA_DIR, "setpilot.log");
 	const writeLog = (...m) => {
 		const line = new Date().toISOString() + " " + m.join(" ") + "\n";
 		fs.appendFile(LOG, line, () => {});

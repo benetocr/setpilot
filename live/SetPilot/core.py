@@ -380,8 +380,7 @@ class Bridge(object):
                 ok, err = True, None
             except Exception as e:
                 v, ok, err = None, False, "%s: %s" % (type(e).__name__, e)
-                if q is None:
-                    self.log("%s %s failed: %s" % (msg.get("t"), msg.get("f") or msg.get("p"), err))
+            self._trace(msg, ok, err, v)
             if msg.get("w"):
                 self.aw = max(self.aw, int(msg["w"]))
             if q is not None:
@@ -396,6 +395,27 @@ class Bridge(object):
                 else:
                     res["err"] = err
                 reply(client, res)
+
+    # A short record of what the app asked Live to do (not the frequent fader
+    # and position writes), for support. Errors always.
+    def _trace(self, msg, ok, err, v):
+        t = msg.get("t")
+        if t in ("ping", "get") and ok:
+            return
+        if t == "set" and ok and msg.get("p") in ("value", "current_song_time", "mute", "solo", "loop", "loop_start", "loop_length"):
+            return
+        i = msg.get("id")
+        kind = self.objs[int(i)][1] if i is not None and int(i) in self.objs else "?"
+        what = msg.get("f") or msg.get("p")
+        detail = msg.get("v") if t == "set" else msg.get("a")
+        line = "%s %s#%s %s %s" % (t, kind, i, what, json.dumps(detail)[:120])
+        if not ok:
+            line += " FAILED: " + str(err)
+        elif t == "call" and v is not None:
+            line += " -> " + json.dumps(v)[:80]
+        if t == "call" and what == "set_or_delete_cue":
+            line += " (%d locators)" % len(self._safe(lambda: list(self.song.cue_points), []))
+        self.log(line)
 
     def execute(self, msg):
         t = msg.get("t")
