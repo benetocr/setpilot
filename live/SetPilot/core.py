@@ -440,6 +440,13 @@ class Bridge(object):
             return self._add_marker(obj, args)
         if f == "zoom_view":
             return self._zoom(obj, args)
+        if f == "set_value":
+            obj.value = float(args[0])
+            self.dirty.add((i, "value"))
+            self.dirty.add((i, "display"))
+            return self.read(i, "display")
+        if f == "insert_plugin":
+            return self._insert_plugin(obj, args)
         if f == "probe":
             return self.probe()
         fn = getattr(obj, f)
@@ -472,6 +479,41 @@ class Bridge(object):
             except Exception as e:
                 errors.append("%s: %s" % (name, e))
         raise RuntimeError("add_warp_marker: " + "; ".join(errors))
+
+    # Puts a plugin on a track the way a user would: select the track, find
+    # the plugin in Live's browser, load it. args: plugin name, preferred
+    # format ("VST3" or "AU"). Returns the new device.
+    def _insert_plugin(self, track, args):
+        name = str(args[0]) if args else "SetPilot Audio"
+        prefer = str(args[1]) if len(args) > 1 else "VST3"
+        browser = getattr(self.app, "browser", None)
+        if browser is None:
+            raise RuntimeError("Live's browser is not available")
+        found = []
+
+        def walk(item, path, depth):
+            if depth > 6 or len(found) > 8:
+                return
+            for child in self._safe(lambda: list(item.children), []):
+                cname = str(self._safe(lambda: child.name, ""))
+                if cname == name and self._safe(lambda: child.is_loadable, False):
+                    found.append((path + [cname], child))
+                elif self._safe(lambda: child.is_folder, False) or self._safe(lambda: len(child.children), 0):
+                    walk(child, path + [cname], depth + 1)
+
+        walk(browser.plugins, [], 0)
+        if not found:
+            raise RuntimeError("%s is not in Live's plug-in list (rescan plug-ins?)" % name)
+        found.sort(key=lambda x: 0 if prefer in "/".join(x[0]) else 1)
+        before = set(ptr_of(d) for d in self._safe(lambda: list(track.devices), []))
+        self.song.view.selected_track = track
+        browser.load_item(found[0][1])
+        self.struct_dirty = True
+        self.sweep()
+        for d in self._safe(lambda: list(track.devices), []):
+            if ptr_of(d) not in before:
+                return {"$": self.ref(d, "device")}
+        return None
 
     def _zoom(self, view, args):
         d = int(args[0]) if args else 0

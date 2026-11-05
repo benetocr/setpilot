@@ -253,9 +253,37 @@ class View(Observable):
         self.zooms.append((direction, name, modifier))
 
 
-class Application(object):
+class BrowserItem(object):
+    def __init__(self, name, children=(), loadable=False, make=None):
+        self.name, self.children, self.is_loadable, self.make = name, list(children), loadable, make
+        self.is_folder = bool(children)
+
+
+class Browser(object):
+    def __init__(self, song):
+        self._song = song
+        self.plugins = BrowserItem("Plug-Ins", [
+            BrowserItem("AU", [BrowserItem("SetPilot", [BrowserItem("SetPilot Audio", loadable=True, make="AU")])]),
+            BrowserItem("VST3", [BrowserItem("SetPilot", [BrowserItem("SetPilot Audio", loadable=True, make="VST3")])]),
+        ])
+        self.loaded = []
+
+    def load_item(self, item):
+        tr = self._song.view.selected_track
+        self.loaded.append(item.make)
+        tr.devices = tuple(tr.devices) + (setpilot_audio("Cues"),)
+
+
+class SongView(object):
     def __init__(self):
+        self.selected_track = None
+
+
+class Application(object):
+    def __init__(self, song=None):
         self.view = View()
+        if song is not None:
+            self.browser = Browser(song)
 
 
 class Song(Observable):
@@ -268,6 +296,7 @@ class Song(Observable):
                             signature_denominator=4, loop=False, loop_start=0.0, loop_length=16.0,
                             clip_trigger_quantization=4, back_to_arranger=False, cue_points=(), tracks=())
         self.master_track = MasterTrack("Main")
+        object.__setattr__(self, "view", SongView())
         self.last_event_time = 0.0
         self.song_length = 0.0
 

@@ -58,7 +58,7 @@ function refreshTray() {
 function showWindow() {
 	if (win && !win.isDestroyed()) { win.show(); win.focus(); return; }
 	win = new BrowserWindow({
-		width: 420, height: 600, resizable: false, title: T.title, backgroundColor: "#15171f",
+		width: 420, height: 720, resizable: false, title: T.title, backgroundColor: "#15171f",
 		titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
 		webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false }
 	});
@@ -87,9 +87,11 @@ ipcMain.handle("status", async () => {
 		dashboard: st.dashboard || null, songs,
 		// once Live talks to us, "restart Live" and "choose SetPilot" are done
 		steps: ((st.setup && st.setup.steps) || []).filter(x => st.live !== "connected" || !["restart-live", "auto-select"].includes(x.id)),
-		qr: st.dashboard ? await host.qrSvg() : ""
+		qr: st.dashboard ? await host.qrSvg() : "",
+		setRoles: st.setRoles || {}, plugins: st.plugins || {}
 	};
 });
+ipcMain.handle("prepare", () => host.prepareSet());
 ipcMain.handle("open", (e, what) => {
 	const st = host.status;
 	if (what === "dashboard" && st.dashboard) shell.openExternal(st.dashboard.local);

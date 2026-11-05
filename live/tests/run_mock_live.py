@@ -71,6 +71,8 @@ def main():
         by["Guide"].devices = (mock_live.setpilot_audio("Guide"),)
         by["Click"].devices = (mock_live.setpilot_audio("Click"),)
     surface = SetPilotSurface(CInstance(song))
+    # Live's application object (browser with SetPilot Audio in it)
+    surface.bridge.app = mock_live.Application(song)
     bell = None
     if a.doorbell:
         bell = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

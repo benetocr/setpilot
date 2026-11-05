@@ -45,6 +45,15 @@ button { font: inherit; font-weight: 600; color: var(--stage); background: var(-
 button:disabled { background: var(--raise); color: var(--faint); cursor: default; }
 button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
+.sound { display: none; }
+.sound.show { display: block; }
+.roles { display: flex; gap: 6px; margin-bottom: 8px; }
+.roles span { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--deck); color: var(--faint); }
+.roles span.in { color: var(--stage); background: var(--live); }
+.roles span.found { color: var(--text); background: var(--raise); }
+.sound p { margin: 0 0 10px; color: var(--dim); font-size: 13px; }
+button.secondary { background: var(--raise); color: var(--text); }
+button.secondary[hidden] { display: none; }
 .steps { display: none; background: var(--deck); border-left: 3px solid var(--queued); border-radius: 0 10px 10px 0; padding: 12px 14px; color: var(--dim); font-size: 13px; }
 .steps.show { display: block; }
 .steps p { margin: 0; }
@@ -73,6 +82,12 @@ button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
     </div>
   </section>
   <button id="open" disabled></button>
+
+  <section class="sound" id="sound">
+    <div class="roles" id="roles"></div>
+    <p id="sound-text"></p>
+    <button id="prepare" class="secondary"></button>
+  </section>
 
   <section class="steps" id="steps"></section>
   <p class="foot" id="foot"></p>

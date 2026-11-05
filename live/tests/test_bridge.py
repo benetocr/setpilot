@@ -19,7 +19,7 @@ from SetPilot.net import Server  # noqa: E402
 class Harness(object):
     def __init__(self, song=None):
         self.song = song or mock_live.demo_song()
-        self.app = mock_live.Application()
+        self.app = mock_live.Application(self.song)
         self.out = []
         self.replies = []
         self.b = Bridge(self.song, app=self.app, send=self.out.append,
@@ -106,6 +106,28 @@ class DeviceTest(unittest.TestCase):
         for x in h.deltas():
             d.update(x["o"])
         self.assertEqual(d[str(h.id_of(prm))]["p"]["display"], "Click")
+
+
+class InsertPluginTest(unittest.TestCase):
+    def test_puts_the_vst3_on_the_track_and_returns_it(self):
+        h = Harness()
+        tr = h.song.tracks[0]
+        h.cmd(t="call", q=1, id=h.id_of(tr), f="insert_plugin", a=["SetPilot Audio", "VST3"])
+        h.tick()
+        r = h.replies[-1]
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(h.app.browser.loaded, ["VST3"])
+        dev = tr.devices[-1]
+        self.assertEqual(r["v"], {"$": h.id_of(dev)})
+        # its role parameter is followed right away
+        self.assertIn(h.id_of(dev.parameters[0]), h.b.objs)
+
+    def test_missing_plugin_is_a_clear_error(self):
+        h = Harness()
+        h.cmd(t="call", q=1, id=h.id_of(h.song.tracks[0]), f="insert_plugin", a=["Nope"])
+        h.tick()
+        self.assertFalse(h.replies[-1]["ok"])
+        self.assertIn("rescan", h.replies[-1]["err"])
 
 
 class WriteTest(unittest.TestCase):

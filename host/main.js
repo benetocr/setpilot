@@ -59,7 +59,8 @@ function startHost({ log: logOut = console.log } = {}) {
 	const { port1, port2 } = new MessageChannel();
 	const worker = new Worker(path.join(__dirname, "engine_worker.js"), { workerData: { sab, bridgePort: port2 }, transferList: [port2] });
 	const toBridge = x => { port1.postMessage(x); Atomics.add(signal, 0, 1); Atomics.notify(signal, 0); };
-	let dictReq = 0;
+	let dictReq = 0, prepReq = 0;
+	const prepWait = new Map();
 	const dictWait = new Map();
 
 	const doorbell = makeDoorbell(process.env.SETPILOT_DOORBELL, log);
@@ -78,6 +79,8 @@ function startHost({ log: logOut = console.log } = {}) {
 	worker.on("message", m => {
 		if (m.outlet) { if (m.outlet[0] === 0) maxApi._dispatch(m.outlet[1]); }
 		else if (m.plugin) plugins.send(m.plugin.role, m.plugin.msg);
+		else if (m.setRoles) status.setRoles = m.setRoles;
+		else if (m.prepared) { const w = prepWait.get(m.prepared.id); prepWait.delete(m.prepared.id); if (w) w(m.prepared); }
 		else if (m.post) { if (process.env.SP_DEBUG) log("[engine]", m.post); }
 		else if (m.dict) { const w = dictWait.get(m.dict.id); dictWait.delete(m.dict.id); if (w) w(m.dict.value); }
 		else if (m.live === "ready") {
@@ -139,6 +142,8 @@ function startHost({ log: logOut = console.log } = {}) {
 	return {
 		link, worker, status, log, dataDir: DATA,
 		qrSvg: () => (ann ? ann.qrSvg() : Promise.resolve("")),
+		// add SetPilot Audio tracks to the open set
+		prepareSet: () => new Promise(resolve => { const id = ++prepReq; prepWait.set(id, r => { log("prepare set:", r.ok ? (r.done.join(", ") || "nothing to do") : r.err); resolve(r); }); worker.postMessage({ prepareSet: id }); }),
 		// put back what the engine changed in the set (muted Guide, faders
 		// mid-fade...), give Live a moment to apply it, then close
 		async stop() {

@@ -12,6 +12,7 @@ const { Mirror } = require("../bridge/mirror");
 const { makeLiveAPI } = require("../bridge/facade");
 const { loadEngine } = require("./engine_vm");
 const { AudioRouter } = require("./audio_router");
+const { prepareSet } = require("./prepare_set");
 
 const bridge = workerData.bridgePort;
 const signal = new Int32Array(workerData.sab);
@@ -92,11 +93,26 @@ function onBridge(x) {
 
 bridge.on("message", onBridge);
 
+// which roles have a SetPilot Audio in this set (for the app's "prepare" button)
+let lastRoles = "";
+setInterval(() => {
+	if (!mirror.ready) return;
+	const r = router.roleTracks(), key = JSON.stringify(r);
+	if (key !== lastRoles) { lastRoles = key; parentPort.postMessage({ setRoles: r }); }
+}, 1000);
+
 parentPort.on("message", m => {
 	if (m.send) { if (started) eng.send(m.send[0], m.send[1]); return; }
 	if (m.setDict) { eng.dicts[m.setDict[0]] = m.setDict[1]; return; }
 	if (m.getDict) { parentPort.postMessage({ dict: { id: m.getDict.id, value: eng.dicts[m.getDict.name] || null } }); return; }
 	if (m.pluginRoles) { router.setConnected(m.pluginRoles); return; }
 	if (m.pluginEvent) { router.event(m.pluginEvent.role, m.pluginEvent.m); return; }
+	if (m.prepareSet) {
+		let r;
+		try { r = { ok: true, done: prepareSet({ mirror, router, log: x => parentPort.postMessage({ post: x }) }) }; }
+		catch (e) { r = { ok: false, err: e.message }; }
+		parentPort.postMessage({ prepared: Object.assign({ id: m.prepareSet }, r) });
+		return;
+	}
 	if (m.stats) { parentPort.postMessage({ stats: { id: m.stats.id, value: mirror.stats } }); return; }
 });
