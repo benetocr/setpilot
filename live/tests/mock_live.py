@@ -112,6 +112,28 @@ class DeviceParameter(Observable):
         return self.str_for_value(self.value)
 
 
+class Device(Observable):
+    _props = ("name", "parameters")
+
+    def __init__(self, name, params=(), class_name="PluginDevice"):
+        Observable.__init__(self, name=name, parameters=tuple(params))
+        self.class_name = class_name
+
+
+class ChoiceParameter(DeviceParameter):
+    def __init__(self, name, choices, index=0):
+        DeviceParameter.__init__(self, name, value=float(index), lo=0.0, hi=float(len(choices) - 1))
+        self.choices = choices
+
+    def str_for_value(self, v):
+        return self.choices[int(round(v))]
+
+
+def setpilot_audio(role):
+    roles = ["Click", "Cues", "Guide", "Tail"]
+    return Device("SetPilot Audio", [ChoiceParameter("SetPilot Role", roles, roles.index(role))])
+
+
 class MixerDevice(Observable):
     _props = ()
 
@@ -162,13 +184,13 @@ class Clip(Observable):
 
 
 class Track(Observable):
-    _props = ("name", "mute", "solo", "color", "output_meter_level", "arrangement_clips",
+    _props = ("name", "mute", "solo", "color", "output_meter_level", "arrangement_clips", "devices",
               "output_routing_type", "output_routing_channel", "available_output_routing_channels")
     ROUTES = (RoutingType("Ext. Out", 1), RoutingType("Main", 2), RoutingType("Band Bus", 3))
 
     def __init__(self, name, midi=False):
         Observable.__init__(self, name=name, mute=False, solo=False, color=0xff6600, output_meter_level=0.0,
-                            arrangement_clips=(), output_routing_type=self.ROUTES[1],
+                            arrangement_clips=(), devices=(), output_routing_type=self.ROUTES[1],
                             output_routing_channel=RoutingType(""), available_output_routing_channels=(RoutingType(""),))
         self.has_midi_input = midi
         self.is_foldable = False

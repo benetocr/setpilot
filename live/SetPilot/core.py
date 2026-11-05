@@ -20,10 +20,15 @@ with open(os.path.join(HERE, "spec.json")) as _f:
 KINDS = SPEC["kinds"]
 LISTS = set(SPEC["lists"])
 ROUTING = set(SPEC["routing"])
-STRUCT = set(["tracks", "cue_points", "arrangement_clips", "mixer_device", "volume", "panning", "master_track"])
+STRUCT = set(["tracks", "cue_points", "arrangement_clips", "mixer_device", "volume", "panning", "master_track", "devices", "parameters"])
+# devices whose parameters we follow (all others: name only; a synth can have
+# thousands of parameters)
+OWN_DEVICE_PREFIX = "SetPilot"
 CLASS_KIND = {
     "Song": "song", "Track": "track", "Clip": "clip", "CuePoint": "cue",
     "MixerDevice": "mixer", "DeviceParameter": "param", "View": "view",
+    "Device": "device", "PluginDevice": "device", "AuPluginDevice": "device", "MaxDevice": "device",
+    "RackDevice": "device", "SimplerDevice": "device", "Eq8Device": "device", "CompressorDevice": "device",
 }
 
 
@@ -128,6 +133,12 @@ class Bridge(object):
                 self.struct_dirty = True
             return structural
 
+        if prop == "value":
+            def value_changed():
+                self.dirty.add((i, "value"))
+                self.dirty.add((i, "display"))
+            return value_changed
+
         def changed():
             self.dirty.add((i, prop))
         return changed
@@ -177,11 +188,23 @@ class Bridge(object):
             if tr is not master:
                 for c in self._safe(lambda: list(tr.arrangement_clips), []):
                     seen.add(self.ref(c, "clip"))
+            for dev in self._safe(lambda: list(tr.devices), []):
+                seen.add(self.ref(dev, "device"))
+                if self._own_device(dev):
+                    for prm in self._safe(lambda: list(dev.parameters), []):
+                        seen.add(self.ref(prm, "param"))
         gone = [i for i in list(self.objs.keys()) if i not in seen]
         for i in gone:
             self.forget(i)
         self.struct_dirty = False
         return gone
+
+    @staticmethod
+    def _own_device(dev):
+        try:
+            return str(dev.name).startswith(OWN_DEVICE_PREFIX)
+        except Exception:
+            return False
 
     @staticmethod
     def _safe(fn, default):
@@ -219,6 +242,13 @@ class Bridge(object):
 
     def read(self, i, prop):
         obj, kind = self.objs[i]
+        if prop == "display":
+            try:
+                return str(obj.str_for_value(obj.value))
+            except Exception:
+                return None
+        if kind == "device" and prop == "parameters" and not self._own_device(obj):
+            return []
         try:
             v = getattr(obj, prop)
         except Exception:
@@ -235,7 +265,7 @@ class Bridge(object):
         obj, kind = self.objs[i]
         props = {}
         for prop in KINDS.get(kind, []) + sorted(self.extra.get(i, ())):
-            if not has(obj, prop):
+            if prop != "display" and not has(obj, prop):
                 continue
             props[prop] = self.read(i, prop)
         return {"k": kind, "p": props}

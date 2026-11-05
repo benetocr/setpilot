@@ -1,0 +1,65 @@
+name: build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci --ignore-scripts
+      - run: node dev/test_engine.js
+      - run: SP_BRIDGE=1 node dev/test_engine.js
+      - run: SP_BRIDGE=1 SP_WRITE_DELAY=5 node dev/test_engine.js
+      - run: python3 -m unittest discover -s live/tests
+      - run: node dev/test_setup.js
+      - run: node dev/e2e.js
+      - run: g++ -std=c++17 -O2 -I plugin/src plugin/tests/core_test.cpp -o core_test && ./core_test
+
+  plugin-mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build AU and VST3 (universal)
+        run: |
+          cmake -S plugin -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          cmake --build build --config Release --target SetPilotAudio_AU SetPilotAudio_VST3 -- -quiet
+      - name: Sign (ad hoc) and check
+        run: |
+          A=build/SetPilotAudio_artefacts/Release
+          codesign --force --deep -s - "$A/AU/SetPilot Audio.component"
+          codesign --force --deep -s - "$A/VST3/SetPilot Audio.vst3"
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "$A/AU/SetPilot Audio.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          auval -v aufx Spau Stpl | tail -20
+      - name: Pack
+        run: |
+          cd build/SetPilotAudio_artefacts/Release
+          ditto -c -k --keepParent "AU/SetPilot Audio.component" "$GITHUB_WORKSPACE/SetPilot-Audio-AU.zip"
+          ditto -c -k --keepParent "VST3/SetPilot Audio.vst3" "$GITHUB_WORKSPACE/SetPilot-Audio-VST3.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SetPilot-Audio-mac
+          path: SetPilot-Audio-*.zip
+
+  app-mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx electron-builder --mac zip --arm64 --x64 -c.mac.identity=null
+      - name: Sign ad hoc
+        run: |
+          for a in dist/mac*/SetPilot.app; do codesign --force --deep -s - "$a"; done
+          cd dist/mac-arm64 && ditto -c -k --keepParent SetPilot.app "$GITHUB_WORKSPACE/SetPilot-mac-arm64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SetPilot-app-mac
+          path: SetPilot-mac-arm64.zip

@@ -75,6 +75,39 @@ class SnapshotTest(unittest.TestCase):
         json.dumps(Harness().snap)
 
 
+class DeviceTest(unittest.TestCase):
+    def test_setpilot_plugins_are_found_with_their_role(self):
+        song = mock_live.demo_song()
+        song.tracks[1].devices = (mock_live.Device("EQ Eight", [mock_live.DeviceParameter("Gain")], "Eq8Device"),
+                                  mock_live.setpilot_audio("Guide"))
+        h = Harness(song)
+        o = h.snap["o"]
+        guide = o[str(h.id_of(song.tracks[1]))]["p"]["devices"]
+        eq, sp = o[str(guide[0]["$"])], o[str(guide[1]["$"])]
+        self.assertEqual(eq["p"]["parameters"], [], "other devices: no parameters")
+        self.assertEqual(sp["p"]["name"], "SetPilot Audio")
+        role = o[str(sp["p"]["parameters"][0]["$"])]
+        self.assertEqual(role["p"]["name"], "SetPilot Role")
+        self.assertEqual(role["p"]["display"], "Guide")
+
+    def test_role_change_and_new_plugin_are_reported(self):
+        h = Harness()
+        dev = mock_live.setpilot_audio("Cues")
+        h.song.tracks[0].devices = (dev,)
+        h.tick()
+        o = {}
+        for d in h.deltas():
+            o.update(d["o"])
+        self.assertIn(str(h.id_of(dev)), o)
+        prm = dev.parameters[0]
+        prm.value = 0.0
+        h.tick()
+        d = {}
+        for x in h.deltas():
+            d.update(x["o"])
+        self.assertEqual(d[str(h.id_of(prm))]["p"]["display"], "Click")
+
+
 class WriteTest(unittest.TestCase):
     def test_writes_wait_for_the_tick_and_report_back(self):
         h = Harness()

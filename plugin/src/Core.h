@@ -1,0 +1,302 @@
+// SetPilot Audio: the sound side of SetPilot, inside Live's audio thread.
+//
+// One plugin, four jobs (its "Role" parameter):
+//   Click  the click, on the beat grid of Live's own playhead
+//   Cues   SetPilot's spoken cues, started on the exact sample of their beat
+//   Guide  a gate on the song's Guide track, closed/opened on a beat
+//   Tail   the end of the previous song, played over the next one's start
+//
+// Everything is scheduled in beats (Live's song time) and rendered from the
+// host's playhead each block, so timing is sample-accurate no matter how late
+// the app's message arrived, as long as it arrived before the beat.
+//
+// This file has no JUCE in it so it can be tested on its own.
+
+#pragma once
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <vector>
+
+namespace sp {
+
+enum class Role { Click = 0, Cues = 1, Guide = 2, Tail = 3 };
+
+struct Transport {
+	bool playing = false;
+	double ppq = 0.0;       // song position in beats at the first sample of the block
+	double bpm = 120.0;
+	int sigNum = 4, sigDen = 4;
+};
+
+// mono or stereo audio already at the host's sample rate
+struct Sample {
+	std::vector<float> l, r;
+	size_t size() const { return l.size(); }
+};
+using SamplePtr = std::shared_ptr<const Sample>;
+
+struct ClickParams {
+	bool on = true;
+	int beats = 4;          // beats in the bar (from the song)
+	int sub = 1;            // 1 quarter, 2 eighths, 3 triplets, 4 sixteenths
+	uint32_t accMask = 1;   // beats with an accent
+	uint32_t muteMask = 0;  // silent beats
+	float lvlAcc = 1.0f, lvlBeat = 0.8f, lvlSub = 0.5f;
+	int sound = 0;          // 0 beep, 1 wood, 2 rim
+	float gain = 1.0f;
+};
+
+// Commands from the app. The network thread pushes, the audio thread pops.
+struct Command {
+	enum Type { None, ClickSet, CueSlot, CueArm, CueDisarm, CuePlay, GateArm, GateNow, TailLoad, TailPlay, TailStop } type = None;
+	int idx = 0;
+	double beat = 0, a = 0, b = 0, c = 0, d = 0;
+	ClickParams click;
+	SamplePtr sample;
+};
+
+// Single producer / single consumer queue; the audio thread never waits.
+template <size_t N>
+class CommandQueue {
+public:
+	bool push(Command c) {
+		std::lock_guard<std::mutex> g(pushLock);   // producers serialize among themselves only
+		size_t w = write.load(std::memory_order_relaxed), nx = (w + 1) % N;
+		if (nx == read.load(std::memory_order_acquire)) return false;
+		buf[w] = std::move(c);
+		write.store(nx, std::memory_order_release);
+		return true;
+	}
+	bool pop(Command& c) {
+		size_t r = read.load(std::memory_order_relaxed);
+		if (r == write.load(std::memory_order_acquire)) return false;
+		c = std::move(buf[r]);
+		buf[r] = Command();
+		read.store((r + 1) % N, std::memory_order_release);
+		return true;
+	}
+private:
+	std::array<Command, N> buf;
+	std::atomic<size_t> read{0}, write{0};
+	std::mutex pushLock;
+};
+
+class Core {
+public:
+	static constexpr double FAR = 1e12;
+
+	void prepare(double sr) { sampleRate = sr; clickVoice.active = false; }
+	void setRole(Role r) { role = r; }
+	Role getRole() const { return role; }
+	bool push(Command c) { return queue.push(std::move(c)); }
+
+	// events the app wants to hear about (cue started...), read by the network thread
+	std::atomic<int> firedCue{-1};
+	std::atomic<double> firedAt{0};
+	std::atomic<int> firedCount{0};
+
+	// in/out: 2 channels. in may be null (no input).
+	void process(const float* const* in, float* const* out, int numCh, int n, const Transport& tr) {
+		drain();
+		const double beatsPerSample = tr.bpm / 60.0 / sampleRate;
+		// samples that are about to be released go away outside the loop
+		for (int ch = 0; ch < numCh; ++ch) {
+			if (role == Role::Guide && in && in[ch]) std::copy(in[ch], in[ch] + n, out[ch]);
+			else std::fill(out[ch], out[ch] + n, 0.0f);
+		}
+
+		switch (role) {
+			case Role::Click: renderClick(out, numCh, n, tr, beatsPerSample); break;
+			case Role::Cues: renderCues(out, numCh, n, tr, beatsPerSample); break;
+			case Role::Guide: renderGate(out, numCh, n, tr, beatsPerSample); break;
+			case Role::Tail: renderTail(out, numCh, n); break;
+		}
+	}
+
+	// state, for tests and the editor
+	ClickParams clickParams() const { return click; }
+	double cueArmBeat() const { return cueArm; }
+	float gateGain() const { return gate; }
+
+private:
+	double sampleRate = 48000;
+	Role role = Role::Click;
+	CommandQueue<512> queue;
+
+	// ------------------------------------------------------------ commands
+	// Samples are shared with the network thread, which keeps its own
+	// reference for a minute after sending one: dropping ours here never
+	// frees memory on the audio thread.
+	std::array<SamplePtr, 256> cueSlots;
+
+	void drain() {
+		Command c;
+		while (queue.pop(c)) {
+			switch (c.type) {
+				case Command::ClickSet: click = c.click; break;
+				case Command::CueSlot:
+					if (c.idx >= 0 && c.idx < (int)cueSlots.size()) cueSlots[(size_t)c.idx] = c.sample;
+					break;
+				case Command::CueArm: cueArm = c.beat; cueArmIdx = c.idx; break;
+				case Command::CueDisarm: cueArm = FAR; break;
+				case Command::CuePlay: startCue(c.idx, 0); break;
+				case Command::GateArm: gateArm = c.beat; gateArmVal = (float)c.a; break;
+				case Command::GateNow: gateTarget = (float)c.a; gateArm = FAR; break;
+				case Command::TailLoad: tail = c.sample; tailPos = -1; break;
+				case Command::TailPlay:
+					tailPos = c.d / 1000.0 * sampleRate;      // offset ms
+					tailRate = c.a > 0 ? c.a : 1.0;
+					tailMode = (int)c.c;
+					tailFadeSamples = c.b > 0 ? c.b / 1000.0 * sampleRate : 0;   // duration ms
+					tailPlayed = 0;
+					break;
+				case Command::TailStop: tailStopping = true; break;
+				case Command::None: break;
+			}
+		}
+	}
+
+	// crossing test for a beat inside this block: returns the sample offset or -1
+	static int crossing(double target, double ppq, double bps, int n) {
+		if (target >= FAR || target < ppq - 1e-9) return -1;
+		double s = (target - ppq) / bps;
+		if (s >= n) return -1;
+		return std::max(0, (int)std::floor(s + 1e-6));
+	}
+
+	// ------------------------------------------------------------ click
+	ClickParams click;
+	struct ClickVoice { bool active = false; int pos = 0; float level = 0; int kind = 0; double phase = 0; uint32_t noise = 12345; } clickVoice;
+
+	void renderClick(float* const* out, int numCh, int n, const Transport& tr, double bps) {
+		int done = 0;    // samples of this block already rendered
+		if (tr.playing && click.on) {
+			const int sub = std::max(1, std::min(4, click.sub));
+			const int beats = std::max(1, click.beats);
+			const double step = 4.0 / tr.sigDen / sub;   // one subdivision, in quarter-note beats
+			for (double g = std::ceil(tr.ppq / step - 1e-9) * step; ; g += step) {
+				int s = crossing(g, tr.ppq, bps, n);
+				if (s < 0) break;
+				long long k = std::llround(g / step);
+				int beatInBar = (int)(((k / sub) % beats + beats) % beats);
+				float lvl;
+				int kind;
+				if (k % sub != 0) { lvl = click.lvlSub; kind = 2; }
+				else if (click.muteMask >> beatInBar & 1u) continue;
+				else if (click.accMask >> beatInBar & 1u) { lvl = click.lvlAcc; kind = 0; }
+				else { lvl = click.lvlBeat; kind = 1; }
+				renderClickVoice(out, numCh, done, s);
+				uint32_t nz = clickVoice.noise;
+				clickVoice = ClickVoice{true, 0, lvl * click.gain, kind, 0, nz};
+				done = s;
+			}
+		}
+		renderClickVoice(out, numCh, done, n);
+	}
+	void renderClickVoice(float* const* out, int numCh, int from, int to) {
+		ClickVoice& v = clickVoice;
+		if (!v.active) return;
+		const int len = (int)(0.045 * sampleRate);
+		const double freq = v.kind == 0 ? 1600.0 : v.kind == 1 ? 1100.0 : 800.0;
+		for (int i = from; i < to; ++i) {
+			if (v.pos >= len) { v.active = false; break; }
+			const double t = v.pos / sampleRate;
+			const double env = std::exp(-t * (click.sound == 0 ? 90.0 : 160.0)) * std::min(1.0, v.pos / (0.0008 * sampleRate));
+			double x;
+			if (click.sound == 0) x = std::sin(v.phase);
+			else {
+				v.noise = v.noise * 1664525u + 1013904223u;
+				double nz = ((v.noise >> 9) / 4194304.0) * 2.0 - 1.0;
+				x = 0.6 * std::sin(v.phase) + (click.sound == 1 ? 0.4 : 0.7) * nz * std::exp(-t * 400.0);
+			}
+			v.phase += 2 * M_PI * freq / sampleRate;
+			const float s = (float)(x * env * v.level * 0.5);
+			for (int ch = 0; ch < numCh; ++ch) out[ch][i] += s;
+			++v.pos;
+		}
+	}
+
+	// ------------------------------------------------------------ cues
+	double cueArm = FAR;
+	int cueArmIdx = 0;
+	struct Voice { SamplePtr s; double pos = 0; bool active = false; };
+	std::array<Voice, 4> cueVoices;
+
+	void startCue(int idx, int at) {
+		if (idx <= 0 || idx >= (int)cueSlots.size() || !cueSlots[(size_t)idx]) return;
+		// one cue at a time: a new one cuts the previous
+		for (auto& v : cueVoices) v.active = false;
+		cueVoices[0] = Voice{cueSlots[(size_t)idx], (double)-at, true};
+		firedCue.store(idx);
+		firedCount.fetch_add(1);
+	}
+
+	void renderCues(float* const* out, int numCh, int n, const Transport& tr, double bps) {
+		if (tr.playing) {
+			int s = crossing(cueArm, tr.ppq, bps, n);
+			if (s >= 0) { firedAt.store(cueArm); cueArm = FAR; startCue(cueArmIdx, s); }
+		}
+		for (auto& v : cueVoices) {
+			if (!v.active) continue;
+			const Sample& smp = *v.s;
+			for (int i = 0; i < n; ++i) {
+				if (v.pos < 0) { v.pos += 1; continue; }
+				size_t p = (size_t)v.pos;
+				if (p >= smp.size()) { v.active = false; break; }
+				out[0][i] += smp.l[p];
+				if (numCh > 1) out[1][i] += smp.r.empty() ? smp.l[p] : smp.r[p];
+				v.pos += 1;
+			}
+		}
+	}
+
+	// ------------------------------------------------------------ guide gate
+	double gateArm = FAR;
+	float gateArmVal = 1, gateTarget = 1, gate = 1;
+
+	void renderGate(float* const* out, int numCh, int n, const Transport& tr, double bps) {
+		int s = tr.playing ? crossing(gateArm, tr.ppq, bps, n) : -1;
+		const float stepPerSample = (float)(1.0 / (0.004 * sampleRate));   // 4 ms ramp: no clicks
+		for (int i = 0; i < n; ++i) {
+			if (i == s) { gateTarget = gateArmVal; gateArm = FAR; }
+			if (gate < gateTarget) gate = std::min(gateTarget, gate + stepPerSample);
+			else if (gate > gateTarget) gate = std::max(gateTarget, gate - stepPerSample);
+			for (int ch = 0; ch < numCh; ++ch) out[ch][i] *= gate;
+		}
+	}
+
+	// ------------------------------------------------------------ tail
+	SamplePtr tail;
+	double tailPos = -1, tailRate = 1, tailFadeSamples = 0, tailPlayed = 0;
+	int tailMode = 1;
+	bool tailStopping = false;
+	float tailStopGain = 1;
+
+	void renderTail(float* const* out, int numCh, int n) {
+		if (!tail || tailPos < 0) { tailStopping = false; tailStopGain = 1; return; }
+		const Sample& smp = *tail;
+		for (int i = 0; i < n; ++i) {
+			size_t p = (size_t)tailPos;
+			if (p + 1 >= smp.size()) { tailPos = -1; break; }
+			const double fr = tailPos - p;
+			float l = (float)(smp.l[p] + (smp.l[p + 1] - smp.l[p]) * fr);
+			const auto& rr = smp.r.empty() ? smp.l : smp.r;
+			float r = (float)(rr[p] + (rr[p + 1] - rr[p]) * fr);
+			float g = 1;
+			if (tailMode == 2 && tailFadeSamples > 0) g = (float)std::max(0.0, 1.0 - tailPlayed / tailFadeSamples);   // crossfade
+			if (tailStopping) { tailStopGain = std::max(0.0f, tailStopGain - (float)(1.0 / (0.05 * sampleRate))); g *= tailStopGain; }
+			out[0][i] += l * g;
+			if (numCh > 1) out[1][i] += r * g;
+			tailPos += tailRate;
+			tailPlayed += 1;
+			if (g <= 0 && (tailStopping || tailMode == 2)) { tailPos = -1; tailStopping = false; tailStopGain = 1; break; }
+		}
+	}
+};
+
+}  // namespace sp

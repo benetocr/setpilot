@@ -2016,7 +2016,13 @@ function setGate(v, force) {
 	messnamed("setpilot_gate", "gatenow", v);
 }
 
+// The mode in effect: "every cue" needs something to say them. Without a
+// voice player SetPilot still fixes the Guide: it silences the Guide's own
+// cue when the next section is not the one the Guide is about to announce.
+function effCueMode() { return cueMode == CUE_ALL && !voicePlayer ? CUE_FIX : cueMode; }
+
 function runCues() {
+	var cueMode = effCueMode();
 	var p = computePlan();
 	var speak = p && (cueMode == CUE_ALL || !p.natural);
 	var key = speak ? p.key : "";
@@ -2066,9 +2072,7 @@ function runCues() {
 function applyMode() {
 	armedKey = null;
 	var gp = gatePresent();
-	if (cueMode == CUE_ALL && !voicePlayer) {
-		muteTracks(guideIds, 0, mutedGuide);
-	} else if (cueMode == CUE_ALL) {
+	if (effCueMode() == CUE_ALL) {
 		if (gp) { setGate(0, true); muteTracks(guideIds, 0, mutedGuide); }
 		else muteTracks(guideIds, 1, mutedGuide);
 	} else {

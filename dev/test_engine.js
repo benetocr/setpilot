@@ -421,6 +421,27 @@ test("with no voice player (app without its plugin) the Guide is never muted", (
 	assert.strictEqual(song.tracks.find(x => x.name === "Guide").mute, 0, "app: the Guide is the only cue source");
 });
 
+test("no voice player: a jump silences the Guide's wrong cue, a natural cue is left alone", () => {
+	const run = jump => {
+		const song = new FakeSong(DEMO_CUES);
+		song.gateDevice = 0;
+		const eng = loadEngine(song, { realtime: false });
+		for (let i = 0; i < 5; i++) eng.step(20);
+		eng.send("cuesource", [0]);
+		eng.send("voiceplayer", [0]);
+		eng.send("playsong", [0]);
+		const guide = song.tracks.find(x => x.name === "Guide");
+		let step = 0;
+		while (song.props.current_song_time < 6 && step++ < 5000) eng.step(20);
+		if (jump) eng.send("section", [0, 5, 0]);       // Intro -> Puente instead of Verso 1
+		const muted = [];
+		while (song.props.current_song_time < 15.5 && step++ < 20000) { eng.step(20); if (song.props.current_song_time > 12.5) muted.push(guide.mute); }
+		return muted;
+	};
+	assert.ok(run(false).every(m => m === 0), "Guide says the right cue: left alone");
+	assert.ok(run(true).every(m => m === 1), "Guide would say Verso 1 before the Puente: silenced");
+});
+
 test("tempo chosen for a song is applied when it starts", () => {
 	const t = setup();
 	t.cmd("temposet", 1, 1340);  // Cielo Abierto 128 -> 134
