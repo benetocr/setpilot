@@ -74,6 +74,10 @@ var clock = 0;          // ms counter from ticks
 // voice cues
 var CUE_OFF = 0, CUE_FIX = 1, CUE_ALL = 2;
 var cueMode = CUE_ALL;  // 0 off, 1 fix the original Guide, 2 SetPilot speaks every cue
+// whether anything can play SetPilot's own cue voice. Always inside Max; in
+// the app only once its audio plugin is there. Without it the song's Guide
+// must never be muted, or nobody would hear any cue at all.
+var voicePlayer = 1;
 var cueBars = 1;        // bars of anticipation
 var cueLang = 2;        // 0 auto, 1 Spanish, 2 English (used by the server's voice)
 var cueMap = {};        // spoken text -> sfplay~ cue number
@@ -2062,7 +2066,9 @@ function runCues() {
 function applyMode() {
 	armedKey = null;
 	var gp = gatePresent();
-	if (cueMode == CUE_ALL) {
+	if (cueMode == CUE_ALL && !voicePlayer) {
+		muteTracks(guideIds, 0, mutedGuide);
+	} else if (cueMode == CUE_ALL) {
 		if (gp) { setGate(0, true); muteTracks(guideIds, 0, mutedGuide); }
 		else muteTracks(guideIds, 1, mutedGuide);
 	} else {
@@ -2571,6 +2577,12 @@ function cuefile(text, path) {
 function cuefired(idx) { log("cue " + idx + " at " + Math.round(t * 100) / 100); }
 function cuedone() { }
 function cueaudio() { log("cue audio playing at " + Math.round(t * 100) / 100); }
+
+function voiceplayer(v) {
+	voicePlayer = num(v) ? 1 : 0;
+	log("voice player " + (voicePlayer ? "present" : "absent"));
+	applyMode();
+}
 
 function cuemode(m) {
 	m = parseInt(m, 10);

@@ -82,7 +82,12 @@ function startHost({ log: logOut = console.log } = {}) {
 		} else if (m.messnamed) audio.emit("messnamed", m.messnamed[0], m.messnamed[1]);
 		else if (m.post) { if (process.env.SP_DEBUG) log("[engine]", m.post); }
 		else if (m.dict) { const w = dictWait.get(m.dict.id); dictWait.delete(m.dict.id); if (w) w(m.dict.value); }
-		else if (m.live === "ready") { log("engine ready,", m.objects, "objects from Live"); calibrate(); }
+		else if (m.live === "ready") {
+			log("engine ready,", m.objects, "objects from Live");
+			// no SetPilot audio plugin yet: keep the song's own Guide audible
+			worker.postMessage({ send: ["voiceplayer", [0]] });
+			calibrate();
+		}
 		else if (m.live === "disconnected") status.latency = null;
 	});
 	worker.on("error", e => log("engine thread failed:", e.stack || e.message));
