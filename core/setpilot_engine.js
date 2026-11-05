@@ -687,7 +687,7 @@ function tick() {
 	if (clock - lastTrackScan > 3000) { lastTrackScan = clock; scanTracks(); }
 	if (clock - lastPing > 3000) { lastPing = clock; ping(); }
 	if (pendingKeys && songs.length) { pendingKeys = false; guard("keys", applyAllKeys)(); }
-	if (job) { guard("import", runJob)(); return; }
+	if (job) { runJobSafe(); return; }
 	if (clearCues >= 0) { guard("clear", clearCueStep)(); return; }
 	if (rewarpQueue.length && !playing) { guard("rewarp", runRewarp)(); return; }
 	if (clock - mix.at > (mix.dirty ? 60 : 700)) guard("mixer", pollMixer)();
@@ -3136,6 +3136,26 @@ function header(plan) {
 	if (plan.key) h += " | " + plan.key;
 	if (plan.meter && plan.meter != "4/4") h += " | " + plan.meter;
 	return h;
+}
+
+// A step Live keeps refusing must not hold the import forever: after three
+// failures it is skipped and the import goes on (and says so at the end).
+function runJobSafe() {
+	var at = job.i;
+	try { runJob(); }
+	catch (e) {
+		log("error in import: " + e.message);
+		if (!job) return;
+		var step = job.steps[at];
+		if (step && job.i === at) {
+			step.errors = (step.errors || 0) + 1;
+			if (step.errors >= 3) {
+				log("import: skipped " + (step.name || step.type) + " after 3 errors");
+				job.warnings = (job.warnings || 0) + 1;
+				job.i++;
+			}
+		}
+	}
 }
 
 function runJob() {

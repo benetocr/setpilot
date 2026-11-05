@@ -27,6 +27,7 @@ class Mirror {
 		this.roots = {};            // song, app_view, ...
 		this.listeners = new Map(); // "id|prop" -> Set(fn)
 		this.pending = new Map();   // "id|prop" -> write number not yet applied by Live
+		this.stale = new Set();     // "id|prop" to read from Live again before trusting the copy
 		this.w = 0;
 		this.q = 0;
 		this.ready = false;
@@ -141,7 +142,14 @@ class Mirror {
 		if (id === this.roots.song && p === "current_song_time") return this.songTime();
 		const o = this.objs.get(id);
 		if (!o) return undefined;
-		if (p in o.p) return o.p[p];
+		if (p in o.p && !this.stale.has(key(id, p))) return o.p[p];
+		if (this.stale.has(key(id, p)) && this.request) {
+			// right after we changed it: ask Live for the value as it is now
+			this.stale.delete(key(id, p));
+			const r = this.request({ t: "get", id, p });
+			if (r && r.ok) o.p[p] = r.v;
+			return o.p[p];
+		}
 		// not mirrored yet: ask Live once, then keep it updated
 		if (!this.request) return undefined;
 		this.stats.lazyGets++;
@@ -164,6 +172,7 @@ class Mirror {
 			return;
 		}
 		this.pending.set(key(id, p), w);
+		if (p === "warping" || p === "warp_mode" || p === "start_marker" || p === "end_marker") this.stale.add(key(id, "warp_markers"));
 		this.send({ t: "set", w, id, p, v });
 		if (!o) return;
 		if (id === this.roots.song && p === "current_song_time") { this.clock = { s: Number(v), at: this.now(), last: Number(v) }; o.p[p] = Number(v); return; }
@@ -174,6 +183,7 @@ class Mirror {
 
 	call(id, fn, args, { sync } = {}) {
 		id = Number(id);
+		if (/warp_marker/.test(fn)) this.stale.add(key(id, "warp_markers"));
 		const w = ++this.w;
 		if (!sync || !this.request) { this.send({ t: "call", w, id, f: fn, a: args || [] }); return undefined; }
 		const t0 = this.now();
