@@ -2034,7 +2034,7 @@
         if (!r.ok) { $("addNote").textContent = T("addFailed", { why: whyText(r.error) }); return; }
         add.busy = true;
         add.title = r.title;
-        $("addStatus").textContent = T("addWorking", { title: r.title }) + (r.missing ? " " + T("addMissing", { n: r.missing }) : "") + (r.tempoChanges ? " " + T("addTempoNote") : "");
+        $("addStatus").textContent = T("addWorking", { title: r.title }) + (r.missing ? " " + T("addMissing", { n: r.missing }) : "");
         $("addBar").style.width = "4%";
         showAddPane("progress");
       });

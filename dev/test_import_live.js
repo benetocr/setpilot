@@ -30,7 +30,9 @@ const get = p => new Promise((res, rej) => http.get({ host: "127.0.0.1", port: P
 			locators: [{ time: 0, name: "Intro" }, { time: 32, name: "Verse 1" }],
 			tracks: [
 				{ name: "Drums", clips: [{ time: 0, file: "/x/Drums.wav", startBeat: 0, length: 140, markers: [[0, 0], [60 / 86, 1]] }] },
-				{ name: "Keys", clips: [{ time: 0, file: "/x/Keys.wav", startBeat: 0, length: 140, markers: null }] }
+				{ name: "Keys", clips: [{ time: 0, file: "/x/Keys.wav", startBeat: 0, length: 140, markers: null }] },
+				// a clip that starts late in its file (its start is past Live's default end)
+				{ name: "Bass", clips: [{ time: 0, file: "/x/Bass.wav", startBeat: 200, length: 140, markers: [[0, 0], [60 / 86, 1]] }] }
 			]
 		};
 		h.worker.postMessage({ setDict: ["setpilot_import", plan] });
@@ -38,6 +40,7 @@ const get = p => new Promise((res, rej) => http.get({ host: "127.0.0.1", port: P
 		for (let i = 0; i < 300 && !events.some(e => e.kind === "done" || e.kind === "error"); i++) await sleep(100);
 		const last = events[events.length - 1];
 		assert.ok(last && last.kind === "done", "import finished: " + JSON.stringify(events.slice(-3)));
+		assert.strictEqual(last.b, last.c, "every clip checked ok: " + JSON.stringify(last));
 		await sleep(1500);
 		const st = await get("/state");
 		const s = st.struct.songs.find(x => x.name === "Do It Again");

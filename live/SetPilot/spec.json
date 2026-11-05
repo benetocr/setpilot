@@ -106,6 +106,8 @@
     "continue_playing",
     "jump",
     "zoom_view",
-    "re_enable_automation"
+    "re_enable_automation",
+    "remove_warp_marker",
+    "move_warp_marker"
   ]
 }

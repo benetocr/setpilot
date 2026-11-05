@@ -3195,6 +3195,11 @@ function runJob() {
 			rewarp(clipApi, step);
 			job.warp[step.file] = compactWarp(step.markers);
 			(job.clips = job.clips || []).push({ clip: num(raw[k]), name: step.name, markers: step.markers, pos: step.pos, tries: 0, len: step.length || 0, maxEnd: step.maxEnd });
+			// Live refuses a start marker past the current end: when the clip
+			// starts later in its file, move the end out first
+			if (step.length > 0 && step.startBeat + step.length > num(clipApi.get("end_marker"))) {
+				try { clipApi.set("end_marker", step.startBeat + step.length); clipApi.set("loop_end", step.startBeat + step.length); } catch (e) { }
+			}
 			if (step.startBeat > 0) clipApi.set("start_marker", step.startBeat);
 			if (step.length > 0) {
 				var wantEnd = step.startBeat + step.length;

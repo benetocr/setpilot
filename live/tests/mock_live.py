@@ -182,6 +182,10 @@ class Clip(Observable):
         self.is_audio_clip = True
         self.gain_display_string = "0.0 dB"
 
+    def __setattr__(self, name, value):
+        _clip_setattr_guard(self, name, value)
+        Observable.__setattr__(self, name, value)
+
     def add_warp_marker(self, m):
         if not isinstance(m, WarpMarker):
             raise TypeError("expects a WarpMarker")
@@ -198,6 +202,11 @@ class Clip(Observable):
                 self.warp_markers = tuple(ms)
                 return
         raise LiveError("no marker")
+
+
+def _clip_setattr_guard(clip, name, value):
+    if name == "start_marker" and value >= clip._v.get("end_marker", 1e9):
+        raise IndexError("StartMarker out of range")
 
 
 class Track(Observable):
@@ -318,6 +327,20 @@ class Song(Observable):
         object.__setattr__(self, "view", SongView())
         self.last_event_time = 0.0
         self.song_length = 0.0
+
+    def __setattr__(self, name, value):
+        # Like Live: with the transport stopped, a new position is applied a
+        # moment later, not right away
+        if name == "current_song_time" and not self._v.get("is_playing") and not getattr(self, "_moving", False):
+            def apply(v=value):
+                object.__setattr__(self, "_moving", True)
+                try:
+                    Observable.__setattr__(self, "current_song_time", v)
+                finally:
+                    object.__setattr__(self, "_moving", False)
+            LATER.append(apply)
+            return
+        Observable.__setattr__(self, name, value)
 
     def add_track(self, name, midi=False):
         t = Track(name, midi)

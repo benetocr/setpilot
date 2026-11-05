@@ -139,7 +139,17 @@ class Mirror {
 
 	get(id, p) {
 		id = Number(id);
-		if (id === this.roots.song && p === "current_song_time") return this.songTime();
+		if (id === this.roots.song && p === "current_song_time") {
+			// Stopped, right after a move: Live applies a new position a moment
+			// later, and the engine waits for that (to drop a locator in the right
+			// place, say). Ask Live where it really is instead of trusting our write.
+			const song = this.objs.get(id);
+			if (song && !song.p.is_playing && this.now() - (this.seekAt || -1e9) < 1500 && this.request) {
+				const r = this.request({ t: "get", id, p });
+				if (r && r.ok && typeof r.v === "number") return r.v;
+			}
+			return this.songTime();
+		}
 		const o = this.objs.get(id);
 		if (!o) return undefined;
 		if (p in o.p && !this.stale.has(key(id, p))) return o.p[p];
@@ -175,7 +185,7 @@ class Mirror {
 		if (p === "warping" || p === "warp_mode" || p === "start_marker" || p === "end_marker") this.stale.add(key(id, "warp_markers"));
 		this.send({ t: "set", w, id, p, v });
 		if (!o) return;
-		if (id === this.roots.song && p === "current_song_time") { this.clock = { s: Number(v), at: this.now(), last: Number(v) }; o.p[p] = Number(v); return; }
+		if (id === this.roots.song && p === "current_song_time") { this.seekAt = this.now(); this.clock = { s: Number(v), at: this.now(), last: Number(v) }; o.p[p] = Number(v); return; }
 		const old = o.p[p];
 		o.p[p] = v;
 		if (!same(old, v)) this.fire(id, p);
