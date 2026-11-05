@@ -136,7 +136,14 @@ function startHost({ log: logOut = console.log } = {}) {
 
 	return {
 		link, worker, status, log, dataDir: DATA,
-		stop() { clearInterval(recal); link.stop(); worker.terminate(); if (doorbell) doorbell.close(); if (ann) ann.stop(); }
+		// put back what the engine changed in the set (muted Guide, faders
+		// mid-fade...), give Live a moment to apply it, then close
+		async stop() {
+			clearInterval(recal);
+			worker.postMessage({ send: ["notifydeleted", []] });
+			await new Promise(r => setTimeout(r, 400));
+			link.stop(); worker.terminate(); if (doorbell) doorbell.close(); if (ann) ann.stop();
+		}
 	};
 }
 
@@ -144,6 +151,7 @@ module.exports = { startHost, dataDir };
 
 if (require.main === module) {
 	const h = startHost();
-	process.on("SIGINT", () => { h.stop(); process.exit(0); });
-	process.on("SIGTERM", () => { h.stop(); process.exit(0); });
+	const bye = () => h.stop().then(() => process.exit(0));
+	process.on("SIGINT", bye);
+	process.on("SIGTERM", bye);
 }
