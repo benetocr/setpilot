@@ -333,6 +333,21 @@ class Bridge(object):
         if self.meter_dirty:
             self.flush_meters()
 
+    # Live announces new tracks, clips and devices after the call that made
+    # them returns. Before answering a call we re-read every list ourselves,
+    # so the app sees the result together with the answer.
+    def mark_structure(self):
+        self.struct_dirty = True
+        sid = self.roots.get("song")
+        self.dirty.add((sid, "tracks"))
+        self.dirty.add((sid, "cue_points"))
+        for i, (obj, kind) in list(self.objs.items()):
+            if kind == "track":
+                self.dirty.add((i, "arrangement_clips"))
+                self.dirty.add((i, "devices"))
+            elif kind == "device":
+                self.dirty.add((i, "parameters"))
+
     def _sent_once(self, i):
         return i in getattr(self, "_sent", set())
 
@@ -373,7 +388,7 @@ class Bridge(object):
                 # what the call changed goes out before the answer, so the app
                 # already sees it when the answer arrives
                 if msg.get("t") != "ping":
-                    self.struct_dirty = True
+                    self.mark_structure()
                     self.flush()
                 res = {"t": "res", "q": q, "ok": ok, "aw": self.aw}
                 if ok:
@@ -513,7 +528,8 @@ class Bridge(object):
         for d in self._safe(lambda: list(track.devices), []):
             if ptr_of(d) not in before:
                 return {"$": self.ref(d, "device")}
-        return None
+        # Live puts the device in a moment later; the app waits for it
+        return {"pending": True}
 
     def _zoom(self, view, args):
         d = int(args[0]) if args else 0

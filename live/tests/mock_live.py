@@ -40,6 +40,16 @@ class LiveError(RuntimeError):
     pass
 
 
+# Like Live: some changes are announced only after the call that made them
+# returned (the new track is there, its "tracks" notification comes later).
+LATER = []
+
+
+def flush_later():
+    while LATER:
+        LATER.pop(0)()
+
+
 class Observable(object):
     _props = ()
 
@@ -73,6 +83,10 @@ class Observable(object):
                 self._notify(name)
         else:
             object.__setattr__(self, name, value)
+
+    def _set_quiet(self, name, value):
+        self._v[name] = value
+        LATER.append(lambda: self._notify(name))
 
     def _add(self, prop, f):
         self._listeners.setdefault(prop, []).append(f)
@@ -271,7 +285,9 @@ class Browser(object):
     def load_item(self, item):
         tr = self._song.view.selected_track
         self.loaded.append(item.make)
-        tr.devices = tuple(tr.devices) + (setpilot_audio("Cues"),)
+        # the device shows up a moment after load_item returns
+        dev = setpilot_audio("Cues")
+        LATER.append(lambda: setattr(tr, "devices", tuple(tr.devices) + (dev,)))
 
 
 class SongView(object):
@@ -311,7 +327,9 @@ class Song(Observable):
         return c
 
     def create_audio_track(self, index=-1):
-        return self.add_track("Audio")
+        t = Track("Audio")
+        self._set_quiet("tracks", tuple(self._v["tracks"]) + (t,))
+        return t
 
     def set_or_delete_cue(self):
         for c in self.cue_points:

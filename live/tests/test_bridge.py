@@ -34,6 +34,7 @@ class Harness(object):
 
     def tick(self):
         self.b.tick(lambda c, m: self.replies.append(m))
+        mock_live.flush_later()
 
     def deltas(self):
         d = [m for m in self.out if m["t"] == "d"]
@@ -117,10 +118,14 @@ class InsertPluginTest(unittest.TestCase):
         r = h.replies[-1]
         self.assertTrue(r["ok"], r)
         self.assertEqual(h.app.browser.loaded, ["VST3"])
+        self.assertEqual(r["v"], {"pending": True}, "Live adds the device a moment later")
+        h.tick()
         dev = tr.devices[-1]
-        self.assertEqual(r["v"], {"$": h.id_of(dev)})
-        # its role parameter is followed right away
-        self.assertIn(h.id_of(dev.parameters[0]), h.b.objs)
+        o = {}
+        for d in h.deltas():
+            o.update(d["o"])
+        self.assertIn({"$": h.id_of(dev)}, o[str(h.id_of(tr))]["p"]["devices"])
+        self.assertIn(h.id_of(dev.parameters[0]), h.b.objs, "its role parameter is followed")
 
     def test_missing_plugin_is_a_clear_error(self):
         h = Harness()
@@ -189,9 +194,11 @@ class CallTest(unittest.TestCase):
         first_res = kinds.index("res")
         self.assertIn("d", kinds[:first_res], "deltas go out before the answer")
         d = sent[kinds.index("d")]
-        new = h.song.tracks[-1]
+        new = h.song._v["tracks"][-1]
         self.assertIn(str(h.id_of(new)), d["o"])
         self.assertEqual(d["o"][str(h.id_of(new))]["k"], "track")
+        song_d = d["o"].get(str(h.snap["roots"]["song"]), {}).get("p", {})
+        self.assertIn({"$": h.id_of(new)}, song_d.get("tracks", []), "the song's track list is sent too, though Live notifies it later")
 
     def test_create_and_delete_clip(self):
         h = Harness()

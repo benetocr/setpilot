@@ -32,10 +32,23 @@ function prepareSet({ mirror, router, log = () => {} }) {
 		log("could not confirm the role of the new SetPilot Audio: " + mirror.get(id, "display"));
 	}
 
+	const isOurs = id => /^SetPilot/.test(String((mirror.objs.get(id) || { p: {} }).p.name));
+	const devicesOf = trackId => (mirror.get(trackId, "devices") || []).map(r => r.$);
+
 	function addPlugin(trackId, role) {
-		const dev = mirror.call(trackId, "insert_plugin", ["SetPilot Audio", process.platform === "darwin" ? "AU" : "VST3"], { sync: true });
-		if (!dev || dev.$ == null) throw new Error("SetPilot Audio did not load");
-		setRole(dev.$, role);
+		const before = new Set(devicesOf(trackId));
+		let dev = mirror.call(trackId, "insert_plugin", ["SetPilot Audio", "VST3"], { sync: true });
+		let id = dev && dev.$;
+		// Live adds the device a moment after loading it: ask again until it is there
+		const until = Date.now() + 5000;
+		while (id == null && Date.now() < until) {
+			const r = mirror.request({ t: "get", id: trackId, p: "devices" });   // also brings in what changed
+			const now = (r && r.ok && r.v || []).map(x => x.$);
+			id = now.find(x => !before.has(x) && isOurs(x));
+			if (id == null) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+		}
+		if (id == null) throw new Error("SetPilot Audio did not appear on the track (is it enabled in Live's Plug-Ins settings?)");
+		setRole(id, role);
 	}
 
 	for (const t of TRACKS) {

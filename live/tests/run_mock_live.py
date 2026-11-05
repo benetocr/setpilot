@@ -106,6 +106,7 @@ def main():
         now = time.time()
         song.advance((now - last) * 1000.0)
         last = now
+        mock_live.flush_later()
         if now >= next_tick:
             surface.update_display()
             next_tick += a.tick / 1000.0

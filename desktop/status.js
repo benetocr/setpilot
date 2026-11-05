@@ -5,6 +5,7 @@ const T = ES ? {
   live: "Live", ms: "respuesta", songs: "canciones",
   rTitle: "Desde el teléfono o la tablet", rText: "Escanea el código en la misma red Wi-Fi.",
   open: "Abrir dashboard", prepare: "Preparar este set", preparing: "Preparando…",
+  prepared: "Listo: ", failed: "No se pudo terminar: ",
   soundMissing: "Agrega las pistas SetPilot Cues, Click y Tail, y SetPilot Audio en tu Guide, para que SetPilot diga los cues y marque el click exacto.",
   soundFound: "SetPilot Audio está en este set. Si una parte no se pone verde, revisa que la pista no esté apagada.",
   soundNoPlugin: "Instala SetPilot Audio y vuelve a abrir Live para que SetPilot tenga su propio sonido.",
@@ -15,6 +16,7 @@ const T = ES ? {
   live: "Live", ms: "response", songs: "songs",
   rTitle: "From your phone or tablet", rText: "Scan the code on the same Wi-Fi network.",
   open: "Open dashboard", prepare: "Prepare this set", preparing: "Preparing…",
+  prepared: "Done: ", failed: "Could not finish: ",
   soundMissing: "Add the SetPilot Cues, Click and Tail tracks, and SetPilot Audio on your Guide, so SetPilot can speak the cues and play a sample-exact click.",
   soundFound: "SetPilot Audio is in this set. If a part does not turn green, check that its track is on.",
   soundNoPlugin: "Install SetPilot Audio and reopen Live so SetPilot has its own sound.",
@@ -38,8 +40,10 @@ $("prepare").onclick = async () => {
   b.disabled = true; b.textContent = T.preparing;
   const r = await window.setpilot.prepare();
   b.disabled = false; b.textContent = T.prepare;
-  if (!r.ok) $("sound-text").textContent = r.err;
+  // keep the answer on screen (the status refresh must not hide it)
+  soundNote = r.ok ? (r.done.length ? T.prepared + r.done.join(", ") : "") : T.failed + r.err;
 };
+let soundNote = "";
 let lastQr = null;
 
 async function tick() {
@@ -68,7 +72,7 @@ async function tick() {
   const missing = roles.filter(r => r !== "tail" && !s.setRoles[r]).length > 0;
   $("sound").classList.toggle("show", on);
   $("prepare").hidden = !missing;
-  if ($("prepare").disabled === false && !$("sound-text").dataset.err) $("sound-text").textContent = missing ? T.soundMissing : T.soundFound;
+  if (!$("prepare").disabled) $("sound-text").textContent = soundNote || (missing ? T.soundMissing : T.soundFound);
   const steps = $("steps");
   steps.replaceChildren(...s.steps.map(x => { const p = document.createElement("p"); p.textContent = (ES && STEPS_ES[x.id]) || x.text; return p; }));
   steps.classList.toggle("show", s.steps.length > 0);
