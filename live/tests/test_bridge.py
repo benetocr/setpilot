@@ -180,6 +180,72 @@ class CueOpsTest(unittest.TestCase):
         self.assertFalse(any(abs(c.time - 16) < 1e-6 for c in h.song.cue_points))
 
 
+class CueGridTest(unittest.TestCase):
+    """Live snaps a new locator to the arrangement grid (16 beats here)."""
+
+    def run_all(self, h, last_q, ticks=200):
+        for _ in range(ticks):
+            h.tick()
+            if any(r.get("q") == last_q for r in h.replies):
+                h.tick()
+                return
+        self.fail("no answer")
+
+    def test_off_grid_locators_land_exactly_and_nothing_else_changes(self):
+        h = Harness()
+        h.song.add_cue("# Next | 86 | F", 400.0)
+        keep = sorted((c.name, c.time) for c in h.song.cue_points)
+        wanted = [(408.0, "Intro"), (424.0, "Verse 1"), (440.0, "Verse 2"), (472.0, "Chorus"), (984.0, "STOP")]
+        for k, (t, n) in enumerate(wanted):
+            h.cmd(t="call", q=100 + k, id=h.snap["roots"]["song"], f="add_cue", a=[t, n])
+        self.run_all(h, 100 + len(wanted) - 1)
+        self.assertTrue(all(r["ok"] for r in h.replies if r.get("q", 0) >= 100), h.replies)
+        now = sorted((c.name, c.time) for c in h.song.cue_points)
+        self.assertEqual(now, sorted(keep + [(n, t) for t, n in wanted]))
+        self.assertEqual(h.app.view.grid, 16.0, "the zoom goes back when done")
+
+    def test_delete_off_grid_keeps_the_neighbour(self):
+        h = Harness()
+        h.song.add_cue("# Next | 86 | F", 400.0)
+        h.song.add_cue("Intro", 408.0)
+        h.cmd(t="call", q=1, id=h.snap["roots"]["song"], f="delete_cue", a=[408.0])
+        self.run_all(h, 1)
+        self.assertTrue(h.replies[-1]["ok"], h.replies)
+        names = sorted((c.name, c.time) for c in h.song.cue_points if c.time >= 400)
+        self.assertEqual(names, [("# Next | 86 | F", 400.0)])
+
+    def test_past_the_end_is_a_clear_error(self):
+        h = Harness()
+        n = len(h.song.cue_points)
+        h.cmd(t="call", q=1, id=h.snap["roots"]["song"], f="add_cue", a=[2000.0, "X"])
+        self.run_all(h, 1)
+        r = [x for x in h.replies if x.get("q") == 1][0]
+        self.assertFalse(r["ok"])
+        self.assertIn("past the end", r["err"])
+        self.assertEqual(len(h.song.cue_points), n)
+
+
+class ReusedAddressTest(unittest.TestCase):
+    def test_a_new_locator_at_a_dead_ones_address_is_sent_as_new(self):
+        h = Harness()
+        old = [c for c in h.song.cue_points if c.name == "Verse"][0]
+        old_id = h.id_of(old)
+        h.song.cue_points = tuple(c for c in h.song.cue_points if c is not old)
+        new = mock_live.CuePoint(h.song, "Bridge", 48.0)
+        object.__setattr__(new, "_live_ptr", old._live_ptr)   # Live reuses the address
+        h.song.cue_points = h.song.cue_points + (new,)
+        h.deltas()
+        for _ in range(3):
+            h.tick()
+        new_id = h.b.ids[new._live_ptr]
+        sent = {}
+        for d in h.deltas():
+            for k, o in d.get("o", {}).items():
+                sent.setdefault(k, {}).update(o.get("p", {}))
+        self.assertEqual(sent[str(new_id)].get("name"), "Bridge")
+        self.assertEqual(sent[str(new_id)].get("time"), 48.0)
+
+
 class WriteTest(unittest.TestCase):
     def test_writes_wait_for_the_tick_and_report_back(self):
         h = Harness()

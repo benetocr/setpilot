@@ -87,6 +87,7 @@ class Bridge(object):
         self.meter_dirty = set()
         self.roots = {}
         self.cue_ops = []      # locator work spread over Live's ticks (see run_cue_ops)
+        self.cue_zoom = 0      # arranger zoom-in steps to undo when that work is done
         self.stats = {"ticks": 0, "tick_ms": [], "doorbells": 0, "time_msgs": 0, "cmds": 0, "cmd_lag_ms": []}
         self.marker_style = None
         self._last_tick = None
@@ -98,6 +99,9 @@ class Bridge(object):
             return 0
         p = ptr_of(obj)
         i = self.ids.get(p)
+        if i is not None and i not in self.objs:
+            self.ids.pop(p, None)
+            i = None
         if i is None:
             i = self.next_id
             self.next_id += 1
@@ -105,6 +109,9 @@ class Bridge(object):
             k = kind or CLASS_KIND.get(type(obj).__name__, "obj")
             self.objs[i] = (obj, k)
             self._listen(i, obj, k)
+        elif kind in ("cue", "clip"):
+            # read through the object Live just handed us (see sweep)
+            self.objs[i] = (obj, self.objs[i][1])
         return i
 
     def _listen(self, i, obj, kind):
@@ -156,6 +163,8 @@ class Bridge(object):
         o = self.objs.pop(i, None)
         if o:
             self.ids.pop(ptr_of(o[0]), None)
+        for p in [p for p, j in self.ids.items() if j == i]:
+            self.ids.pop(p, None)
         self.extra.pop(i, None)
 
     def obj(self, i):
@@ -176,8 +185,14 @@ class Bridge(object):
             if view is not None:
                 self.roots["app_view"] = self.ref(view, "view")
                 seen.add(self.roots["app_view"])
+        # Live can give a new locator or clip the address of one just deleted,
+        # and then it looks like the old one to us, with the old name and time.
+        # So on every structure change their values are sent again.
         for cp in self._safe(lambda: list(s.cue_points), []):
-            seen.add(self.ref(cp, "cue"))
+            i = self.ref(cp, "cue")
+            seen.add(i)
+            for p in KINDS["cue"]:
+                self.dirty.add((i, p))
         tracks = self._safe(lambda: list(s.tracks), [])
         master = self._safe(lambda: s.master_track, None)
         for tr in tracks + ([master] if master is not None else []):
@@ -191,7 +206,11 @@ class Bridge(object):
                         seen.add(self.ref(prm, "param"))
             if tr is not master:
                 for c in self._safe(lambda: list(tr.arrangement_clips), []):
-                    seen.add(self.ref(c, "clip"))
+                    i = self.ref(c, "clip")
+                    seen.add(i)
+                    for p in KINDS["clip"]:
+                        if p != "warp_markers":
+                            self.dirty.add((i, p))
             for dev in self._safe(lambda: list(tr.devices), []):
                 seen.add(self.ref(dev, "device"))
                 if self._own_device(dev):
@@ -314,7 +333,16 @@ class Bridge(object):
             self.send({"t": "d", "aw": self.aw, "o": o})
 
     def flush(self):
-        gone = self.sweep() if self.struct_dirty else []
+        gone = []
+        if self.struct_dirty:
+            try:
+                gone = self.sweep()
+            except Exception as e:
+                # never let one bad entry stop every tick: tidy up and try again
+                self.log("sweep failed (%s): repairing" % e)
+                for p in [p for p, j in self.ids.items() if j not in self.objs]:
+                    self.ids.pop(p, None)
+                gone = self.sweep()
         o = {}
         new_ids = []
         for (i, prop) in list(self.dirty):
@@ -405,52 +433,141 @@ class Bridge(object):
                     res["err"] = err
                 reply(client, res)
 
-    # A short record of what the app asked Live to do (not the frequent fader
-    # and position writes), for support. Errors always.
     # Locators. Live only has "set or delete the locator at the playhead", and
-    # with the transport stopped it applies a new playhead position a moment
-    # later. So each add or delete is a small job spread over Live's ticks:
-    # move the playhead, wait until Live is really there, toggle, check.
+    # two things make that tricky while the transport is stopped:
+    #   - a new playhead position is applied a moment later
+    #   - the locator snaps to the arrangement grid, which follows the zoom
+    #     (at a normal zoom, 424 becomes 432)
+    # So each add or delete is a small job over Live's ticks: move the
+    # playhead, wait until Live is there, toggle, and look at what really
+    # changed. Anything wrong is put back at once (a stray locator removed, a
+    # removed one brought back with its name), the arrangement is zoomed in
+    # and it tries again. The zoom goes back when the work is done.
+    ZOOM_IN, ZOOM_OUT = 3, 2
+
     def _cue_at(self, t):
         for c in self._safe(lambda: list(self.song.cue_points), []):
             if abs(float(c.time) - t) < 1e-3:
                 return c
         return None
 
+    def _cue_list(self):
+        return [(c, str(c.name), float(c.time)) for c in self._safe(lambda: list(self.song.cue_points), [])]
+
+    @staticmethod
+    def _cue_diff(before, after):
+        b = [(n, t) for _, n, t in before]
+        a = [(n, t) for _, n, t in after]
+        new, gone = [], list(b)
+        for x in a:
+            if x in gone:
+                gone.remove(x)
+            else:
+                new.append(x)
+        return new, gone
+
+    def _arranger_zoom(self, direction, steps):
+        view = self._safe(lambda: self.app.view, None) if self.app is not None else None
+        if view is None:
+            return 0
+        done = 0
+        for _ in range(steps):
+            try:
+                self._zoom(view, [direction, "Arranger", False])
+                done += 1
+            except Exception as e:
+                self._log_once("zoom: %s" % e)
+                break
+        return done
+
+    def _log_once(self, msg):
+        seen = getattr(self, "_seen_msgs", None)
+        if seen is None:
+            seen = self._seen_msgs = set()
+        if msg not in seen:
+            seen.add(msg)
+            self.log(msg)
+
+    def _toggle_checked(self, op):
+        """Toggle at the playhead. True when it did exactly what op wants;
+        otherwise undo whatever it did and return False."""
+        s = self.song
+        want_add = op["f"] == "add_cue"
+        before = self._cue_list()
+        s.set_or_delete_cue()
+        after = self._cue_list()
+        new, gone = self._cue_diff(before, after)
+        t = op["time"]
+        if want_add and len(new) == 1 and not gone and abs(new[0][1] - t) < 1e-3:
+            return True
+        if not want_add and len(gone) == 1 and not new and abs(gone[0][1] - t) < 1e-3:
+            return True
+        # wrong place: Live's playhead for locators is where it just acted, so
+        # one more toggle undoes it
+        if new or gone:
+            s.set_or_delete_cue()
+            fixed = self._cue_list()
+            if gone:
+                # it came back with a number for a name: give it its name again
+                for name, when in gone:
+                    for c, n, tt in fixed:
+                        if abs(tt - when) < 1e-3 and (n, tt) not in [(x[1], x[2]) for x in before]:
+                            try:
+                                c.name = name
+                            except Exception:
+                                pass
+            n2, g2 = self._cue_diff(before, self._cue_list())
+            if n2 or g2:
+                self.log("locator undo left %r, removed %r" % (n2, g2))
+            self.log("locator for %s landed at %s: zooming in" % (t, (new or gone)[0][1]))
+        return False
+
     def run_cue_ops(self, reply):
         if not self.cue_ops:
+            if self.cue_zoom:
+                self._arranger_zoom(self.ZOOM_OUT, self.cue_zoom)
+                self.cue_zoom = 0
             return
         op = self.cue_ops[0]
         s = self.song
         done = None
+        finished = False
         try:
             if s.is_playing:
                 raise RuntimeError("locators can only be changed while stopped")
-            here = self._cue_at(op["time"])
-            want_there = op["f"] == "add_cue"
-            if (here is not None) == want_there and op["stage"] != 1:
-                if want_there and op["name"] is not None and here.name != op["name"]:
-                    here.name = op["name"]
-                done = {"$": self.ref(here, "cue")} if here is not None else None
-            elif op["stage"] == 0:
-                s.current_song_time = op["time"]
-                op["stage"] = 1
-                op["waited"] = 0
-            elif op["stage"] == 1:
+            want_add = op["f"] == "add_cue"
+            if op["stage"] == 0:
+                here = self._cue_at(op["time"])
+                if (here is not None) == want_add:
+                    finished = True
+                else:
+                    end = self._safe(lambda: float(s.song_length), None)
+                    if end is not None and op["time"] > end + 1e-6:
+                        raise RuntimeError("%s is past the end of the set (%s)" % (op["time"], end))
+                    s.current_song_time = op["time"]
+                    op["stage"] = 1
+                    op["waited"] = 0
+            else:
                 op["waited"] += 1
-                # one full tick after the move, and Live says it is there
-                if op["waited"] >= 1 and abs(float(s.current_song_time) - op["time"]) < 1e-3:
-                    s.set_or_delete_cue()
-                    op["stage"] = 2
+                if abs(float(s.current_song_time) - op["time"]) < 1e-3:
+                    if self._toggle_checked(op):
+                        finished = True
+                    else:
+                        op["tries"] += 1
+                        self.cue_zoom += self._arranger_zoom(self.ZOOM_IN, 4)
+                        op["waited"] = 0
                 elif op["waited"] > 10:
                     op["stage"] = 0
                     op["tries"] += 1
-            else:
-                # toggled last tick: the check at the top settles it, or try again
-                op["tries"] += 1
-                op["stage"] = 0
-            if op["tries"] > 4:
-                raise RuntimeError("Live did not %s the locator at %s" % ("add" if op["f"] == "add_cue" else "delete", op["time"]))
+                if not finished and op["tries"] > 8:
+                    raise RuntimeError("Live did not %s the locator at %s" % ("add" if want_add else "delete", op["time"]))
+            if finished and want_add:
+                here = self._cue_at(op["time"])
+                if here is None:
+                    raise RuntimeError("the locator at %s is missing" % op["time"])
+                if op["name"] is not None and here.name != op["name"]:
+                    here.name = op["name"]
+                done = {"$": self.ref(here, "cue")}
         except Exception as e:
             self.cue_ops.pop(0)
             if op.get("w"):
@@ -459,7 +576,7 @@ class Bridge(object):
             if op["q"] is not None:
                 reply(op["client"], {"t": "res", "q": op["q"], "ok": False, "err": str(e), "aw": self.aw})
             return
-        if done is not None or (op["f"] == "delete_cue" and op["stage"] != 1 and self._cue_at(op["time"]) is None):
+        if finished:
             self.cue_ops.pop(0)
             if op.get("w"):
                 self.aw = max(self.aw, int(op["w"]))
@@ -469,6 +586,8 @@ class Bridge(object):
             if op["q"] is not None:
                 reply(op["client"], {"t": "res", "q": op["q"], "ok": True, "v": done, "aw": self.aw})
 
+    # A short record of what the app asked Live to do (not the frequent fader
+    # and position writes), for support. Errors always.
     def _trace(self, msg, ok, err, v):
         t = msg.get("t")
         if t in ("ping", "get") and ok:

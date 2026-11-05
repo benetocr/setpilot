@@ -67,6 +67,9 @@ class Observable(object):
         if name in v:
             x = v[name]
             return TrackVector(x) if isinstance(x, tuple) else x
+        if name.endswith("_has_listener") and name[:-13] in self._props:
+            prop = name[:-13]
+            return lambda f, prop=prop: f in self._listeners.get(prop, [])
         for pre, fn in (("add_", self._add), ("remove_", self._remove)):
             if name.startswith(pre) and name.endswith("_listener") and name[len(pre):-9] in self._props:
                 prop = name[len(pre):-9]
@@ -185,6 +188,9 @@ class Clip(Observable):
     def __setattr__(self, name, value):
         _clip_setattr_guard(self, name, value)
         Observable.__setattr__(self, name, value)
+        # like Live: an unlooped clip's length in the arrangement follows its markers
+        if name in ("start_marker", "end_marker") and not self._v.get("looping"):
+            Observable.__setattr__(self, "end_time", self._v["start_time"] + self._v["end_marker"] - self._v["start_marker"])
 
     def add_warp_marker(self, m):
         if not isinstance(m, WarpMarker):
@@ -272,11 +278,18 @@ class View(Observable):
     def __init__(self):
         Observable.__init__(self)
         self.zooms = []
+        # like Live: a locator added while stopped snaps to the arrangement
+        # grid, and the grid follows the zoom (3 = zoom in, 2 = zoom out)
+        self.grid = 16.0
 
     def zoom_view(self, direction, name, modifier):
         if not isinstance(direction, int):
             raise TypeError("direction")
         self.zooms.append((direction, name, modifier))
+        if name == "Arranger" and direction == 3:
+            self.grid = max(self.grid / 2.0, 1.0 / 16)
+        elif name == "Arranger" and direction == 2:
+            self.grid = min(self.grid * 2.0, 64.0)
 
 
 class BrowserItem(object):
@@ -312,6 +325,7 @@ class Application(object):
         self.view = View()
         if song is not None:
             self.browser = Browser(song)
+            object.__setattr__(song, "_app_view", self.view)
 
 
 class Song(Observable):
@@ -331,6 +345,8 @@ class Song(Observable):
     def __setattr__(self, name, value):
         # Like Live: with the transport stopped, a new position is applied a
         # moment later, not right away
+        if name == "current_song_time" and value > (self.song_length or 1e9) + 1e-6:
+            raise RuntimeError("Cannot set the Songtime behind the Songlength")
         if name == "current_song_time" and not self._v.get("is_playing") and not getattr(self, "_moving", False):
             def apply(v=value):
                 object.__setattr__(self, "_moving", True)
@@ -341,6 +357,16 @@ class Song(Observable):
             LATER.append(apply)
             return
         Observable.__setattr__(self, name, value)
+
+    # like Live: the set is at least as long as its last clip
+    @property
+    def song_length(self):
+        ends = [float(c.end_time) for t in self._v.get("tracks") or () for c in (t.arrangement_clips or ())]
+        return max([self.__dict__.get("_song_len", 0.0)] + ends)
+
+    @song_length.setter
+    def song_length(self, v):
+        object.__setattr__(self, "_song_len", float(v))
 
     def add_track(self, name, midi=False):
         t = Track(name, midi)
@@ -357,12 +383,26 @@ class Song(Observable):
         self._set_quiet("tracks", tuple(self._v["tracks"]) + (t,))
         return t
 
+    def _cue_pos(self):
+        t = self.current_song_time
+        v = getattr(self, "_app_view", None)
+        if v is not None and not self.is_playing:
+            t = round(t / v.grid) * v.grid
+        return t
+
+    def is_cue_point_selected(self):
+        t = self._cue_pos()
+        return any(abs(c.time - t) < 1e-3 for c in self.cue_points)
+
     def set_or_delete_cue(self):
+        t = self._cue_pos()
         for c in self.cue_points:
-            if abs(c.time - self.current_song_time) < 1e-3:
+            if abs(c.time - t) < 1e-3:
                 self.cue_points = tuple(x for x in self.cue_points if x is not c)
                 return
-        self.add_cue("", self.current_song_time)
+        n = getattr(self, "_cue_no", 0) + 1
+        object.__setattr__(self, "_cue_no", n)
+        self.add_cue(str(n), t)
 
     def start_playing(self):
         self.is_playing = True
@@ -389,4 +429,5 @@ def demo_song():
     s.tracks[3].arrangement_clips = (Clip(0, 64, "/stems/keys.wav"),)
     for name, time in (("# Song | 120 | G", 0), ("Intro", 0), ("Verse", 16), ("STOP", 64)):
         s.add_cue(name, time)
+    s.song_length = 1000.0
     return s

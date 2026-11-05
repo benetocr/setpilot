@@ -21,7 +21,7 @@ try:
 except ImportError:  # tests
     Live = None
 
-SCRIPT_VERSION = "1.0.1"
+SCRIPT_VERSION = "1.0.2"
 PORT_NAME = "SetPilot Bridge"
 DOORBELL_CHANNEL = 15   # MIDI channel 16
 DOORBELL_CC = 119

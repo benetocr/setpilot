@@ -47,6 +47,7 @@ function makeLiveAPI(mirror, { ownTrack } = {}) {
 		const parts = String(path || "").trim().split(/\s+/);
 		let id = 0, i = 0;
 		if (parts[0] === "live_set") { id = mirror.roots.song || 0; i = 1; }
+		else if (parts[0] === "live_app" && parts[1] === "view") { id = mirror.roots.app_view || 0; i = 2; }
 		else if (parts[0] === "live_app") { id = mirror.roots.app || 0; i = 1; }
 		else if (parts[0] === "this_device" && parts[1] === "canonical_parent") { return ownTrack ? ownTrack(mirror) || 0 : 0; }
 		else if (parts[0] === "id") return Number(parts[1]) || 0;
