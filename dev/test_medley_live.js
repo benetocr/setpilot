@@ -47,7 +47,7 @@ const post = (p, body) => new Promise((res, rej) => { const d = JSON.stringify(b
 		assert.ok(s, "the medley is a song: " + st.struct.songs.map(x => x.name).join(", "));
 		assert.strictEqual(s.start, 480);
 		const secs = s.sections.map(x => x.name + "@" + x.start).join(" ");
-		assert.strictEqual(secs, "Count Off@480 Verso 1@488 Coro@520 Transición@552 Coro@560 Puente@592", secs);
+		assert.strictEqual(secs, "Count Off@480 Verso 1@488 Coro@520 Transition@552 Coro@560 Puente@592", secs);
 		assert.strictEqual(s.bpm, 72);
 		assert.strictEqual(s.key, "A");
 		ok("its locators: " + secs);
@@ -92,7 +92,7 @@ const post = (p, body) => new Promise((res, rej) => { const d = JSON.stringify(b
 			const st3 = await get("/state"), c = st3.cue;
 			if (c) texts.add(JSON.stringify(c));
 			if (c && /Cielo Abierto/.test(c.text) && annAt < 0) annAt = st3.pos.t;
-			if (c && c.text === "Transición" && secAt < 0 && annAt >= 0) { secAt = st3.pos.t; break; }
+			if (c && c.text === "Transition" && secAt < 0 && annAt >= 0) { secAt = st3.pos.t; break; }
 			await sleep(100);
 		}
 		await post("/cmd", { cmd: "stop", args: [] });
@@ -131,7 +131,7 @@ const post = (p, body) => new Promise((res, rej) => { const d = JSON.stringify(b
 		const st2 = await get("/state");
 		const all = st2.struct.songs.filter(x => x.name === "Medley Test");
 		assert.strictEqual(all.length, 1, "one medley song");
-		assert.strictEqual(all[0].sections.map(x => x.name).join(","), "Count Off,Verso 1,Coro,Transición,Coro");
+		assert.strictEqual(all[0].sections.map(x => x.name).join(","), "Count Off,Verso 1,Coro,Transition,Coro");
 		const clips2 = await new Promise(res => { h.worker.once("message", function on(m) { if (m.clipsDump) res(m.clipsDump); else h.worker.once("message", on); }); h.worker.postMessage({ dumpClips: [470, 900] }); });
 		assert.ok(!clips2.some(c => c.st >= 591), "nothing left of the old build: " + JSON.stringify(clips2.filter(c => c.st >= 591)));
 		ok("rebuilding replaces the old medley in place of a duplicate");

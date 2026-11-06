@@ -89,6 +89,9 @@ function tidyNames() {
 	try {
 		const have = router.roleTracks();
 		if (have.tail && String(mirror.get(have.tail, "name")) === "SetPilot Tail") mirror.set(have.tail, "name", "SetPilot Crossfade");
+		// medleys built before: their bridge locators were named in Spanish
+		const song = mirror.objs.get(mirror.roots.song);
+		for (const r of (song && song.p.cue_points) || []) if (String(mirror.get(r.$, "name")) === "Transición") mirror.set(r.$, "name", "Transition");
 	} catch (e) { }
 }
 function autoPrepare(why) {

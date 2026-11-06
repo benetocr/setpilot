@@ -1208,7 +1208,8 @@ function medBuild(o) {
 				steps.push({ type: "dup", track: ck[z].track, clip: ck[z].clip, pos: Q + (y0 - (lastRun.b - nb * bl)), sm: ck[z].sm + (y0 - ck[z].st) * ck[z].f, em: ck[z].sm + (y1 - ck[z].st) * ck[z].f, f: ck[z].f, pitch: 0, name: ck[z].name });
 				dupN++;
 			}
-			cues.push({ time: Q, name: "Transición" });
+			// what goes into Live (locators, spoken cues) is always English
+			cues.push({ time: Q, name: "Transition" });
 			Q += nb * bl;
 		}
 	}
