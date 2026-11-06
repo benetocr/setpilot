@@ -145,6 +145,7 @@ var MED = 100000, MED_DICT = "setpilot_medley", MED_TAG = "\u0001medley:";
 var medleys = [];       // { id, name, bpm, key, voice, tr, slots: [{ song, sec, name }], semis: { songName: n } }
 var med = null;         // the medley that is prepared or playing: { i, k }
 var medKeysOn = -1;     // medley whose transposition is applied to its songs
+var annSaid = null;     // the song name last announced: { text, at, B }
 var arrHint = null;     // arrangement slot chosen while stopped: { song, k }
 var lastPosT = -1, lastPosAt = 0;
 var waveId = 0;
@@ -595,8 +596,8 @@ function prepareSong(s) {
 	pendingSong = -1;
 	armSong = s;
 	arrCur = null;
-	arrHint = null;
-	moveTo(songs[s].start);
+	arrHint = arrOf(s) ? { song: s, k: 0 } : null;
+	moveTo(songEntry(s));
 	lastEntered = s;
 	applyTempo(s);
 	loadTail(s);
@@ -605,7 +606,7 @@ function prepareSong(s) {
 function startSong(s) {
 	prepareSong(s);
 	setProp("back_to_arranger", 0);
-	startFrom(songs[s].start);
+	startFrom(songEntry(s));
 }
 
 // With a selection in the Arrangement, Live starts playing at the selection
@@ -759,12 +760,13 @@ function runTransport() {
 			return;
 		}
 		// too late for the handover (started inside its last bar): AutoLink
-		ho = { n: ho.n, J: E, mode: TR_LINK, natural: E == sg.end && Math.abs(songs[ho.n].start - sg.end) < 0.001 };
+		ho = { n: ho.n, sec: ho.sec, J: E, mode: TR_LINK, natural: !ho.sec && E == sg.end && Math.abs(songs[ho.n].start - sg.end) < 0.001 };
 	}
 	if (ho) {
 		// AutoLink: jump to the next song on the downbeat where this one ends
 		if (t >= ho.J - bl + 0.05 && !ho.natural) {
 			queue = { song: ho.n, sec: ho.sec || 0, now: 0, loop: 0, fired: 0, from: curSong + ":" + curSec };
+			if (ho.med == null && arrOf(ho.n)) queue.arrK = 0;
 			if (ho.med != null) { queue.medStart = ho.med; medKeys(ho.med); }
 			pendingSong = -1;
 		}
@@ -1503,6 +1505,19 @@ function arrOf(s) {
 	return a.list;
 }
 
+// the section a song starts with: the first of its arrangement (a count-off
+// taken out of it is skipped)
+function firstSec(s) {
+	var a = arrOf(s);
+	return a ? a[0] : 0;
+}
+
+// where playing the song starts from
+function songEntry(s) {
+	var f = firstSec(s), sc = songs[s].sections[f];
+	return f && sc ? sc.start : songs[s].start;
+}
+
 // first slot after "after" that plays section j (or the first one anywhere)
 function arrFind(a, j, after) {
 	for (var i = after + 1; i < a.length; i++) if (a[i] == j) return i;
@@ -1623,7 +1638,7 @@ function handoverAt(s, n, mode) {
 	if (mode == TR_XFADE) bars = Math.max(1, Math.round(XFADE_SEC / bs));
 	else {
 		var last = sg.sections[sg.sections.length - 1];
-		var first = songs[n].sections[0];
+		var first = songs[n].sections[firstSec(n)];
 		var d = Math.min((last.end - last.start) * 60 / effTempo(s), (first.end - first.start) * 60 / effTempo(n), XFADE_SEC);
 		bars = Math.max(1, Math.floor(d / bs + 0.001));
 	}
@@ -1651,13 +1666,14 @@ function handoverPlan(s) {
 	var E = arrEnd(s);
 	if (E < sg.end - 0.001) {
 		// the arrangement ends before the timeline does: no tail for that ending, link there
-		return (m == TR_LINK || m == TR_OVERLAP || m == TR_XFADE) ? { n: n, J: E, mode: TR_LINK, natural: false } : null;
+		return (m == TR_LINK || m == TR_OVERLAP || m == TR_XFADE) ? { n: n, sec: firstSec(n), J: E, mode: TR_LINK, natural: false } : null;
 	}
-	var link = { n: n, J: sg.end, mode: TR_LINK, natural: Math.abs(songs[n].start - sg.end) < 0.001 };
+	var f = firstSec(n);
+	var link = { n: n, sec: f, J: sg.end, mode: TR_LINK, natural: !f && Math.abs(songs[n].start - sg.end) < 0.001 };
 	if (m == TR_LINK) return link;
 	if (m == TR_OVERLAP || m == TR_XFADE) {
 		var J = handoverAt(s, n, m);
-		if (J != null && tailOk(s, J)) return { n: n, J: J, mode: m, natural: false };
+		if (J != null && tailOk(s, J)) return { n: n, sec: f, J: J, mode: m, natural: false };
 		if (!warnedTail[sg.name]) {
 			warnedTail[sg.name] = 1;
 			log((tailPresent() ? "tail not ready" : "no SetPilot Tail") + " for " + sg.name + ", using AutoLink");
@@ -1669,9 +1685,10 @@ function handoverPlan(s) {
 
 function startHandover(s, ho) {
 	var tl = tails[songs[s].name], sg = songs[s];
-	var q = { song: ho.n, sec: 0, now: 0, loop: 0, fired: 1, firedAt: clock, from: curSong + ":" + curSec, handover: ho.mode };
+	var q = { song: ho.n, sec: ho.sec || 0, now: 0, loop: 0, fired: 1, firedAt: clock, from: curSong + ":" + curSec, handover: ho.mode };
+	if (arrOf(ho.n)) q.arrK = 0;
 	q.durMs = (sg.end - ho.J) * 60 / effTempo(s) * 1000;
-	q.savedQuant = fireJump(songs[ho.n].sections[0].cue);
+	q.savedQuant = fireJump(songs[ho.n].sections[q.sec].cue);
 	queue = q;
 	pendingSong = -1;
 	var rate = effTempo(s) / tl.ref;
@@ -2276,7 +2293,7 @@ function selectsong(s, now) {
 	if (s < 0 || s >= songs.length) return;
 	if (!playing) { prepareSong(s); return; }
 	if (s == curSong && !med) return;
-	if (now) { queueSection(s, 0, 1, 0); return; }
+	if (now) { queueSection(s, firstSec(s), 1, 0, arrOf(s) ? 0 : null); return; }
 	pendingSong = (pendingSong == s) ? -1 : s;
 }
 
@@ -2422,7 +2439,7 @@ function cueTexts() {
 		// the next song's first section is announced in this song's tempo
 		var n = order.length ? order[(setlistPos(i) + 1) % order.length] : -1;
 		if (n >= MED) { var ms = medSlots(n - MED); n = ms.length ? ms[0].s : -1; }
-		if (cueStyle && n >= 0 && n != i && songs[n] && songs[n].sections[0]) add(cleanCue(songs[n].sections[0].name), i);
+		if (cueStyle && n >= 0 && n != i && songs[n] && songs[n].sections[firstSec(n)]) add(cleanCue(songs[n].sections[firstSec(n)].name), i);
 	}
 	return out;
 }
@@ -2465,7 +2482,7 @@ function computePlan() {
 	} else {
 		var ho = handoverPlan(curSong);
 		if (ho && sec.start < ho.J - 0.001 && sec.end >= ho.J - 0.001) {
-			target = songs[ho.n].sections[0];
+			target = songs[ho.n].sections[ho.sec || 0];
 			natural = ho.natural;
 			B = ho.J;
 		} else if (curSec + 1 < s.sections.length && arrEnd(curSong) >= s.end - 0.001) {
@@ -2482,10 +2499,13 @@ function computePlan() {
 	var ts = queue ? queue.song : (target.start >= s.end - 0.001 ? songAtTime(target.start) : curSong);
 	var src = ts >= 0 ? songIdentityAt(ts, target.start) : "";
 	var ann = !now && src && src != songIdentityAt(curSong, t) ? cleanCue(src) : "";
+	// said once: a plan that shifts a little (the handover point, a tempo change)
+	// must not say the name again over itself
 	if (ann && t < cueAt - 0.25) {
 		var annAt = Math.max(sec.start, cueAt - 2 * bl);
-		return { cueAt: annAt, B: cueAt, text: ann, natural: false, now: false, song: curSong, announce: 1,
-			key: "ann|" + ann + "@" + Math.round(annAt * 1000) + "|" + cueMode };
+		var akey = "ann|" + ann + "@" + Math.round(annAt * 1000) + "|" + cueMode;
+		if (!(annSaid && annSaid.text == ann && annSaid.key != akey && t >= annSaid.at - 0.05 && t < annSaid.B + 2 * bl))
+			return { cueAt: annAt, B: cueAt, text: ann, natural: false, now: false, song: curSong, announce: 1, key: akey };
 	}
 	return {
 		cueAt: cueAt, B: B, text: text, natural: natural, now: now, song: curSong, src: src,
@@ -2528,6 +2548,7 @@ function runCues() {
 			if (gp) messnamed("setpilot_gate", "gatearm", FAR[0], FAR[1], FAR[2]);
 			if (cueMode != CUE_ALL) setGate(1, true);
 		} else {
+			if (p.announce) annSaid = { text: p.text, at: Math.max(t, p.cueAt), B: p.B, key: p.key };
 			var idx = p.announce ? (cueMap[p.text] || 0) : ((p.src && cueMap[cueKey(p.text, p.song, null, p.src)]) || cueMap[cueKey(p.text, p.song)] || cueMap[p.text] || 0);
 			var beat = 4 / (sigDen || 4);
 			if (cueMode == CUE_FIX && p.cueAt - 0.25 > t) setGate(1, true);

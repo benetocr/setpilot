@@ -240,6 +240,16 @@ button.chip:hover { border-color: var(--faint); }
 .act:disabled { opacity: .35; }
 .act.on { background: var(--loop); color: #04232c; }
 #actRepeat.on { background: #fff; color: var(--stage); }
+.act-arr svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.act-arr { position: relative; }
+.act-dot { position: absolute; top: 7px; right: 7px; width: 8px; height: 8px; border-radius: 50%; background: var(--queued); }
+.act-dot[hidden] { display: none; }
+.act-arr[aria-pressed="true"] { background: #fff; color: var(--stage); }
+/* the normal layout opens the arrangement editor under the panels */
+html:not([data-layout="console"]) .stage.arranging .songmap { display: flex; flex-direction: column; gap: 8px; }
+html:not([data-layout="console"]) .stage.arranging .map-wrap, html:not([data-layout="console"]) .stage.arranging .pads { display: none; }
+html:not([data-layout="console"]) #smEdit, html:not([data-layout="console"]) #smGrid, html:not([data-layout="console"]) #smArr { display: none; }
+html[data-layout="console"] .act-arr { display: none; }
 .act:active:not(:disabled) { transform: scale(.96); }
 
 /* what comes next */

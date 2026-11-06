@@ -950,6 +950,29 @@ test("arrangement: AutoLink jumps to the next song where the arrangement ends", 
 	assert.ok(t.song.log.some(l => /jump 80 -> 256/.test(l)), t.song.log.filter(l => /jump/.test(l)).join(" | "));
 });
 
+test("arrangement of the next song without its first section: the handover goes to its first arranged section", () => {
+	const t = setup();
+	t.cmd("transition", 0, 3);
+	const sc = t.eng.dicts.setpilot_struct.songs[1].sections;
+	const list = []; for (let j = 1; j < sc.length; j++) list.push(j);
+	t.cmd.apply(null, ["arrset", 1].concat(list));
+	t.cmd("playsong", 0);
+	t.until(p => p.song === 1 && p.playing === 1, 600000);
+	const want = "jump 232 -> " + sc[1].start;
+	assert.ok(t.song.log.includes(want), want + " in " + t.song.log.filter(l => /jump/.test(l)).join(" | "));
+	assert.strictEqual(t.pos().sec, 1);
+});
+
+test("a song whose arrangement leaves out its first section starts at its first arranged section", () => {
+	const t = setup();
+	const sc = t.eng.dicts.setpilot_struct.songs[1].sections;
+	const list = []; for (let j = 1; j < sc.length; j++) list.push(j);
+	t.cmd.apply(null, ["arrset", 1].concat(list));
+	t.cmd("selectsong", 1, 0);
+	t.run(500);
+	assert.ok(Math.abs(t.song.props.current_song_time - sc[1].start) < 0.01, "at " + t.song.props.current_song_time + " want " + sc[1].start);
+});
+
 test("count-in and arrangement survive Live confirming play late", () => {
 	const t = setup();
 	t.song.playLatency = 120;
