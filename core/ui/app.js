@@ -697,7 +697,7 @@
     $("smEdited").hidden = !L.edited || !!L.med;
     $("smMed").hidden = !L.med;
     $("smArr").hidden = $("smEdit").hidden = !!L.med;
-    $("smMedEdit").hidden = !L.med;
+    $("smMedEdit").hidden = !L.med && !(songs()[shownIdx] && songs()[shownIdx].med);
     if (L.med) $("smMedName").textContent = medleys()[shownMed].name;
     sm.drawnKey = "";
     fitLabels();
@@ -1144,301 +1144,436 @@
   });
 
   // ------------------------------------------------------------ medley wizard
-  // Sections from any songs, in any order, played as one piece: one tempo and
-  // one key (suggested from the first song, changeable). Drag sections from
-  // the songs into the lane; a bar over each song's blocks shows how far it is
-  // moved in key and tempo.
-  var wiz = { open: false, mi: -1, id: "", list: [], uids: [], sel: -1, nextUid: 1, key: null, minor: "", bpm: 0, keyTouched: false, bpmTouched: false, tr: 1, drag: null, delArmed: false };
+  // Three steps: the songs, the key and tempo, the route and its joins. The
+  // solver picks the key that moves the audio least and a tempo every song
+  // can live with; "Do it for me" fills in everything at once. Building makes
+  // the medley a song of its own at the end of the arrangement (see the
+  // engine's medBuild), so Live plays it straight through.
+  var WZ_COST = [0, 1, 2.5, 5, 8, 13, 18];
+  var WZ_SEAMS = ["cut", "ant", "pivot", "ramp", "count"];
+  var WZ_SEAM_BARS = { cut: 0, ant: 0, ramp: 0, pivot: 2, count: 2 };
+  var WZ_GREEN = "#5be49b", WZ_AMBER = "#ffb547", WZ_RED = "#ff6b6b";
+  var WZ_SONGC = ["#4cd6f5", "#c9a7ff", "#8bd45f", "#f2b441", "#f45b84", "#6f8dff"];
+  var wiz = { open: false };
 
-  function wizFirstSong() { return wiz.list.length ? songs()[wiz.list[0].s] : null; }
-  function songRoot(sg) { var p = parseKey(sg && sg.key); return p ? p.root : null; }
-  function wizSuggest() {
-    var f = wizFirstSong();
-    if (!wiz.keyTouched) {
-      var r = songRoot(f);
-      wiz.key = r == null ? null : ((r + (f.semis || 0)) % 12 + 12) % 12;
-      wiz.minor = f ? ((parseKey(f.key) || {}).minor || "") : "";
+  function wzShift(from, to) { var d = ((to - from) % 12 + 12) % 12; return d > 6 ? d - 12 : d; }
+  function wzQ(a) { a = Math.abs(a); return a <= 2 ? WZ_GREEN : a <= 4 ? WZ_AMBER : WZ_RED; }
+  function wzTQ(p) { p = Math.abs(p); return p <= 0.06 ? WZ_GREEN : p <= 0.12 ? WZ_AMBER : WZ_RED; }
+  function wzSigned(n) { return n > 0 ? "+" + n : n < 0 ? "−" + Math.abs(n) : "0"; }
+  function wzSongByName(n) { var a = songs(); for (var i = 0; i < a.length; i++) if (a[i].name === n) return i; return -1; }
+
+  // what the solver needs about a song: its key as the team plays it
+  function wzInfo(name) {
+    var si = wzSongByName(name), sg = songs()[si];
+    if (!sg) return null;
+    var p = parseKey(sg.key), fix = wiz.keyFix[name];
+    var root = p ? p.root : (fix != null ? fix : null), minor = p ? !!p.minor : false;
+    var team = p ? (sg.semis || 0) : 0;
+    var bl = barLen();
+    return { si: si, sg: sg, name: name, root: root, minor: minor, team: team,
+      home: root == null ? null : ((root + team + (minor ? 3 : 0)) % 12 + 12) % 12,
+      keyText: root == null ? "" : KEYS[((root + team) % 12 + 12) % 12] + (minor ? "m" : ""),
+      bpm: Math.round(effBpm(sg) * 10) / 10,
+      secs: sg.sections.map(function (x) { return { name: x.name, bars: Math.max(1, Math.round((x.end - x.start) / bl)) }; }) };
+  }
+
+  var WZ_RE = { ch: /^(chorus|coro)/i, vs: /^(verse|verso)/i, br: /^(bridge|puente)/i, end: /^(ending|final|outro)/i, co: /^count|^start$|^song$/i };
+  function wzFirst(secs, re, from) { for (var i = from || 0; i < secs.length; i++) if (re.test(secs[i].name)) return i; return -1; }
+  function wzLast(secs, re) { for (var i = secs.length - 1; i >= 0; i--) if (re.test(secs[i].name)) return i; return -1; }
+  // where a song enters and leaves a medley: verses only to open, then choruses and bridges, the real ending to close
+  function wzAuto(info, pos, n) {
+    var s = info.secs, out = [], add = function (i) { if (i >= 0 && out.indexOf(i) < 0) out.push(i); };
+    var ch = wzFirst(s, WZ_RE.ch), br = wzFirst(s, WZ_RE.br);
+    if (n === 1) { s.forEach(function (x, i) { if (!WZ_RE.co.test(x.name)) out.push(i); }); return out; }
+    if (pos === 0) { add(wzFirst(s, WZ_RE.vs)); add(ch); }
+    else if (pos === n - 1) { add(br); add(wzLast(s, WZ_RE.ch)); add(wzLast(s, WZ_RE.end)); }
+    else { add(ch); add(br >= 0 ? br : wzFirst(s, WZ_RE.ch, ch + 1)); }
+    if (!out.length) s.forEach(function (x, i) { if (!WZ_RE.co.test(x.name)) out.push(i); });
+    return out.sort(function (a, b) { return a - b; });
+  }
+
+  function wzParts() {
+    var n = wiz.picked.length;
+    return wiz.picked.map(function (name, pos) {
+      var info = wzInfo(name);
+      if (!info) return null;
+      var idx = (wiz.secs[name] || wzAuto(info, pos, n)).filter(function (j) { return info.secs[j]; }), bars = 0;
+      idx.forEach(function (j) { bars += info.secs[j].bars; });
+      return { info: info, idx: idx, bars: Math.max(1, bars), pos: pos, color: WZ_SONGC[pos % WZ_SONGC.length] };
+    }).filter(Boolean);
+  }
+
+  function wzSolve(parts) {
+    var keys = [], known = parts.filter(function (p) { return p.info.home != null; });
+    for (var K = 0; K < 12; K++) {
+      var cost = 0, max = 0;
+      known.forEach(function (p) { var d = wzShift(p.info.home, K); cost += p.bars * WZ_COST[Math.abs(d)]; max = Math.max(max, Math.abs(d)); });
+      keys.push({ K: K, cost: cost, max: max });
     }
-    if (!wiz.bpmTouched) wiz.bpm = f ? Math.round(effBpm(f) * 10) / 10 : 0;
+    var best = keys.slice().sort(function (a, b) { return a.cost - b.cost || a.max - b.max; })[0];
+    var even = keys.slice().sort(function (a, b) { return a.max - b.max || a.cost - b.cost; })[0];
+    var first = known.length ? keys[known[0].info.home] : best;
+    var w = 0, l = 0;
+    parts.forEach(function (p) { w += p.bars; l += p.bars * Math.log(p.info.bpm); });
+    var T = w ? Math.round(Math.exp(l / w)) : 0, worst = 0;
+    parts.forEach(function (p) { worst = Math.max(worst, Math.abs(T / p.info.bpm - 1)); });
+    return { keys: keys, best: best, even: even, first: first, T: T, worst: worst, mode: worst <= 0.12 ? "one" : "own", unknown: parts.length - known.length };
   }
-  // how far a song moves to reach the medley key: the shortest way, -5..+6
-  function wizSemis(si) {
-    var r = songRoot(songs()[si]);
-    if (wiz.key == null || r == null) return 0;
-    var d = ((wiz.key - r) % 12 + 12) % 12;
-    return d > 6 ? d - 12 : d;
-  }
-  function wizKeyLabel() { return wiz.key == null ? "" : KEYS[wiz.key] + (wiz.minor || ""); }
 
+  function wzSeamAuto(a, b) {
+    var dt = Math.abs(b.tempo / a.tempo - 1);
+    if (dt > 0.15) return "count";
+    if (a.center !== b.center) return "pivot";
+    if (dt > 0.005) return "ramp";
+    return "cut";
+  }
+
+  // everything the screens and the build need, from the wizard's choices
+  function wzModel() {
+    var parts = wzParts(), sol = wzSolve(parts);
+    var K = wiz.key == null ? sol.best.K : wiz.key;
+    var mode = wiz.tempoMode || sol.mode, T = wiz.tempo || sol.T;
+    parts.forEach(function (p) {
+      var I = p.info;
+      p.lift = wiz.lift[I.name] || 0;
+      p.center = ((K + p.lift) % 12 + 12) % 12;                       // the major key this part sounds in
+      p.tonic = I.minor ? (p.center + 9) % 12 : p.center;            // a minor song takes the relative minor
+      p.keyText = KEYS[p.tonic] + (I.minor ? "m" : "");
+      p.d = I.home == null ? 0 : wzShift(I.home, p.center);           // how far from the key the team plays it
+      p.semis = I.root == null ? 0 : wzShift(I.root, p.tonic);       // how far from the recording
+      p.tempo = mode === "one" ? T : I.bpm;
+    });
+    var seams = [];
+    for (var i = 0; i + 1 < parts.length; i++) {
+      var auto = wzSeamAuto(parts[i], parts[i + 1]);
+      seams.push({ i: i, auto: auto, type: wiz.seamType[i] || auto });
+    }
+    var secs = 0;
+    parts.forEach(function (p) { secs += p.bars * barLen() * 60 / p.tempo; });
+    seams.forEach(function (s) { secs += WZ_SEAM_BARS[s.type] * barLen() * 60 / parts[s.i + 1].tempo; });
+    return { parts: parts, sol: sol, K: K, mode: mode, T: T, seams: seams, secs: secs, two: parts.length >= 2 };
+  }
+
+  function wizReset() {
+    wiz = { open: true, id: "", legacy: "", step: 1, picked: [], secs: {}, lift: {}, keyFix: {}, key: null, tempoMode: null, tempo: null,
+      seamType: {}, sel: { kind: "part", i: 0 }, magic: false, building: false, built: "", builtKey: "", delArmed: false };
+  }
+
+  // a new medley (mi < 0) or one made with the old wizard (mi >= 0): its songs and sections come along
   function openWizard(mi) {
+    wizReset();
     var m = mi >= 0 ? medleys()[mi] : null;
-    wiz.open = true; wiz.mi = m ? mi : -1; wiz.id = m ? m.id : ""; wiz.sel = -1; wiz.delArmed = false;
-    wiz.list = m ? m.slots.map(function (x) { return { s: x.s, j: x.j }; }) : [];
-    wiz.uids = wiz.list.map(function () { return wiz.nextUid++; });
-    wiz.tr = m ? (m.tr || 1) : 1;
-    wiz.keyTouched = !!(m && m.key);
-    wiz.bpmTouched = !!(m && m.bpm);
-    if (m && m.key) { var pk = parseKey(m.key); wiz.key = pk ? pk.root : null; wiz.minor = pk ? pk.minor : ""; }
-    if (m && m.bpm) wiz.bpm = m.bpm;
-    wizSuggest();
-    $("wizName").value = m ? m.name : T("medDefaultName", { n: medleys().length + 1 });
-    $("wizDelete").hidden = !m;
+    if (m) {
+      wiz.legacy = m.id;
+      m.slots.forEach(function (x) {
+        var sg = songs()[x.s];
+        if (!sg) return;
+        if (wiz.picked.indexOf(sg.name) < 0) wiz.picked.push(sg.name);
+        (wiz.secs[sg.name] = wiz.secs[sg.name] || []).push(x.j);
+      });
+      for (var nm in wiz.secs) wiz.secs[nm].sort(function (a, b) { return a - b; });
+      wiz.step = wiz.picked.length >= 2 ? 3 : 1;
+    }
+    $("wizName").value = m ? m.name : T("medDefaultName", { n: medleys().length + songs().filter(function (x) { return x.med; }).length + 1 });
+    wizShow();
+  }
+
+  // a medley the wizard built: everything as it was chosen
+  function openWizardSong(si) {
+    var sg = songs()[si];
+    if (!sg || !sg.med) return;
+    wizReset();
+    var sp = (sg.med.spec && sg.med.spec.ui) || {};
+    ["picked", "secs", "lift", "keyFix", "key", "tempoMode", "tempo", "seamType"].forEach(function (k) { if (sp[k] !== undefined) wiz[k] = JSON.parse(JSON.stringify(sp[k])); });
+    wiz.picked = wiz.picked.filter(function (n) { return wzSongByName(n) >= 0; });
+    wiz.id = sg.med.id;
+    wiz.built = sg.name;
+    wiz.builtKey = wzSig();
+    wiz.step = 3;
+    $("wizName").value = sg.name;
+    wizShow();
+  }
+
+  function wizShow() {
+    $("wizDelete").hidden = !(wiz.built || wiz.legacy);
     $("wizDelete").textContent = T("medDelete");
     $("wizSheet").hidden = false;
+    $("wzOver").hidden = true;
     closeSetlist();
-    renderWizard();
+    wzRender();
   }
-  function closeWizard() { wiz.open = false; $("wizSheet").hidden = true; }
+  function closeWizard() { if (wiz.building) return; wiz.open = false; $("wizSheet").hidden = true; }
   $("wizClose").addEventListener("click", closeWizard);
-  $("wizCancel").addEventListener("click", closeWizard);
   $("wizSheet").addEventListener("click", function (e) { if (e.target === $("wizSheet")) closeWizard(); });
-  $("smMedEdit").addEventListener("click", function () { if (shownMed >= 0) openWizard(shownMed); });
-  $("wizImport").addEventListener("click", function () { openAdd(); });
+  $("smMedEdit").addEventListener("click", function () {
+    if (shownMed >= 0) openWizard(shownMed);
+    else if (shownIdx >= 0 && songs()[shownIdx] && songs()[shownIdx].med) openWizardSong(shownIdx);
+  });
 
-  function renderWizard() {
+  function wzSig() {
+    return JSON.stringify([wiz.picked, wiz.secs, wiz.lift, wiz.keyFix, wiz.key, wiz.tempoMode, wiz.tempo, wiz.seamType, $("wizName").value.trim()]);
+  }
+  function wzRender() {
     if (!wiz.open) return;
-    var bl = barLen();
-    // settings
-    var f = wizFirstSong();
-    $("wizKey").textContent = wiz.key == null ? "–" : wizKeyLabel();
-    $("wizKeyHint").textContent = wiz.key == null ? T("medKeyOwn") : (!wiz.keyTouched && f ? T("medKeyHint", { song: f.name }) : "");
-    if (document.activeElement !== $("wizBpm")) $("wizBpm").value = wiz.bpm ? fmtBpm(wiz.bpm) : "";
-    $("wizBpmHint").textContent = !wiz.bpmTouched && f ? T("medBpmHint", { song: f.name }) : "";
-    setSeg("wizTr", wiz.tr >= 3 ? 3 : 1);
-    // the songs to pick from, in setlist order
-    var html = "";
-    order().forEach(function (i) {
-      if (isMed(i)) return;
-      var sg = songs()[i];
-      if (!sg) return;
-      var k = keyName(sg.key, sg.semis) || "";
-      html += '<div class="wiz-song" data-s="' + i + '"><div class="ws-head"><b>' + esc(sg.name) + '</b><span>' + esc(k) + (k ? " · " : "") + fmtBpm(effBpm(sg)) + ' BPM</span>' +
-        '<button type="button" class="ws-all" data-s="' + i + '">' + esc(T("medAll")) + "</button></div><div class=\"ws-chips\">" +
-        sg.sections.map(function (sec, j) {
-          var n = Math.max(1, Math.round((sec.end - sec.start) / bl));
-          return '<button type="button" class="ae-chip" data-s="' + i + '" data-j="' + j + '" style="--c:' + SEC_HEX[family(sec.name)] + '"><b>' + esc(sec.name) + "</b><small>" + n + "</small></button>";
-        }).join("") + "</div></div>";
-    });
-    $("wizSongs").innerHTML = html;
-    // the lane: one run per song in a row, a bar over it with key and tempo
-    var runs = "", k0 = 0, total = 0;
-    while (k0 < wiz.list.length) {
-      var s0 = wiz.list[k0].s, k1 = k0, bars = 0, blocks = "";
-      while (k1 < wiz.list.length && wiz.list[k1].s === s0) {
-        var it = wiz.list[k1], sg2 = songs()[it.s], sec2 = sg2.sections[it.j], nb = Math.max(1, Math.round((sec2.end - sec2.start) / bl));
-        total += sec2.end - sec2.start;
-        bars += nb;
-        blocks += '<div class="ae-block' + (k1 === wiz.sel ? " is-sel" : "") + '" data-k="' + k1 + '" data-u="' + wiz.uids[k1] + '" style="--c:' + SEC_HEX[family(sec2.name)] + ";flex-grow:" + nb + '">' +
-          '<canvas></canvas><span class="ae-name">' + esc(sec2.name) + '</span><span class="ae-bars">' + barsText(nb) + "</span>" +
-          '<button class="ae-x" aria-label="' + esc(T("aeRemove")) + '"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>';
-        k1++;
+    var M = wzModel();
+    if (wiz.step > 1 && !M.two) wiz.step = 1;
+    // steps
+    var steps = [["medStepSongs", 1], ["medStepKey", 2], ["medStepRoute", 3]];
+    $("wzSteps").innerHTML = steps.map(function (x) {
+      var on = wiz.step === x[1], done = wiz.step > x[1];
+      return '<button type="button" class="wz-st' + (on ? " on" : done ? " done" : "") + '" data-act="step" data-arg="' + x[1] + '"' + (on ? ' aria-current="step"' : "") + (x[1] > 1 && !M.two ? " disabled" : "") +
+        '><i>' + x[1] + "</i>" + esc(T(x[0])) + "</button>";
+    }).join("");
+    $("wzDur").innerHTML = M.two ? "<small>" + esc(T("medDuration")) + "</small><b>" + fmtTime(M.secs) + "</b>" : "";
+    // banner
+    var ban = "";
+    if (wiz.built && wiz.builtKey === wzSig()) ban = T("medBuiltBanner", { name: wiz.built });
+    else if (wiz.built) ban = T("medRebuild");
+    else if (wiz.magic && M.two) {
+      var pads = M.seams.filter(function (s) { return s.type === "pivot" || s.type === "count"; }).length;
+      ban = T("medMagic", { key: KEYS[M.K], tempo: M.mode === "one" ? T("medTempoOneT", { t: M.T }) : T("medTempoOwnShort"), n: M.parts.length, j: M.seams.length, p: pads, time: fmtTime(M.secs), last: M.parts[M.parts.length - 1].info.name });
+    }
+    $("wzBanner").hidden = !ban;
+    $("wzBanner").textContent = ban;
+    // body
+    $("wzBody").innerHTML = wiz.step === 1 ? wzStep1(M) : wiz.step === 2 ? wzStep2(M) : wzStep3(M);
+    // foot
+    $("wzBack").hidden = wiz.step === 1;
+    $("wzNext").hidden = wiz.step === 3;
+    $("wzNext").disabled = !M.two;
+    $("wzNext").textContent = T(wiz.step === 1 ? "medNextKey" : "medNextRoute");
+    $("wzBuild").disabled = !M.two || wiz.building;
+    $("wzBuild").textContent = T(wiz.built ? (wiz.builtKey === wzSig() ? "medBuilt" : "medRebuildBtn") : "medBuild");
+    if (wiz.built && wiz.builtKey === wzSig()) $("wzBuild").disabled = true;
+  }
+
+  // ---------- step 1: the songs
+  function wzStep1(M) {
+    var list = order().filter(function (i) { return !isMed(i) && songs()[i] && !songs()[i].med; });
+    var cards = list.map(function (i) {
+      var sg = songs()[i], at = wiz.picked.indexOf(sg.name), info = wzInfo(sg.name), bl = barLen();
+      var strip = sg.sections.map(function (x) { return '<i style="flex-grow:' + Math.max(1, Math.round((x.end - x.start) / bl)) + ";background:" + SEC_HEX[family(x.name)] + '"></i>'; }).join("");
+      var meta = (info.keyText || T("medNoKey")) + " · " + fmtBpm(info.bpm) + " BPM";
+      return '<button type="button" class="wz-song' + (at >= 0 ? " on" : "") + '" data-act="pick" data-arg="' + esc(sg.name) + '" aria-pressed="' + (at >= 0) + '"' +
+        (at >= 0 ? ' style="--sc:' + WZ_SONGC[at % WZ_SONGC.length] + '"' : "") + '><span class="wz-num">' + (at >= 0 ? at + 1 : "") + '</span><span class="wz-song-t"><span><b>' + esc(sg.name) +
+        "</b><small>" + esc(meta) + '</small></span><span class="wz-strip" aria-hidden="true">' + strip + "</span></span></button>";
+    }).join("");
+    var rows = M.parts.map(function (p, k) {
+      var I = p.info, keyPick = "";
+      if (I.root == null) keyPick = '<span class="wz-keyfix"><small>' + esc(T("medWhatKey")) + "</small>" + KEYS.map(function (kn, r) { return '<button type="button" data-act="keyfix" data-arg="' + esc(I.name) + "|" + r + '">' + kn + "</button>"; }).join("") + "</span>";
+      return '<li style="--sc:' + p.color + '"><i class="wz-dot"></i><span class="wz-o-name"><b>' + esc(I.name) + "</b><small>" + esc((I.keyText || T("medNoKey")) + " · " + fmtBpm(I.bpm)) + "</small>" + keyPick + "</span>" +
+        '<button type="button" class="wz-ib" data-act="up" data-arg="' + k + '" aria-label="' + esc(T("medUp")) + '"' + (k ? "" : " disabled") + '><svg viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></svg></button>' +
+        '<button type="button" class="wz-ib" data-act="pick" data-arg="' + esc(I.name) + '" aria-label="' + esc(T("aeRemove")) + '"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></li>';
+    }).join("");
+    var prev = "";
+    if (M.two) {
+      var b = M.sol.best, lo = 1e9, hi = 0;
+      M.parts.forEach(function (p) { lo = Math.min(lo, p.info.bpm); hi = Math.max(hi, p.info.bpm); });
+      var kt = b.max === 0 ? T("medPrevKeySame", { key: KEYS[b.K] }) : T("medPrevKey", { key: KEYS[b.K], n: b.max });
+      var tt = M.sol.worst <= 0.06 ? T("medPrevTempoSame", { t: M.sol.T }) : M.sol.worst <= 0.12 ? T("medPrevTempoStretch", { t: M.sol.T, p: Math.round(M.sol.worst * 100) }) : T("medPrevTempoOwn", { lo: fmtBpm(lo), hi: fmtBpm(hi) });
+      prev = '<div class="wz-prev"><p><i style="background:' + wzQ(b.max) + '"></i><span><b>' + esc(T("medKey")) + ":</b> " + esc(kt) + "</span></p><p><i style=\"background:" + wzTQ(M.sol.worst) + '"></i><span><b>' + esc(T("tempo")) + ":</b> " + esc(tt) + "</span></p></div>";
+    }
+    return '<div class="wz-s1"><section class="wz-pool"><h2>' + esc(T("medQSongs")) + "</h2><p class=\"wz-sub\">" + esc(T("medQSongsSub")) + '</p><div class="wz-songs">' + (cards || '<p class="wz-sub">' + esc(T("noSongs")) + "</p>") + "</div>" +
+      '<button type="button" class="wz-import" data-act="import">+ ' + esc(T("medImport")) + "</button></section>" +
+      '<aside class="wz-order"><h3>' + esc(T("medOrder")) + "</h3>" + (rows ? "<ol>" + rows + "</ol>" : '<p class="wz-sub">' + esc(T("medPickTwo")) + "</p>") + prev +
+      '<button type="button" class="wz-magic" data-act="magic"' + (M.two ? "" : " disabled") + '><svg viewBox="0 0 24 24"><path d="m15 4 1.5 3L20 8.5 16.5 10 15 13l-1.5-3L10 8.5 13.5 7z"/><path d="M4 20 13 11"/></svg>' + esc(T("medMagicBtn")) + "</button></aside></div>";
+  }
+
+  // ---------- step 2: key and tempo
+  function wzStep2(M) {
+    var cx = 170, cy = 170, R = 134, kmax = 0, seen = {};
+    M.parts.forEach(function (p) { kmax = Math.max(kmax, Math.abs(p.d)); });
+    var wheel = M.sol.keys.map(function (k) {
+      var a = k.K * Math.PI / 6, on = k.K === M.K, c = wzQ(k.max);
+      return '<button type="button" class="wz-k' + (on ? " on" : "") + '" data-act="key" data-arg="' + k.K + '" aria-pressed="' + on + '" aria-label="' + esc(T("medKeyAria", { key: KEYS[k.K], n: k.max })) +
+        '" style="left:' + Math.round(cx + R * Math.sin(a) - 25) + "px;top:" + Math.round(cy - R * Math.cos(a) - 25) + "px;--kc:" + c + '">' + KEYS[k.K] + "</button>";
+    }).join("");
+    var dots = M.parts.map(function (p) {
+      if (p.info.home == null) return "";
+      var h = p.info.home, n = seen[h] = (seen[h] || 0) + 1, a = h * Math.PI / 6 + (n - 1) * 0.17, r = R + 38;
+      return '<i class="wz-kd" title="' + esc(p.info.name + " · " + p.info.keyText) + '" style="left:' + Math.round(cx + r * Math.sin(a) - 7) + "px;top:" + Math.round(cy - r * Math.cos(a) - 7) + "px;background:" + p.color + '"></i>';
+    }).join("");
+    var recs = [], pushRec = function (k, label, why) { for (var j = 0; j < recs.length; j++) if (recs[j].K === k.K) { recs[j].label += " · " + label; return; } recs.push({ K: k.K, label: label, why: why, max: k.max }); };
+    pushRec(M.sol.best, T("medRecBest"), T("medRecBestWhy"));
+    pushRec(M.sol.even, T("medRecEven"), T("medRecEvenWhy", { n: M.sol.even.max }));
+    if (M.parts[0].info.home != null) pushRec(M.sol.first, T("medRecFirst"), T("medRecFirstWhy", { song: M.parts[0].info.name }));
+    var recH = recs.map(function (r) {
+      return '<button type="button" class="wz-rec' + (r.K === M.K ? " on" : "") + '" data-act="key" data-arg="' + r.K + '"><b style="color:' + wzQ(r.max) + '">' + KEYS[r.K] + "</b><span><em>" + esc(r.label) + "</em><small>" + esc(r.why) + "</small></span></button>";
+    }).join("");
+    var bar = function (v, scale, col) { var w = Math.min(100, Math.abs(v) * scale); return '<span class="wz-bar" aria-hidden="true"><i class="z"></i><i class="v" style="left:' + (v < 0 ? 100 - w : 100) + "px;width:" + Math.max(3, w) + "px;background:" + col + '"></i></span>'; };
+    var shifts = M.parts.map(function (p) {
+      var I = p.info, lab = I.home == null ? T("medNoKey") : p.d === 0 ? T("medNoChange") : wzSigned(p.d) + " " + T(Math.abs(p.d) === 1 ? "medSemi1" : "medSemis");
+      return '<div class="wz-row" style="--sc:' + p.color + '"><span class="wz-rn"><i class="wz-dot"></i>' + esc(I.name) + "</span><span class=\"wz-ft\">" + esc((I.keyText || "?") + " → " + p.keyText) + "</span>" + bar(p.d, 16.6, wzQ(p.d)) + '<b style="color:' + wzQ(p.d) + '">' + esc(lab) + "</b></div>";
+    }).join("");
+    var tempos = M.parts.map(function (p) {
+      var I = p.info, r = M.mode === "one" ? M.T / I.bpm - 1 : 0;
+      var lab = M.mode !== "one" ? T("medOwnTempo") : Math.abs(r) < 0.005 ? T("medNoChange") : (r > 0 ? "+" : "−") + Math.round(Math.abs(r) * 100) + " %";
+      return '<div class="wz-row" style="--sc:' + p.color + '"><span class="wz-rn"><i class="wz-dot"></i>' + esc(I.name) + "</span><span class=\"wz-ft\">" + esc(fmtBpm(I.bpm) + (M.mode === "one" ? " → " + M.T : "") + " BPM") + "</span>" + bar(r, 500, M.mode === "one" ? wzTQ(r) : WZ_GREEN) + '<b style="color:' + (M.mode === "one" ? wzTQ(r) : WZ_GREEN) + '">' + esc(lab) + "</b></div>";
+    }).join("");
+    var advice = M.sol.mode === "one" ? (M.sol.worst <= 0.06 ? T("medAdviceOne", { t: M.sol.T, p: Math.max(1, Math.round(M.sol.worst * 100)) }) : T("medAdviceOneWarn", { t: M.sol.T, p: Math.round(M.sol.worst * 100) })) : T("medAdviceOwn", { p: Math.round(M.sol.worst * 100) });
+    return '<div class="wz-s2"><section class="wz-panel wz-wheelp"><h2>' + esc(T("medKeyTitle")) + '</h2><p class="wz-sub">' + esc(T("medKeySub")) + "</p>" +
+      '<div class="wz-wheel"><div class="wz-center"><small>' + esc(T("medSoundsIn")) + '</small><b style="color:' + wzQ(kmax) + '">' + KEYS[M.K] + "</b><span>" + esc(kmax === 0 ? T("medNobodyMoves") : T("medMostMoves", { n: kmax })) + "</span></div>" + wheel + dots + "</div>" +
+      '<div class="wz-recs">' + recH + "</div>" + (M.sol.unknown ? '<p class="wz-sub">' + esc(T("medUnknownKeys")) + "</p>" : "") + "</section>" +
+      '<div class="wz-col"><section class="wz-panel"><h2>' + esc(T("medHowFar")) + "</h2>" + shifts + '<p class="wz-sub">' + esc(T("medNoPitchNote")) + "</p></section>" +
+      '<section class="wz-panel"><div class="wz-th"><h2>' + esc(T("tempo")) + '</h2><div class="seg-ctl small" role="radiogroup"><button type="button" role="radio" data-act="tmode" data-arg="one" aria-checked="' + (M.mode === "one") + '">' + esc(T("medTempoOne")) + '</button><button type="button" role="radio" data-act="tmode" data-arg="own" aria-checked="' + (M.mode === "own") + '">' + esc(T("medTempoOwn")) + "</button></div></div>" +
+      '<p class="wz-advice">' + esc(advice) + "</p>" +
+      (M.mode === "one" ? '<div class="wz-tset"><button type="button" class="wz-ib big" data-act="tdown" aria-label="−1 BPM">−</button><b>' + M.T + '</b><button type="button" class="wz-ib big" data-act="tup" aria-label="+1 BPM">+</button><span>BPM</span>' + (wiz.tempo ? '<button type="button" class="wz-link" data-act="treset">' + esc(T("medUseSuggested")) + "</button>" : "") + "</div>" : "") +
+      tempos + "</section></div></div>";
+  }
+
+  // ---------- step 3: the route and its joins
+  var WZ_SEAM_IC = { cut: '<path d="M12 4v16M5 12h4M15 12h4"/>', ant: '<path d="M13 6l-6 6 6 6M7 12h12"/>', pivot: '<path d="M3 15c2-6 4-6 6 0s4 6 6 0 4-6 6 0"/>', count: '<path d="M3 15c2-6 4-6 6 0s4 6 6 0 4-6 6 0"/>', ramp: '<path d="M3 18h5l8-12h5"/>' };
+  function wzStep3(M) {
+    var lane = "", keyRow = "", tRow = "", bl = barLen();
+    M.parts.forEach(function (p, k) {
+      var on = wiz.sel.kind === "part" && wiz.sel.i === k;
+      var kc = k > 0 && M.parts[k - 1].center !== p.center, tc = k > 0 && Math.abs(M.parts[k - 1].tempo - p.tempo) > 0.4;
+      keyRow += '<span class="wz-ln' + (kc ? " chg" : "") + '" style="flex-grow:' + p.bars + '">' + esc(p.keyText) + (p.semis && p.info.root != null ? " <small>(" + wzSigned(p.d) + ")</small>" : "") + "</span>";
+      tRow += '<span class="wz-ln t' + (tc ? " chg" : "") + '" style="flex-grow:' + p.bars + '">' + fmtBpm(p.tempo) + " BPM</span>";
+      lane += '<button type="button" class="wz-part' + (on ? " on" : "") + '" data-act="sel" data-arg="part|' + k + '" style="flex-grow:' + p.bars + ";--sc:" + p.color + '" aria-pressed="' + on + '"><span class="wz-pn"><i class="wz-dot"></i>' + esc(p.info.name) + "</span><span class=\"wz-blocks\">" +
+        p.idx.map(function (j) { var x = p.info.secs[j]; return '<i style="flex-grow:' + x.bars + ";background:" + SEC_HEX[family(x.name)] + '"><b>' + esc(x.name) + "</b><small>" + x.bars + "</small></i>"; }).join("") + "</span></button>";
+      if (k < M.seams.length) {
+        var sm = M.seams[k], son = wiz.sel.kind === "seam" && wiz.sel.i === k;
+        var gap = '<span class="wz-gap"></span>';
+        keyRow += gap; tRow += gap;
+        lane += '<span class="wz-seamw"><button type="button" class="wz-seam ' + sm.type + (son ? " on" : "") + '" data-act="sel" data-arg="seam|' + k + '" aria-pressed="' + son + '" aria-label="' + esc(T("medSeam_" + sm.type)) + '"><svg viewBox="0 0 24 24">' + WZ_SEAM_IC[sm.type] + "</svg><b>" + esc(T("medSeamS_" + sm.type)) + "</b>" + (WZ_SEAM_BARS[sm.type] ? "<small>" + esc(T("barsCount", { n: WZ_SEAM_BARS[sm.type] })) + "</small>" : "") + "</button></span>";
       }
-      var sg0 = songs()[s0], sem = wizSemis(s0), own = keyName(sg0.key, 0);
-      var keyTxt = own ? (wiz.key == null ? own : own + " → " + wizKeyLabel() + (sem ? " (" + semisLabel(sem) + ")" : "")) : T("medNoKey");
-      var sb = effBpm(sg0), ratio = wiz.bpm && sb ? Math.round(wiz.bpm / sb * 100) : 100;
-      var bpmTxt = fmtBpm(sb) + (wiz.bpm && Math.abs(wiz.bpm - sb) > 0.05 ? " → " + fmtBpm(wiz.bpm) : "") + " BPM";
-      runs += '<div class="wiz-run" style="flex-grow:' + bars + '"><div class="wiz-runbar' + (Math.abs(ratio - 100) > 25 || Math.abs(sem) > 4 ? " warn" : "") + '">' +
-        "<b>" + esc(sg0.name) + "</b><span>" + esc(keyTxt) + "</span><span>" + esc(bpmTxt) + (ratio !== 100 ? " · " + esc(T("medStretch", { p: ratio })) : "") + "</span></div>" +
-        '<div class="wiz-blocks">' + blocks + "</div></div>";
-      k0 = k1;
+    });
+    var insp = "";
+    if (wiz.sel.kind === "part" && M.parts[wiz.sel.i]) {
+      var P = M.parts[wiz.sel.i], last = wiz.sel.i === M.parts.length - 1;
+      insp = '<section class="wz-panel wz-insp"><div class="wz-ia"><h2>' + esc(T("medSectionsOf", { song: P.info.name })) + '</h2><p class="wz-sub">' + esc(T("medSectionsSub")) + '</p><div class="wz-chips">' +
+        P.info.secs.map(function (x, j) { var on = P.idx.indexOf(j) >= 0; return '<button type="button" class="wz-chip' + (on ? " on" : "") + '" data-act="sec" data-arg="' + esc(P.info.name) + "|" + j + '" aria-pressed="' + on + '" style="--fc:' + SEC_HEX[family(x.name)] + '"><i></i>' + esc(x.name) + "<small>" + x.bars + "</small></button>"; }).join("") +
+        '</div></div><div class="wz-ib2"><h2>' + esc(T("medPartKey")) + '</h2><div class="wz-tset"><button type="button" class="wz-ib big" data-act="lift" data-arg="' + esc(P.info.name) + '|-1" aria-label="−1">−</button><b>' + esc(P.keyText) + '</b><button type="button" class="wz-ib big" data-act="lift" data-arg="' + esc(P.info.name) + '|1" aria-label="+1">+</button></div>' +
+        '<p class="wz-sub">' + esc(P.lift ? T("medPartLift", { n: wzSigned(P.lift) }) : T("medPartSame")) + "</p>" +
+        (last && !P.lift ? '<button type="button" class="wz-lift" data-act="lift" data-arg="' + esc(P.info.name) + '|1">' + esc(T("medLiftBtn")) + "</button>" : "") +
+        '<p class="wz-sub">' + esc(T("medPartTempo", { t: fmtBpm(P.tempo) })) + "</p></div></section>";
+    } else if (wiz.sel.kind === "seam" && M.seams[wiz.sel.i]) {
+      var S = M.seams[wiz.sel.i], A = M.parts[S.i], B = M.parts[S.i + 1], why = [];
+      if (A.center !== B.center) why.push(T("medWhyKey", { a: A.keyText, b: B.keyText }));
+      if (Math.abs(A.tempo - B.tempo) > 0.4) why.push(T("medWhyTempo", { a: fmtBpm(A.tempo), b: fmtBpm(B.tempo), p: Math.round(Math.abs(B.tempo / A.tempo - 1) * 100) }));
+      var canListen = wiz.built && wiz.builtKey === wzSig();
+      insp = '<section class="wz-panel wz-insp"><div class="wz-ia"><h2>' + esc(A.info.name + " → " + B.info.name) + '</h2><p class="wz-advice">' + esc(why.length ? T("medWhy", { what: why.join(T("medAnd")), s: T("medSeam_" + S.auto) }) : T("medWhySame")) + '</p><div class="wz-opts" role="radiogroup">' +
+        WZ_SEAMS.map(function (t) { var on = S.type === t; return '<button type="button" role="radio" class="wz-opt' + (on ? " on" : "") + '" data-act="seamtype" data-arg="' + S.i + "|" + t + '" aria-checked="' + on + '"><b>' + esc(T("medSeam_" + t)) + (t === S.auto ? " · " + esc(T("medSuggested")) : "") + "</b><small>" + esc(T("medSeamD_" + t)) + "</small></button>"; }).join("") +
+        '</div></div><div class="wz-ib2"><h2>' + esc(T("medListen")) + '</h2><p class="wz-sub">' + esc(canListen ? T("medListenSub", { key: KEYS[M.K] }) : T("medListenBuild")) + '</p><button type="button" class="wz-play" data-act="listen" data-arg="' + S.i + '"' + (canListen ? "" : " disabled") + '><svg viewBox="0 0 24 24"><path d="M7 5v14l12-7z"/></svg>' + esc(T("medListenBtn")) + "</button></div></section>";
     }
-    $("wizLane").innerHTML = runs;
-    $("wizEmpty").hidden = wiz.list.length > 0;
-    var secs = wiz.bpm ? total * 60 / wiz.bpm : 0, nsongs = {};
-    wiz.list.forEach(function (x) { nsongs[x.s] = 1; });
-    $("wizInfo").textContent = wiz.list.length ? T("medInfo", { t: fmtTime(secs), n: wiz.list.length, s: Object.keys(nsongs).length }) : T("medNeedTwo");
-    $("wizSave").disabled = !wiz.list.length;
-    wizDrawBlocks();
+    return '<div class="wz-s3"><div class="wz-head3"><div><h2>' + esc(T("medRouteTitle")) + '</h2><p class="wz-sub">' + esc(T("medRouteSub")) + '</p></div><p class="wz-sum"><b>' + KEYS[M.K] + "</b> " + esc(T("medKey").toLowerCase()) + " · <b>" + esc(M.mode === "one" ? M.T + " BPM" : T("medTempoOwnShort")) + "</b> · <b>" + M.seams.length + "</b> " + esc(T(M.seams.length === 1 ? "medJoin1" : "medJoins")) + "</p></div>" +
+      '<div class="wz-map"><div class="wz-mapin"><div class="wz-lrow"><span class="wz-lk">' + esc(T("medKey")) + "</span>" + keyRow + '</div><div class="wz-lrow"><span class="wz-lk">' + esc(T("tempo")) + "</span>" + tRow + '</div><div class="wz-lrow lane"><span class="wz-lk"></span>' + lane + "</div></div></div>" + insp + "</div>";
   }
 
-  function wizDrawBlocks() {
-    var blocks = $("wizLane").querySelectorAll(".ae-block"), dpr = window.devicePixelRatio || 1;
-    for (var i = 0; i < blocks.length; i++) {
-      var it = wiz.list[+blocks[i].dataset.k], sg = it && songs()[it.s];
-      if (!sg) continue;
-      if (!waves[sg.name] && !waveAsked[sg.name]) { waveAsked[sg.name] = 1; send("wave", it.s); }
-      var cv = blocks[i].querySelector("canvas"), W = cv.clientWidth, H = cv.clientHeight;
-      if (!W || !H) continue;
-      cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
-      var g = cv.getContext("2d");
-      g.setTransform(dpr, 0, 0, dpr, 0, 0);
-      g.fillStyle = SEC_HEX[family(sg.sections[it.j].name)];
-      g.globalAlpha = 0.55;
-      drawSlice(g, waves[sg.name], sg.sections[it.j], 0, W, H, 3);
-    }
-  }
-
-  function wizCommit(list, uids) {
-    var before = {}, blocks = $("wizLane").querySelectorAll(".ae-block"), i;
-    for (i = 0; i < blocks.length; i++) before[blocks[i].dataset.u] = blocks[i].getBoundingClientRect();
-    var firstWas = wiz.list.length ? wiz.list[0].s : -1;
-    wiz.list = list;
-    wiz.uids = uids;
-    if ((list.length ? list[0].s : -1) !== firstWas) wizSuggest();
-    renderWizard();
-    if (reduceMotion) return;
-    blocks = $("wizLane").querySelectorAll(".ae-block");
-    for (i = 0; i < blocks.length; i++) {
-      var b = blocks[i], r0 = before[b.dataset.u], r1 = b.getBoundingClientRect();
-      if (!b.animate) continue;
-      if (r0) {
-        var dx = r0.left - r1.left, dy = r0.top - r1.top;
-        if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) b.animate([{ transform: "translate(" + dx + "px," + dy + "px)" }, { transform: "none" }], { duration: 320, easing: "cubic-bezier(.2,.8,.2,1)" });
-      } else b.animate([{ transform: "scale(.85)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 300, easing: "cubic-bezier(.2,.8,.2,1)" });
-    }
-    if (navigator.vibrate) try { navigator.vibrate(6); } catch (er) { }
-  }
-  function wizInsert(items, at) {
-    var list = wiz.list.slice(), uids = wiz.uids.slice();
-    if (at == null) at = wiz.sel >= 0 ? wiz.sel + 1 : list.length;
-    items.forEach(function (x, n) { list.splice(at + n, 0, x); uids.splice(at + n, 0, wiz.nextUid++); });
-    wiz.sel = at + items.length - 1;
-    wizCommit(list, uids);
-    var nb = $("wizLane").querySelector('.ae-block[data-k="' + wiz.sel + '"]');
-    if (nb && nb.scrollIntoView) nb.scrollIntoView({ block: "nearest", inline: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
-  }
-  function wizRemove(k) {
-    var list = wiz.list.slice(), uids = wiz.uids.slice();
-    list.splice(k, 1); uids.splice(k, 1);
-    if (wiz.sel >= list.length) wiz.sel = list.length - 1; else if (wiz.sel > k) wiz.sel--; else if (wiz.sel === k) wiz.sel = -1;
-    wizCommit(list, uids);
-  }
-  function wizMove(from, to) {
-    if (to > from) to--;
-    if (to === from) return;
-    var list = wiz.list.slice(), uids = wiz.uids.slice();
-    var x = list.splice(from, 1)[0], u = uids.splice(from, 1)[0];
-    list.splice(to, 0, x); uids.splice(to, 0, u);
-    wiz.sel = to;
-    wizCommit(list, uids);
-  }
-  function wizDropAt(x, y, skipK) {
-    var wrap = $("wizLaneWrap"), r = wrap.getBoundingClientRect();
-    if (y < r.top - 30 || y > r.bottom + 30 || x < r.left - 30 || x > r.right + 30) return null;
-    var blocks = Array.prototype.slice.call($("wizLane").querySelectorAll(".ae-block")), at = wiz.list.length, cx = null, cy = null, ch = 0;
-    for (var i = 0; i < blocks.length; i++) {
-      var k = +blocks[i].dataset.k;
-      if (k === skipK) continue;
-      var b = blocks[i].getBoundingClientRect();
-      if (x < b.left + b.width / 2) { at = k; cx = b.left; cy = b.top; ch = b.height; break; }
-    }
-    if (cx == null) {
-      var last = blocks.filter(function (e) { return +e.dataset.k !== skipK; }).pop();
-      if (last) { var lb = last.getBoundingClientRect(); cx = lb.right; cy = lb.top; ch = lb.height; } else { cx = r.left + 14; cy = r.top + 40; ch = r.height - 60; }
-    }
-    return { at: at, x: cx - r.left, y: cy - r.top, h: ch };
-  }
-  function wizCaret(d) {
-    var c = $("wizCaret");
-    if (!d) { c.hidden = true; return; }
-    c.hidden = false;
-    c.style.top = d.y + "px"; c.style.height = d.h + "px"; c.style.bottom = "auto";
-    c.style.transform = "translateX(" + (d.x - 3) + "px)";
-  }
-  $("wizLane").addEventListener("pointerdown", function (e) {
-    if (e.target.closest(".ae-x") || e.button > 0) return;
-    var b = e.target.closest(".ae-block");
-    if (b) wiz.drag = { kind: "block", ref: +b.dataset.k, src: b, x0: e.clientX, y0: e.clientY, on: false, id: e.pointerId };
+  // ---------- actions
+  $("wzBody").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-act]");
+    if (!b || b.disabled) return;
+    var act = b.dataset.act, arg = b.dataset.arg, parts;
+    if (act === "pick") {
+      var at = wiz.picked.indexOf(arg);
+      if (at >= 0) wiz.picked.splice(at, 1); else wiz.picked.push(arg);
+      wiz.secs = {}; wiz.lift = {}; wiz.seamType = {}; wiz.key = null; wiz.tempoMode = null; wiz.tempo = null; wiz.magic = false; wiz.sel = { kind: "part", i: 0 };
+    } else if (act === "up") {
+      var k = +arg;
+      if (k > 0) { var x = wiz.picked.splice(k, 1)[0]; wiz.picked.splice(k - 1, 0, x); wiz.secs = {}; wiz.seamType = {}; wiz.lift = {}; }
+    } else if (act === "keyfix") {
+      var kp = arg.split("|"); wiz.keyFix[kp[0]] = +kp[1]; wiz.key = null;
+    } else if (act === "import") { openAdd(); return; }
+    else if (act === "magic") {
+      var M0 = wzModel();
+      wiz.key = M0.sol.best.K; wiz.tempoMode = M0.sol.mode; wiz.tempo = null; wiz.lift = {}; wiz.seamType = {};
+      wiz.magic = true; wiz.step = 3; wiz.sel = { kind: M0.parts.length > 1 ? "seam" : "part", i: 0 };
+    } else if (act === "step") { wiz.step = +arg; }
+    else if (act === "key") { wiz.key = +arg; wiz.lift = {}; wiz.seamType = {}; }
+    else if (act === "tmode") { wiz.tempoMode = arg; wiz.seamType = {}; }
+    else if (act === "tdown" || act === "tup") { var M1 = wzModel(); wiz.tempo = Math.max(40, Math.min(240, M1.T + (act === "tup" ? 1 : -1))); wiz.tempoMode = "one"; wiz.seamType = {}; }
+    else if (act === "treset") { wiz.tempo = null; wiz.seamType = {}; }
+    else if (act === "sel") { var sp = arg.split("|"); wiz.sel = { kind: sp[0], i: +sp[1] }; }
+    else if (act === "sec") {
+      var sp2 = arg.split("|"), nm = sp2[0], j = +sp2[1];
+      parts = wzParts();
+      var P = parts.filter(function (p) { return p.info.name === nm; })[0];
+      if (!P) return;
+      var cur = P.idx.slice(), w = cur.indexOf(j);
+      if (w >= 0) { if (cur.length === 1) return; cur.splice(w, 1); } else { cur.push(j); cur.sort(function (a, c) { return a - c; }); }
+      wiz.secs[nm] = cur;
+    } else if (act === "lift") {
+      var sp3 = arg.split("|"); wiz.lift[sp3[0]] = (wiz.lift[sp3[0]] || 0) + (+sp3[1]); wiz.seamType = {};
+    } else if (act === "seamtype") { var sp4 = arg.split("|"); wiz.seamType[+sp4[0]] = sp4[1]; }
+    else if (act === "listen") { var si = wzSongByName(wiz.built); if (si >= 0) send("medlisten", si, +arg); return; }
+    wzRender();
   });
-  $("wizSongs").addEventListener("pointerdown", function (e) {
-    var c = e.target.closest(".ae-chip");
-    if (c && e.button <= 0) wiz.drag = { kind: "chip", ref: { s: +c.dataset.s, j: +c.dataset.j }, src: c, x0: e.clientX, y0: e.clientY, on: false, id: e.pointerId };
+  $("wzSteps").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-act=step]");
+    if (!b || b.disabled) return;
+    wiz.step = +b.dataset.arg;
+    wzRender();
   });
-  window.addEventListener("pointermove", function (e) {
-    var d = wiz.drag;
-    if (!d || e.pointerId !== d.id) return;
-    if (!d.on) {
-      if (Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0) < 7) return;
-      d.on = true;
-      var r = d.src.getBoundingClientRect();
-      d.dx = d.x0 - r.left; d.dy = d.y0 - r.top;
-      d.ghost = d.src.cloneNode(true);
-      d.ghost.classList.add("ae-ghost");
-      d.ghost.style.width = r.width + "px"; d.ghost.style.height = r.height + "px";
-      var c0 = d.src.querySelector("canvas"), c1 = d.ghost.querySelector("canvas");
-      if (c0 && c1) { c1.width = c0.width; c1.height = c0.height; try { c1.getContext("2d").drawImage(c0, 0, 0); } catch (er) { } }
-      document.body.appendChild(d.ghost);
-      if (d.kind === "block") d.src.classList.add("is-lifted");
-      try { d.src.setPointerCapture(d.id); } catch (er) { }
-    }
-    e.preventDefault();
-    d.ghost.style.transform = "translate(" + (e.clientX - d.dx) + "px," + (e.clientY - d.dy) + "px) rotate(-1.5deg) scale(1.04)";
-    d.drop = wizDropAt(e.clientX, e.clientY, d.kind === "block" ? d.ref : -1);
-    wizCaret(d.drop);
-  }, { passive: false });
-  function wizEnd(e) {
-    var d = wiz.drag;
-    if (!d || (e && e.pointerId !== d.id)) return;
-    wiz.drag = null;
-    wizCaret(null);
-    if (d.ghost) d.ghost.remove();
-    if (d.src) d.src.classList.remove("is-lifted");
-    if (!d.on) {
-      if (d.kind === "chip") wizInsert([d.ref], null);
-      else { wiz.sel = wiz.sel === d.ref ? -1 : d.ref; renderWizard(); }
-      return;
-    }
-    if (!d.drop || (e && e.type === "pointercancel")) return;
-    if (d.kind === "chip") wizInsert([d.ref], d.drop.at);
-    else wizMove(d.ref, d.drop.at);
-  }
-  window.addEventListener("pointerup", wizEnd);
-  window.addEventListener("pointercancel", wizEnd);
-  $("wizLane").addEventListener("click", function (e) {
-    var x = e.target.closest(".ae-x");
-    if (x) wizRemove(+x.closest(".ae-block").dataset.k);
-  });
-  $("wizSongs").addEventListener("click", function (e) {
-    var a = e.target.closest(".ws-all");
-    if (!a) return;
-    var si = +a.dataset.s, sg = songs()[si];
-    wizInsert(sg.sections.map(function (_, j) { return { s: si, j: j }; }), null);
-  });
-  window.addEventListener("keydown", function (e) {
-    if (!wiz.open || wiz.sel < 0 || /input|select|textarea/i.test(e.target.tagName)) return;
-    if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); wizRemove(wiz.sel); }
-  });
-  function wizKeyStep(d) {
-    if (wiz.key == null) { var f = wizFirstSong(), r = songRoot(f); wiz.key = r == null ? 0 : r; }
-    wiz.key = ((wiz.key + d) % 12 + 12) % 12;
-    wiz.keyTouched = true;
-    renderWizard();
-  }
-  $("wizKeyDown").addEventListener("click", function () { wizKeyStep(-1); });
-  $("wizKeyUp").addEventListener("click", function () { wizKeyStep(1); });
-  function wizBpmSet(v) {
-    v = Math.round(Math.max(30, Math.min(260, v)) * 10) / 10;
-    if (!isFinite(v)) return;
-    wiz.bpm = v;
-    wiz.bpmTouched = true;
-    renderWizard();
-  }
-  $("wizBpmDown").addEventListener("click", function () { wizBpmSet((wiz.bpm || 100) - 1); });
-  $("wizBpmUp").addEventListener("click", function () { wizBpmSet((wiz.bpm || 100) + 1); });
-  $("wizBpm").addEventListener("change", function () { var v = parseFloat(this.value.replace(",", ".")); if (v > 0) wizBpmSet(v); else renderWizard(); });
-  $("wizTr").addEventListener("click", function (e) { var b = e.target.closest("button"); if (b) { wiz.tr = +b.dataset.v; setSeg("wizTr", wiz.tr); } });
+  $("wizName").addEventListener("input", function () { if (wiz.open) wzRender(); });
+  $("wzBack").addEventListener("click", function () { wiz.step = Math.max(1, wiz.step - 1); wzRender(); });
+  $("wzNext").addEventListener("click", function () { wiz.step = Math.min(3, wiz.step + 1); wzRender(); });
 
   function postMedley(body) {
     return fetch("/medley", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(function (r) { return r.json(); }).catch(function () { return { ok: false }; });
   }
-  $("wizSave").addEventListener("click", function () {
-    if (!wiz.list.length) return;
-    var semis = {}, slots = wiz.list.map(function (x) {
-      var sg = songs()[x.s];
-      semis[sg.name] = wizSemis(x.s);
-      return { song: sg.name, sec: x.j, name: sg.sections[x.j].name };
-    });
-    var f = wizFirstSong();
+
+  $("wzBuild").addEventListener("click", function () {
+    var M = wzModel();
+    if (!M.two || wiz.building) return;
+    var name = $("wizName").value.trim() || T("medDefaultName", { n: 1 });
+    $("wizName").value = name;
+    var keyName = KEYS[M.K];
+    var medley = { id: wiz.id || ("m" + Date.now().toString(36)), name: name, key: keyName,
+      parts: M.parts.map(function (p) { return { song: p.info.name, secs: p.idx, semis: p.semis, bpm: p.tempo, key: p.keyText }; }),
+      seams: M.seams.map(function (s) { return { type: s.type }; }),
+      ui: { picked: wiz.picked, secs: wiz.secs, lift: wiz.lift, keyFix: wiz.keyFix, key: M.K, tempoMode: M.mode, tempo: wiz.tempo, seamType: wiz.seamType } };
+    wiz.id = medley.id;
     // a new medley goes into the setlist right before its first song
     var at = -1;
-    if (wiz.mi < 0) { var p = order().indexOf(wiz.list[0].s); at = p >= 0 ? p : -1; }
-    postMedley({ action: "save", at: at, medley: { id: wiz.id || ("m" + Date.now().toString(36)), name: $("wizName").value.trim() || T("medDefaultName", { n: medleys().length + 1 }),
-      bpm: wiz.bpm || 0, key: wizKeyLabel(), voice: f ? f.name : "", tr: wiz.tr, slots: slots, semis: semis } });
-    closeWizard();
+    if (!wiz.built) { var first = wzSongByName(M.parts[0].info.name), p0 = order().indexOf(first); at = p0 >= 0 ? p0 : -1; }
+    else { var bi = wzSongByName(wiz.built); at = order().indexOf(bi); }
+    wiz.building = true;
+    wiz.pendingKey = wzSig();
+    $("wzOver").hidden = false;
+    $("wzOverOk").hidden = true;
+    $("wzOverTitle").textContent = T("medBuilding", { name: name });
+    $("wzOverText").textContent = T("medBuildingSub");
+    $("wzProg").style.width = "3%";
+    postMedley({ action: "build", at: at, medley: medley }).then(function (r) {
+      if (!r || !r.ok) { wiz.building = false; $("wzOverTitle").textContent = T("medBuildFail"); $("wzOverText").textContent = ""; $("wzOverOk").hidden = false; }
+    });
+    wzRender();
   });
+  $("wzOverOk").addEventListener("click", function () { $("wzOver").hidden = true; wzRender(); });
+
+  // the build reports like an import
+  function wzOnBuild(m) {
+    if (m.kind === "start") $("wzOverTitle").textContent = T("medBuilding", { name: m.a });
+    else if (m.kind === "progress") $("wzProg").style.width = Math.max(3, Math.round(100 * (+m.a) / (+m.b || 1))) + "%";
+    else if (m.kind === "done" || m.kind === "error") {
+      wiz.building = false;
+      $("wzProg").style.width = m.kind === "done" ? "100%" : "0";
+      if (m.kind === "done") {
+        var ok = +m.b || 0, tot = +m.c || 0;
+        wiz.built = m.a; wiz.builtKey = wiz.pendingKey; wiz.magic = false;
+        if (wiz.legacy) { postMedley({ action: "delete", id: wiz.legacy }); wiz.legacy = ""; }
+        $("wizDelete").hidden = false;
+        $("wzOverTitle").textContent = T("medBuiltTitle", { name: m.a });
+        $("wzOverText").textContent = ok === tot ? T("medBuiltText", { n: tot }) : T("medBuiltBad", { bad: tot - ok, n: tot });
+        wiz.step = 3;
+        var M = wzModel();
+        wiz.sel = M.seams.length ? { kind: "seam", i: 0 } : { kind: "part", i: 0 };
+      } else {
+        $("wzOverTitle").textContent = T("medBuildFail");
+        $("wzOverText").textContent = whyText(m.a);
+      }
+      $("wzOverOk").hidden = false;
+      wzRender();
+    }
+  }
+
   $("wizDelete").addEventListener("click", function () {
     if (!wiz.delArmed) { wiz.delArmed = true; this.textContent = T("medDeleteSure"); return; }
-    postMedley({ action: "delete", id: wiz.id });
+    if (wiz.built) postMedley({ action: "unbuild", id: wiz.id });
+    if (wiz.legacy) postMedley({ action: "delete", id: wiz.legacy });
+    wiz.building = false;
     closeWizard();
   });
 
@@ -2043,6 +2178,7 @@
     return T({ busy: "whyBusy", playing: "whyPlaying", parse: "whyParse", not_found: "whyNotFound", no_audio: "whyNoAudio", no_als: "whyNoAls" }[code] || "whyParse");
   }
   function onImport(m) {
+    if (wiz.open && wiz.building) { wzOnBuild(m); return; }
     if (m.kind === "start") { add.busy = true; add.title = m.a; $("addSheet").hidden = false; showAddPane("progress"); $("addStatus").textContent = T("addWorking", { title: m.a }); }
     else if (m.kind === "progress") { $("addBar").style.width = Math.round(100 * (+m.a) / (+m.b || 1)) + "%"; }
     else if (m.kind === "done") {
@@ -2356,7 +2492,7 @@
       struct = JSON.parse(e.data);
       renderedKey = "";
       render();
-      if (wiz.open && !wiz.drag) renderWizard();
+      if (wiz.open && !wiz.building) wzRender();
       updateSettings();
     });
     es.addEventListener("cue", function (e) { cue = JSON.parse(e.data); updateCue(); });
@@ -2370,7 +2506,6 @@
       var s = songs()[shownIdx];
       if (s && s.name === w.song) { sm.drawnKey = ""; drawWave(); if (ae.open) aeDrawBlocks(); }
       else if (shownMed >= 0) { sm.drawnKey = ""; drawWave(); }
-      if (wiz.open) wizDrawBlocks();
     });
     var firstImport = true;
     es.addEventListener("import", function (e) {

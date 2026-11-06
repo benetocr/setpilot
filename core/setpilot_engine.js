@@ -429,6 +429,7 @@ function publishStruct() {
 		songs[si].auto = o.auto || null;
 		songs[si].arr = arrOf(si);
 		songs[si].trEff = trMode(si);
+		songs[si].med = o.med ? { id: o.med.id, key: o.med.key, parts: o.med.parts, seams: o.med.seams, spec: o.med.spec } : null;
 	}
 	var obj = {
 		version: structVersion, songs: songs, order: order, medleys: medPublic(),
@@ -688,6 +689,10 @@ function tick() {
 	if (playing && curSong >= 0 && !pre && med) guard("medley", runMed)();
 	else if (playing && curSong >= 0 && !pre) guard("arrangement", runArr)();
 	if (playing) runTransport();
+	guard("medtempo", medTempoTick)();
+	guard("listen", listenTick)();
+	guard("medpad", medPadTick)();
+	if (medPlace) guard("medplace", runMedPlace)();
 	if (clock - lastTrackScan > 3000) { lastTrackScan = clock; scanTracks(); }
 	if (clock - lastPing > 3000) { lastPing = clock; ping(); }
 	if (pendingKeys && songs.length) { pendingKeys = false; guard("keys", applyAllKeys)(); }
@@ -988,6 +993,8 @@ function medleyjson() {
 
 function medleyApply(o) {
 	if (!o) return;
+	if (o.action == "build") { medBuild(o); return; }
+	if (o.action == "unbuild") { medUnbuild(o); return; }
 	var mi = medIndex(o.id);
 	if (o.action == "delete") {
 		if (mi < 0) return;
@@ -1021,6 +1028,425 @@ function medleyApply(o) {
 	}
 	saveStore();
 	publishStruct();
+}
+
+// ------------------------------------------------------------------ built medleys
+// A medley the wizard builds is a song of its own at the end of the
+// arrangement: copies of the chosen sections' clips (same audio files), each
+// part already in the medley's key, with its own locators. Live plays it
+// straight through like any song: no jumps on stage. What Live can't hold
+// (each part's tempo, the ramps, the pads between keys) is kept in the
+// song's options as opt(s).med and played by the engine.
+var VOX_RE = /(vox|vocal|voz|voces|bgv|bgvs|choir|\bcoro\b|alto|tenor|soprano|\blead\b|harmon|armon)/i;
+var GUIDEV_RE = /(guide|gu[ií]a|\bcues?\b)/i;
+var SEAM_BARS = { cut: 0, ant: 0, ramp: 0, pivot: 2, count: 2 };
+var KEYS_SHARP = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+var KEY_IDX = { C: 0, "C#": 1, Db: 1, D: 2, "D#": 3, Eb: 3, E: 4, F: 5, "F#": 6, Gb: 6, G: 7, "G#": 8, Ab: 8, A: 9, "A#": 10, Bb: 10, B: 11 };
+var medJobInfo = null;
+
+function keyParse(k) {
+	var m = /^([A-G](#|b)?)(m?)$/.exec(String(k || ""));
+	return m && KEY_IDX[m[1]] != null ? { root: KEY_IDX[m[1]], minor: !!m[3] } : null;
+}
+
+function medOf(s) {
+	if (s < 0 || s >= songs.length || s >= MED) return null;
+	var o = songOpts[songs[s].name];
+	return o && o.med ? o.med : null;
+}
+
+// the set's end, leaving out a range (the medley being rebuilt)
+function setEndExcept(a, b) {
+	var last = 0, ids = trackIds();
+	for (var i = 0; i < ids.length; i++) {
+		trackApi.id = ids[i];
+		var raw = trackApi.get("arrangement_clips") || [];
+		for (var k = 0; k < raw.length; k++) {
+			if (raw[k] != "id") continue;
+			clipApi.id = num(raw[k + 1]); k++;
+			var st = num(clipApi.get("start_time"));
+			if (st >= a - 0.001 && st < b - 0.001) continue;
+			last = Math.max(last, num(clipApi.get("end_time")));
+		}
+	}
+	var cues = readCues();
+	for (var c = 0; c < cues.length; c++) if (!(cues[c].time >= a - 0.001 && cues[c].time < b - 0.001)) last = Math.max(last, cues[c].time);
+	return last;
+}
+
+// where a song's material ends: the next song's header, or the end of the set
+function songRange(s) {
+	var sg = songs[s];
+	var next = 1e12;
+	for (var i = 0; i < songs.length; i++) if (songs[i].start > sg.start + 0.001) next = Math.min(next, songs[i].start);
+	return [sg.start, next];
+}
+
+// the clips under [a, b) of a song, per track: what a part copies
+function clipsUnder(a, b) {
+	var out = [], ids = trackIds();
+	for (var i = 0; i < ids.length; i++) {
+		var id = ids[i];
+		if (id == ownTrackId || id == clickTrackId || id == tailTrackId || id == gateTrackId) continue;
+		trackApi.id = id;
+		if (num(trackApi.get("has_midi_input"))) continue;
+		var nm = str(trackApi.get("name"));
+		if (GUIDEV_RE.test(nm) && !/click|clic/i.test(nm)) continue;   // the guide's words belong to its own song
+		var raw = trackApi.get("arrangement_clips") || [];
+		for (var k = 0; k < raw.length; k++) {
+			if (raw[k] != "id") continue;
+			var cid = num(raw[k + 1]); k++;
+			clipApi.id = cid;
+			if (!num(clipApi.get("is_audio_clip"))) continue;
+			var st = num(clipApi.get("start_time")), et = num(clipApi.get("end_time"));
+			if (et <= a + 0.001 || st >= b - 0.001) continue;
+			out.push({ track: id, name: nm, clip: cid, st: st, et: et, sm: num(clipApi.get("start_marker")),
+				pitched: !NONPITCH_RE.test(nm), vox: VOX_RE.test(nm), click: normTrack(nm) == "click" });
+		}
+	}
+	return out;
+}
+
+// o: { action: "build", at, medley: { id, name, key, parts: [{ song, secs: [j], semis, bpm }], seams: [{ type }] } }
+function medBuild(o) {
+	if (job) { importMsg("error", "busy"); return; }
+	if (playing) { importMsg("error", "playing"); return; }
+	var m = o.medley;
+	if (!m || !m.parts || m.parts.length < 1) { importMsg("error", "plan"); return; }
+	var bl = barLen();
+	var name = String(m.name || "Medley").replace(/[#|]/g, " ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "") || "Medley";
+
+	// an earlier build of this medley (or a song with that name made by a medley) goes away first
+	var old = -1;
+	for (var i = 0; i < songs.length; i++) {
+		var md = medOf(i);
+		if (md && (String(md.id) == String(m.id) || songs[i].name == name)) { old = i; break; }
+	}
+	var steps = [], oldA = -1, oldB = -1;
+	if (old >= 0) {
+		var rg = songRange(old);
+		oldA = rg[0]; oldB = rg[1];
+		steps.push({ type: "rmclips", from: oldA, to: oldB });
+		var oc = readCues();
+		for (var c = 0; c < oc.length; c++) if (oc[c].time >= oldA - 0.001 && oc[c].time < oldB - 0.001) steps.push({ type: "uncue", time: oc[c].time });
+	}
+	var last = old >= 0 ? setEndExcept(oldA, oldB) : songEndBeats();
+	var P = last > 0 ? Math.ceil(last / bl - 1e-6) * bl + 4 * bl : 0;
+
+	// two bars of count-off before the first part, like a song from MultiTracks: the
+	// header takes the song's start and the first section gets its own locator
+	var lead = 2 * bl;
+	var Q = P + lead, cues = [], parts = [], seams = [], dupN = 0, missing = [];
+	for (var k = 0; k < m.parts.length; k++) {
+		var pt = m.parts[k], s = songIndex(pt.song);
+		if (s < 0) { missing.push(pt.song); continue; }
+		var sg = songs[s], secs = (pt.secs || []).map(function (x) { return parseInt(x, 10); }).filter(function (j) { return sg.sections[j]; });
+		secs.sort(function (x, y) { return x - y; });
+		if (!secs.length) continue;
+		var semis = Math.max(-12, Math.min(12, parseInt(pt.semis, 10) || 0));
+		var bpm = Number(pt.bpm) || sg.bpm || tempo;
+		var seamIn = k > 0 ? (m.seams && m.seams[k - 1] ? String(m.seams[k - 1].type) : "cut") : "";
+		var partStart = Q;
+		// runs of sections that follow each other in the song are copied as one piece
+		var runs = [];
+		for (var r = 0; r < secs.length; r++) {
+			var sec = sg.sections[secs[r]], lr = runs[runs.length - 1];
+			if (lr && Math.abs(lr.b - sec.start) < 0.01) { lr.b = sec.end; lr.secs.push(secs[r]); }
+			else runs.push({ a: sec.start, b: sec.end, secs: [secs[r]] });
+		}
+		if (k == 0) {
+			// the click of the count-off: the bars before the first section, on the click track
+			var pre = clipsUnder(runs[0].a - lead, runs[0].a);
+			for (var w = 0; w < pre.length; w++) {
+				if (!pre[w].click) continue;
+				var w0 = Math.max(runs[0].a - lead, pre[w].st), w1 = Math.min(runs[0].a, pre[w].et);
+				if (w1 - w0 < 0.5) continue;
+				steps.push({ type: "dup", track: pre[w].track, clip: pre[w].clip, pos: P + (w0 - (runs[0].a - lead)), sm: pre[w].sm + (w0 - pre[w].st), em: pre[w].sm + (w1 - pre[w].st), pitch: 0, name: pre[w].name });
+				dupN++;
+			}
+		}
+		for (var u = 0; u < runs.length; u++) {
+			var run = runs[u], under = clipsUnder(run.a, run.b);
+			for (var q = 0; q < under.length; q++) {
+				var cl = under[q];
+				var x0 = Math.max(run.a, cl.st), x1 = Math.min(run.b, cl.et);
+				var pos = Q + (x0 - run.a), sm = cl.sm + (x0 - cl.st), em = cl.sm + (x1 - cl.st);
+				// the voices of a part that anticipates come in half a bar early
+				if (seamIn == "ant" && u == 0 && cl.vox && Math.abs(x0 - run.a) < 0.01 && x0 - cl.st >= bl / 2) { pos -= bl / 2; sm -= bl / 2; }
+				steps.push({ type: "dup", track: cl.track, clip: cl.clip, pos: pos, sm: sm, em: em, pitch: cl.pitched ? semis : 0, name: cl.name });
+				dupN++;
+			}
+			for (var j2 = 0; j2 < run.secs.length; j2++) {
+				var sc2 = sg.sections[run.secs[j2]];
+				cues.push({ time: Q + (sc2.start - run.a), name: sc2.name });
+			}
+			Q += run.b - run.a;
+		}
+		parts.push({ song: sg.name, a: partStart - P, b: Q - P, bpm: bpm, semis: semis, key: m.key || "", pkey: pt.key || m.key || "" });
+		// the bridge after this part: pad bars, with the click going on
+		var nextSeam = k + 1 < m.parts.length && m.seams && m.seams[k] ? String(m.seams[k].type) : "";
+		var nb = SEAM_BARS[nextSeam] || 0;
+		if (nextSeam) seams.push({ type: nextSeam, at: Q - P, len: nb * bl, from: parts.length - 1 });
+		if (nb) {
+			var lastRun = runs[runs.length - 1], ck = clipsUnder(Math.max(lastRun.a, lastRun.b - nb * bl), lastRun.b);
+			for (var z = 0; z < ck.length; z++) {
+				if (!ck[z].click) continue;
+				var y0 = Math.max(lastRun.b - nb * bl, ck[z].st), y1 = Math.min(lastRun.b, ck[z].et);
+				steps.push({ type: "dup", track: ck[z].track, clip: ck[z].clip, pos: Q + (y0 - (lastRun.b - nb * bl)), sm: ck[z].sm + (y0 - ck[z].st), em: ck[z].sm + (y1 - ck[z].st), pitch: 0, name: ck[z].name });
+				dupN++;
+			}
+			cues.push({ time: Q, name: "Transición" });
+			Q += nb * bl;
+		}
+	}
+	if (!parts.length) { importMsg("error", "plan"); return; }
+	// a seam after the last part means nothing
+	seams = seams.filter(function (x) { return x.from < parts.length - 1; });
+	var keyName = String(m.key || "");
+	steps.push({ type: "verify" });
+	steps.push({ type: "zoom", dir: 3 });
+	var hdr = "# " + name + " | " + (Math.round(parts[0].bpm * 100) / 100) + (keyName ? " | " + keyName : "");
+	steps.push({ type: "cue", time: P, name: hdr });
+	for (var cc = 0; cc < cues.length; cc++) if (cues[cc].time > P + 0.001) steps.push({ type: "cue", time: cues[cc].time, name: cues[cc].name });
+	// the first section's name lives on the header's spot: the song map shows it as its first section
+	var stopAt = Math.ceil((Q - 0.001) / bl) * bl;
+	steps.push({ type: "cue", time: stopAt, name: "STOP" });
+	steps.push({ type: "zoom", dir: 2 });
+	steps.push({ type: "meddone" });
+
+	medJobInfo = { id: String(m.id || ("m" + new Date().getTime())), name: name, key: keyName, parts: parts, seams: seams, first: cues.length ? cues[0].name : "",
+		spec: m, at: parseInt(o.at, 10), oldName: old >= 0 ? songs[old].name : "" };
+	job = { steps: steps, i: 0, P: P, dest: {}, title: name, savedTempo: tempo, warp: {}, medley: 1 };
+	importMsg("start", name, steps.length, Math.round(P / bl) + 1);
+	log("medley build " + name + " at bar " + (Math.round(P / bl) + 1) + ": " + parts.length + " parts, " + dupN + " clips, " + seams.length + " seams" + (missing.length ? ", missing " + missing.join(", ") : ""));
+}
+
+// one copied clip: Live duplicates it (warp, gain and all), then it is trimmed to the section
+function runDup(step) {
+	if (step.created) return;
+	step.created = 1;
+	trackApi.id = step.track;
+	var made = null;
+	try {
+		trackApi.call("duplicate_clip_to_arrangement", "id", step.clip, step.pos);
+		made = findClipAt(step.track, step.pos);
+	} catch (e) { log("duplicate failed (" + e.message + "): copying from the file"); }
+	if (!made) {
+		// older Live: a new clip from the same file on the source's timing
+		clipApi.id = step.clip;
+		var file = str(clipApi.get("file_path")), src = markersOf(clipApi).map(function (x) { return [x.sec, x.beat]; }), mode = num(clipApi.get("warp_mode"));
+		trackApi.id = step.track;
+		trackApi.call("create_audio_clip", file, step.pos);
+		made = findClipAt(step.track, step.pos);
+		if (!made) throw new Error("clip not made on " + step.name);
+		clipApi.id = made;
+		if (!num(clipApi.get("warping"))) clipApi.set("warping", 1);
+		if (num(clipApi.get("warp_mode")) != mode) clipApi.set("warp_mode", mode);
+		if (src.length >= 2) rewarp(clipApi, { markers: src, name: step.name, maxEnd: 0, length: step.em - step.sm });
+	}
+	clipApi.id = made;
+	// Live refuses a start marker past the end: when the end moves left, the start goes first
+	var curEnd = num(clipApi.get("end_marker"));
+	if (step.em > curEnd) { clipApi.set("end_marker", step.em); clipApi.set("loop_end", step.em); }
+	if (Math.abs(num(clipApi.get("start_marker")) - step.sm) > 0.001) clipApi.set("start_marker", step.sm);
+	if (Math.abs(num(clipApi.get("end_marker")) - step.em) > 0.001) clipApi.set("end_marker", step.em);
+	if (!num(clipApi.get("looping")) && Math.abs(num(clipApi.get("loop_end")) - step.em) > 0.001) { try { clipApi.set("loop_end", step.em); } catch (e) { } }
+	if (num(clipApi.get("pitch_coarse")) != step.pitch) clipApi.set("pitch_coarse", step.pitch);
+	if (step.pitch && num(clipApi.get("warping")) && num(clipApi.get("warp_mode")) != 6) clipApi.set("warp_mode", 6);
+	(job.dups = job.dups || []).push({ track: step.track, pos: step.pos, len: step.em - step.sm, name: step.name });
+}
+
+function findClipAt(track, pos) {
+	trackApi.id = track;
+	var raw = trackApi.get("arrangement_clips") || [];
+	for (var k = 0; k < raw.length; k++) {
+		if (raw[k] != "id") continue;
+		clipApi.id = num(raw[k + 1]); k++;
+		if (Math.abs(num(clipApi.get("start_time")) - pos) < 0.01) return num(raw[k]);
+	}
+	return 0;
+}
+
+function rmClips(a, b) {
+	var ids = trackIds(), n = 0;
+	for (var i = 0; i < ids.length; i++) {
+		trackApi.id = ids[i];
+		var raw = trackApi.get("arrangement_clips") || [], del = [];
+		for (var k = 0; k < raw.length; k++) {
+			if (raw[k] != "id") continue;
+			clipApi.id = num(raw[k + 1]); k++;
+			var st = num(clipApi.get("start_time"));
+			if (st >= a - 0.001 && st < b - 0.001) del.push(clipApi.id);
+		}
+		for (var d = 0; d < del.length; d++) { trackApi.call("delete_clip", "id", del[d]); n++; }
+	}
+	log("medley: " + n + " old clips removed");
+}
+
+function medDone() {
+	var info = medJobInfo, P = job.P;
+	medJobInfo = null;
+	var bad = 0, list = job.dups || [];
+	for (var i = 0; i < list.length; i++) {
+		var c = list[i], id = findClipAt(c.track, c.pos);
+		if (!id) { bad++; log("medley check: " + c.name + " missing at " + c.pos); continue; }
+		clipApi.id = id;
+		var len = num(clipApi.get("end_time")) - num(clipApi.get("start_time"));
+		if (Math.abs(len - c.len) > 0.02) { bad++; log("medley check: " + c.name + " is " + len + " beats, wanted " + c.len); }
+	}
+	if (info) {
+		if (info.oldName && info.oldName != info.name && songOpts[info.oldName]) delete songOpts[info.oldName];
+		var o = songOpts[info.name] = songOpts[info.name] || { bpm: 0, semis: 0 };
+		o.bpm = 0; o.semis = 0;
+		o.med = { id: info.id, key: info.key, parts: info.parts, seams: info.seams, spec: info.spec, built: new Date().getTime() };
+		if (info.at >= 0) medPlace = { name: info.name, at: info.at, until: clock + 15000 };
+	}
+	setProp("current_song_time", P);
+	needStore = true;
+	var title = job.title;
+	job = null;
+	structSig = "";
+	dirty = true;
+	importMsg("done", title, list.length - bad, list.length);
+	log("medley built: " + title + " (" + (list.length - bad) + "/" + list.length + " clips ok)");
+}
+
+// the new medley goes where the wizard said in the setlist, once its song shows up
+var medPlace = null;
+function runMedPlace() {
+	if (!medPlace) return;
+	if (clock > medPlace.until) { medPlace = null; return; }
+	if (songIndex(medPlace.name) < 0) return;
+	var names = orderNames().filter(function (n) { return n != medPlace.name; });
+	names.splice(Math.max(0, Math.min(names.length, medPlace.at)), 0, medPlace.name);
+	order = mergeOrder(names);
+	medPlace = null;
+	saveStore();
+	publishStruct();
+}
+
+function medUnbuild(o) {
+	if (job || playing) return;
+	var s = -1;
+	for (var i = 0; i < songs.length; i++) { var md = medOf(i); if (md && String(md.id) == String(o.id)) { s = i; break; } }
+	if (s < 0) return;
+	var rg = songRange(s), steps = [{ type: "rmclips", from: rg[0], to: rg[1] }], oc = readCues();
+	for (var c = 0; c < oc.length; c++) if (oc[c].time >= rg[0] - 0.001 && oc[c].time < rg[1] - 0.001) steps.push({ type: "uncue", time: oc[c].time });
+	steps.push({ type: "fin", back: Math.max(0, rg[0] - barLen() * 4), what: "medley deleted" });
+	delete songOpts[songs[s].name];
+	needStore = true;
+	job = { steps: steps, i: 0, P: rg[0], dest: {}, title: songs[s].name, savedTempo: tempo, warp: {} };
+	log("medley delete: " + songs[s].name);
+}
+
+// ---------- playing a built medley
+// the tempo at a point of the medley: its part's, ramping into the next part
+// over the last 4 bars when that seam is a ramp; a pad bridge already takes
+// the next part's tempo
+function medTempoAt(s, time) {
+	var md = medOf(s);
+	if (!md || !md.parts || !md.parts.length) return 0;
+	var rel = time - songs[s].start, bl = barLen(), p = md.parts, k = 0;
+	for (var i = 0; i < p.length; i++) if (rel >= p[i].a - 0.001) k = i;
+	var v = p[k].bpm;
+	if (rel >= p[k].b - 0.001 && k + 1 < p.length) v = p[k + 1].bpm;   // in the bridge after it
+	else {
+		for (var j = 0; j < (md.seams || []).length; j++) {
+			var sm = md.seams[j];
+			if (sm.type != "ramp" || sm.from != k || !p[k + 1]) continue;
+			var r0 = p[k].b - 4 * bl;
+			if (rel > r0) v = p[k].bpm + (p[k + 1].bpm - p[k].bpm) * Math.min(1, (rel - r0) / (4 * bl));
+		}
+	}
+	var o = opt(s), base = p[0].bpm;
+	return o.bpm && base ? v * o.bpm / base : v;
+}
+
+// the wizard's "listen": two bars before a join to two bars after it, then stop
+var listenStop = 0, listenAt = 0;
+function medlisten(s, k) {
+	s = parseInt(s, 10); k = parseInt(k, 10);
+	var md = medOf(s);
+	if (!md || !md.seams || !md.seams[k] || job) return;
+	if (playing) stop();
+	var sm = md.seams[k], S = songs[s].start, bl = barLen();
+	var from = Math.max(S, S + sm.at - 2 * bl);
+	prepareSong(s);
+	moveTo(from);
+	applyTempo(s);
+	listenStop = S + sm.at + sm.len + 2 * bl;
+	listenAt = clock;
+	startFrom(from);
+}
+
+function listenTick() {
+	if (!listenStop) return;
+	if (playing && t >= listenStop) { listenStop = 0; stop(); stop(); return; }
+	if (!playing && clock - listenAt > 2500) listenStop = 0;
+}
+
+var medTempoLast = 0;
+function medTempoTick() {
+	if (!playing || curSong < 0 || !medOf(curSong)) return;
+	var v = medTempoAt(curSong, t);
+	if (!(v > 0)) return;
+	v = Math.round(v * 100) / 100;
+	if (Math.abs(tempo - v) > 0.009) { setProp("tempo", v); tempo = v; tempoOverridden = true; }
+}
+
+// the pitch of a medley clip: its part's, plus the key the song is moved to
+function medPitchAt(s, time) {
+	var md = medOf(s);
+	if (!md) return 0;
+	var rel = time - songs[s].start, p = md.parts, v = p.length ? p[0].semis : 0;
+	for (var i = 0; i < p.length; i++) if (rel >= p[i].a - 0.6 * barLen()) v = p[i].semis;   // a clip that anticipates belongs to the part it starts
+	return v;
+}
+
+// pads between keys, played by SetPilot Audio on the Tail track: chords
+// scheduled on the beat, sent again whenever the playhead jumps
+var padSent = "", padOn = false, padLastT = 0;
+function medPadEvents(s) {
+	var md = medOf(s), ev = [];
+	if (!md || !md.seams) return ev;
+	var S = songs[s].start, bl = barLen(), p = md.parts;
+	for (var i = 0; i < md.seams.length; i++) {
+		var sm = md.seams[i], A = p[sm.from], B = p[sm.from + 1];
+		if (!A || !B || !(sm.len > 0)) continue;
+		var ka = keyParse(A.pkey || md.key), kb = keyParse(B.pkey || md.key);
+		if (!kb) continue;
+		if (!ka) ka = kb;
+		var at = S + sm.at, end = at + sm.len;
+		if (sm.type == "pivot") {
+			ev.push([at - bl, ka.root, ka.minor ? 2 : 1]);
+			ev.push([end - bl, (kb.root + 7) % 12, 1]);        // V of the new key
+			ev.push([end, kb.root, kb.minor ? 2 : 1]);
+			ev.push([end + 2 * bl, 0, 0]);
+		} else if (sm.type == "count") {
+			ev.push([at - bl, ka.root, ka.minor ? 2 : 1]);
+			ev.push([at, kb.root, kb.minor ? 2 : 1]);
+			ev.push([end + bl, 0, 0]);
+		}
+	}
+	return ev;
+}
+
+function medPadTick() {
+	if (!tailPresent()) return;
+	var md = playing && curSong >= 0 ? medOf(curSong) : null;
+	if (!md) {
+		if (padOn) { messnamed("setpilot_tail", "padclear"); padOn = false; padSent = ""; }
+		return;
+	}
+	var jumped = t < padLastT - 0.05 || t > padLastT + 2 * barLen();
+	padLastT = t;
+	var key = curSong + "|" + (md.built || 0);
+	if (key == padSent && !jumped) return;
+	padSent = key;
+	messnamed("setpilot_tail", "padclear");
+	var ev = medPadEvents(curSong);
+	for (var i = 0; i < ev.length; i++) if (ev[i][0] > t - 0.01) messnamed("setpilot_tail", "pad", ev[i][0], ev[i][1], ev[i][2]);
+	padOn = true;
 }
 
 // ------------------------------------------------------------------ arrangement
@@ -2505,7 +2931,7 @@ function baseBpm(s) {
 function applyTempo(s) {
 	if (s < 0 || s >= songs.length) return;
 	var o = opt(s), sg = songs[s];
-	var target = medBpmFor(s) || o.bpm || sg.bpm;
+	var target = medOf(s) ? medTempoAt(s, (t >= sg.start && t < sg.end) ? t : sg.start) : (medBpmFor(s) || o.bpm || sg.bpm);
 	if (target) {
 		if (Math.abs(tempo - target) > 0.004) { setProp("tempo", target); tempo = target; }
 		tempoOverridden = true;
@@ -2562,8 +2988,9 @@ function applyKey(s, override) {
 			var st = num(clipApi.get("start_time"));
 			if (st < sg.start - 0.01 || st >= sg.end - 0.01) continue;
 			if (!num(clipApi.get("is_audio_clip"))) continue;
-			if (num(clipApi.get("pitch_coarse")) != semis) { clipApi.set("pitch_coarse", semis); changed++; }
-			if (semis && num(clipApi.get("warping")) && num(clipApi.get("warp_mode")) != 6) clipApi.set("warp_mode", 6);
+			var want = medOf(s) ? Math.max(-48, Math.min(48, medPitchAt(s, st) + semis)) : semis;
+			if (num(clipApi.get("pitch_coarse")) != want) { clipApi.set("pitch_coarse", want); changed++; }
+			if (want && num(clipApi.get("warping")) && num(clipApi.get("warp_mode")) != 6) clipApi.set("warp_mode", 6);
 		}
 	}
 	if (changed || override == null) log("key " + sg.name + " " + (semis > 0 ? "+" : "") + semis + " (" + changed + " clips)");
@@ -3213,6 +3640,13 @@ function runJob() {
 				fitClipEnd(clipApi, step.markers, step.maxEnd, step.length);
 			}
 		}
+	} else if (step.type == "dup") {
+		runDup(step);
+	} else if (step.type == "rmclips") {
+		rmClips(step.from, step.to);
+	} else if (step.type == "meddone") {
+		medDone();
+		return;
 	} else if (step.type == "cue" && cueOps) {
 		song.call("add_cue", step.time, step.name);
 	} else if (step.type == "uncue" && cueOps) {

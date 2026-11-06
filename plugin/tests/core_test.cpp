@@ -150,11 +150,46 @@ static void testTailRate() {
 	CHECK(std::abs(last - 24000) < 600, "twice the speed ends at half the time");
 }
 
+static double rms(const std::vector<float>& v, long a, long b) {
+	double e = 0; long n = 0;
+	for (long i = std::max(0L, a); i < std::min((long)v.size(), b); ++i) { e += v[(size_t)i] * v[(size_t)i]; ++n; }
+	return n ? std::sqrt(e / n) : 0;
+}
+
+static void testPadChordsOnTheirBeats() {
+	Run r(Role::Tail);   // 120 BPM: a beat is half a second
+	auto ev = [&](double beat, int root, int q) { Command c; c.type = Command::PadEvent; c.beat = beat; c.a = root; c.b = q; r.core.push(c); };
+	ev(8, 9, 1);    // A major from beat 8
+	ev(4, 4, 1);    // E major from beat 4 (sent out of order)
+	ev(16, 0, 0);   // off at beat 16
+	r.go(1.0);
+	CHECK(rms(r.L, 0, r.beatSample(3.9)) < 1e-6, "silent before its first beat");
+	r.go(2.5);   // to 3.5 s = beat 7
+	CHECK(rms(r.L, r.beatSample(6), r.beatSample(7)) > 0.01, "the pad swells in");
+	CHECK(std::fabs(r.core.padFreq(1) - 164.81) < 1.0, "E major: the root is E3");
+	r.go(1.5);   // to beat 10
+	CHECK(std::fabs(r.core.padFreq(1) - 110.0) < 2.0, "A major after beat 8, an octave down to stay warm");
+	r.go(7.0);   // to beat 24: off at 16, then a 2 s release
+	CHECK(r.core.padLevel() == 0.0f, "off after its release");
+	CHECK(rms(r.L, r.beatSample(22), r.beatSample(24)) < 1e-4, "silent after the release");
+}
+
+static void testPadClear() {
+	Run r(Role::Tail);
+	Command c; c.type = Command::PadEvent; c.beat = 0; c.a = 2; c.b = 2; r.core.push(c);
+	r.go(1.5);
+	CHECK(r.core.padLevel() > 0.5f, "Dm sounding");
+	Command x; x.type = Command::PadClear; r.core.push(x);
+	r.go(2.5);
+	CHECK(r.core.padLevel() == 0.0f, "clear releases it");
+}
+
 int main() {
 	testClickOnTheGrid(); testClickNotBetweenBeats(); testClickAccentAndMute(); testClickSubdivision(); testClickSilentWhenStopped();
 	testCueStartsOnItsBeat(); testCueDisarmAndPlayNow();
 	testGateClosesOnItsBeat(); testGateNow();
 	testTailCrossfade(); testTailRate();
+	testPadChordsOnTheirBeats(); testPadClear();
 	std::printf(failures ? "\n%d failing\n" : "\nall passing\n", failures);
 	return failures ? 1 : 0;
 }

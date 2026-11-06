@@ -91,6 +91,9 @@ class AudioRouter {
 			// rate already carries the tempo change; the old device also took a pitch factor
 			else if (m === "play") this.send("tail", { t: "tailplay", rate: Number(r[0]), pitch: Number(r[1]), mode: Number(r[2]), durMs: Number(r[3]), offsetMs: Number(r[4]) });
 			else if (m === "stop") this.send("tail", { t: "tailstop" });
+			// pads between the keys of a medley: chords on beats (root 0-11, quality 1 major, 2 minor, 0 off)
+			else if (m === "pad") this.send("tail", { t: "padev", beat: Number(r[0]), root: Number(r[1]), q: Number(r[2]) });
+			else if (m === "padclear") this.send("tail", { t: "padclear" });
 		}
 	}
 

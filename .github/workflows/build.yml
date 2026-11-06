@@ -21,6 +21,7 @@ jobs:
       - run: node dev/e2e_plugins.js
       - run: node dev/test_prepare.js
       - run: node dev/test_import_live.js
+      - run: node dev/test_medley_live.js
       - run: g++ -std=c++17 -O2 -I plugin/src plugin/tests/core_test.cpp -o core_test && ./core_test
 
   plugin-mac:

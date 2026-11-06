@@ -242,6 +242,25 @@ class Track(Observable):
         self.arrangement_clips = self.arrangement_clips + (c,)
         return c
 
+    def duplicate_clip_to_arrangement(self, clip, time):
+        # like Live 12: a full copy (markers, warp, pitch) at a new place; it replaces what it covers
+        c = Clip(time, clip.end_time - clip.start_time, clip.file_path)
+        for k in ("looping", "loop_start", "loop_end", "warping", "warp_mode", "pitch_coarse", "muted"):
+            Observable.__setattr__(c, k, getattr(clip, k))
+        Observable.__setattr__(c, "end_marker", clip.end_marker)
+        Observable.__setattr__(c, "start_marker", clip.start_marker)
+        Observable.__setattr__(c, "warp_markers", clip.warp_markers)
+        end = c.end_time
+        keep = []
+        for o in self.arrangement_clips:
+            if o.start_time >= time - 1e-6 and o.start_time < end - 1e-6:
+                continue
+            if o.start_time < time and o.end_time > time:
+                Observable.__setattr__(o, "end_time", time)
+            keep.append(o)
+        self.arrangement_clips = tuple(keep) + (c,)
+        return c
+
     def delete_clip(self, clip):
         self.arrangement_clips = tuple(c for c in self.arrangement_clips if c is not clip)
 

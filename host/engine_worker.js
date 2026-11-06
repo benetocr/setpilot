@@ -19,7 +19,7 @@ const signal = new Int32Array(workerData.sab);
 let connected = false;
 let q = 0;
 
-const SLOW = new Set(["create_audio_clip", "create_audio_track", "add_cue", "delete_cue", "insert_plugin"]);
+const SLOW = new Set(["create_audio_clip", "duplicate_clip_to_arrangement", "create_audio_track", "add_cue", "delete_cue", "insert_plugin"]);
 
 function request(msg) {
 	if (!connected) return { ok: false, err: "Live is not connected" };
@@ -113,6 +113,19 @@ parentPort.on("message", m => {
 		try { r = { ok: true, done: prepareSet({ mirror, router, log: x => parentPort.postMessage({ post: x }) }) }; }
 		catch (e) { r = { ok: false, err: e.message }; }
 		parentPort.postMessage({ prepared: Object.assign({ id: m.prepareSet }, r) });
+		return;
+	}
+	// tests and support: the arrangement clips between two beats, as the mirror has them
+	if (m.dumpClips) {
+		const [a, b] = m.dumpClips, out = [], song = mirror.objs.get(mirror.roots.song);
+		for (const tref of (song && song.p.tracks) || []) {
+			const tr = mirror.objs.get(tref.$);
+			for (const cref of (tr && tr.p.arrangement_clips) || []) {
+				const c = mirror.objs.get(cref.$);
+				if (c && c.p.start_time >= a - 0.001 && c.p.start_time < b) out.push({ track: tr.p.name, st: c.p.start_time, et: c.p.end_time, sm: c.p.start_marker, em: c.p.end_marker, pitch: c.p.pitch_coarse });
+			}
+		}
+		parentPort.postMessage({ clipsDump: out });
 		return;
 	}
 	if (m.stats) { parentPort.postMessage({ stats: { id: m.stats.id, value: mirror.stats } }); return; }

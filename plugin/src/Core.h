@@ -4,7 +4,8 @@
 //   Click  the click, on the beat grid of Live's own playhead
 //   Cues   SetPilot's spoken cues, started on the exact sample of their beat
 //   Guide  a gate on the song's Guide track, closed/opened on a beat
-//   Tail   the end of the previous song, played over the next one's start
+//   Tail   the end of the previous song, played over the next one's start,
+//          and the pads that carry a medley from one key to the next
 //
 // Everything is scheduled in beats (Live's song time) and rendered from the
 // host's playhead each block, so timing is sample-accurate no matter how late
@@ -53,7 +54,7 @@ struct ClickParams {
 
 // Commands from the app. The network thread pushes, the audio thread pops.
 struct Command {
-	enum Type { None, ClickSet, CueSlot, CueArm, CueDisarm, CuePlay, GateArm, GateNow, TailLoad, TailPlay, TailStop } type = None;
+	enum Type { None, ClickSet, CueSlot, CueArm, CueDisarm, CuePlay, GateArm, GateNow, TailLoad, TailPlay, TailStop, PadEvent, PadClear } type = None;
 	int idx = 0;
 	double beat = 0, a = 0, b = 0, c = 0, d = 0;
 	ClickParams click;
@@ -114,7 +115,7 @@ public:
 			case Role::Click: renderClick(out, numCh, n, tr, beatsPerSample); break;
 			case Role::Cues: renderCues(out, numCh, n, tr, beatsPerSample); break;
 			case Role::Guide: renderGate(out, numCh, n, tr, beatsPerSample); break;
-			case Role::Tail: renderTail(out, numCh, n); break;
+			case Role::Tail: renderTail(out, numCh, n); renderPad(out, numCh, n, tr, beatsPerSample); break;
 		}
 	}
 
@@ -122,6 +123,8 @@ public:
 	ClickParams clickParams() const { return click; }
 	double cueArmBeat() const { return cueArm; }
 	float gateGain() const { return gate; }
+	float padLevel() const { return padAmp; }
+	double padFreq(int i) const { return padOsc[(size_t)i].freq; }
 
 private:
 	double sampleRate = 48000;
@@ -156,6 +159,8 @@ private:
 					tailPlayed = 0;
 					break;
 				case Command::TailStop: tailStopping = true; break;
+				case Command::PadEvent: addPadEvent(c.beat, (int)c.a, (int)c.b); break;
+				case Command::PadClear: padEvN = 0; padAmpTarget = 0; break;
 				case Command::None: break;
 			}
 		}
@@ -296,6 +301,81 @@ private:
 			tailPlayed += 1;
 			if (g <= 0 && (tailStopping || tailMode == 2)) { tailPos = -1; tailStopping = false; tailStopGain = 1; break; }
 		}
+	}
+	// ------------------------------------------------------------ pad
+	// A soft chord on the Tail track, scheduled in beats: the bridge between
+	// two parts of a medley in different keys. Five voices (bass, root, fifth,
+	// octave, third), two slightly detuned saws each, through a gentle low
+	// pass; chords glide into each other, the level swells in and out.
+	struct PadEv { double beat; int root; int q; };
+	std::array<PadEv, 64> padEv{};
+	int padEvN = 0;
+	struct PadOsc { double freq = 0, target = 0, ph1 = 0, ph2 = 0; float gain = 1; };
+	std::array<PadOsc, 5> padOsc{};
+	float padAmp = 0, padAmpTarget = 0;
+	double lpL1 = 0, lpL2 = 0, lpR1 = 0, lpR2 = 0;
+	bool padHasChord = false;
+
+	void addPadEvent(double beat, int root, int q) {
+		if (padEvN >= (int)padEv.size()) return;
+		int i = padEvN++;
+		while (i > 0 && padEv[(size_t)i - 1].beat > beat) { padEv[(size_t)i] = padEv[(size_t)i - 1]; --i; }
+		padEv[(size_t)i] = PadEv{beat, ((root % 12) + 12) % 12, q};
+	}
+
+	void padChord(int root, int q) {
+		if (q == 0) { padAmpTarget = 0; return; }
+		int r = 48 + root;                // C3..B3, the top of a voicing that stays warm
+		if (root > 7) r -= 12;
+		const int third = q == 2 ? 3 : 4;
+		const int notes[5] = { r - 12, r, r + 7, r + 12, r + 12 + third };
+		const float gains[5] = { 0.55f, 1.0f, 0.85f, 0.7f, 0.55f };
+		const bool snap = !padHasChord || padAmp < 0.001f;
+		for (size_t i = 0; i < 5; ++i) {
+			const double f = 440.0 * std::pow(2.0, (notes[i] - 69) / 12.0);
+			padOsc[i].target = f;
+			padOsc[i].gain = gains[i];
+			if (snap) padOsc[i].freq = f;
+		}
+		padHasChord = true;
+		padAmpTarget = 1;
+	}
+
+	void renderPad(float* const* out, int numCh, int n, const Transport& tr, double bps) {
+		// everything due by the end of this block happens now (a few ms early at most;
+		// after a jump forward this catches up to the right chord)
+		if (tr.playing && padEvN > 0) {
+			const double end = tr.ppq + n * bps;
+			int used = 0;
+			while (used < padEvN && padEv[(size_t)used].beat <= end) { padChord(padEv[(size_t)used].root, padEv[(size_t)used].q); ++used; }
+			if (used) {
+				for (int i = used; i < padEvN; ++i) padEv[(size_t)(i - used)] = padEv[(size_t)i];
+				padEvN -= used;
+			}
+		}
+		if (padAmp <= 0 && padAmpTarget <= 0) return;
+		const double sr = sampleRate;
+		const float up = (float)(1.0 / (1.2 * sr)), down = (float)(1.0 / (2.0 * sr));
+		const double glide = 1.0 - std::exp(-1.0 / (0.12 * sr));
+		const double a = 1.0 - std::exp(-2.0 * M_PI * 1100.0 / sr);
+		for (int i = 0; i < n; ++i) {
+			if (padAmp < padAmpTarget) padAmp = std::min(padAmpTarget, padAmp + up);
+			else if (padAmp > padAmpTarget) padAmp = std::max(padAmpTarget, padAmp - down);
+			double l = 0, r = 0;
+			for (auto& o : padOsc) {
+				o.freq += (o.target - o.freq) * glide;
+				o.ph1 += o.freq * 1.0035 / sr; if (o.ph1 >= 1) o.ph1 -= 1;
+				o.ph2 += o.freq * 0.9965 / sr; if (o.ph2 >= 1) o.ph2 -= 1;
+				l += (2.0 * o.ph1 - 1.0) * o.gain;
+				r += (2.0 * o.ph2 - 1.0) * o.gain;
+			}
+			lpL1 += (l - lpL1) * a; lpL2 += (lpL1 - lpL2) * a;
+			lpR1 += (r - lpR1) * a; lpR2 += (lpR1 - lpR2) * a;
+			const double g = 0.09 * padAmp * padAmp;
+			out[0][i] += (float)(lpL2 * g);
+			if (numCh > 1) out[1][i] += (float)(lpR2 * g);
+		}
+		if (padAmp <= 0 && padAmpTarget <= 0) { padHasChord = false; lpL1 = lpL2 = lpR1 = lpR2 = 0; }
 	}
 };
 

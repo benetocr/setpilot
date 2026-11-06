@@ -165,6 +165,12 @@ void AppLink::handle(const juce::var& m) {
 		c.c = (double)m.getProperty("mode", 1.0); c.d = (double)m.getProperty("offsetMs", 0.0);
 	} else if (t == "tailstop") {
 		c.type = sp::Command::TailStop;
+	} else if (t == "padev") {
+		c.type = sp::Command::PadEvent;
+		c.beat = (double)m.getProperty("beat", sp::Core::FAR);
+		c.a = (double)m.getProperty("root", 0); c.b = (double)m.getProperty("q", 0);
+	} else if (t == "padclear") {
+		c.type = sp::Command::PadClear;
 	} else return;
 	proc.core.push(std::move(c));
 }

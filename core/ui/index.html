@@ -380,44 +380,26 @@
       <div class="wiz-head">
         <h3 id="wizTitle" data-i18n="medWizard">Medley</h3>
         <input class="wiz-name" id="wizName" maxlength="60" data-i18n-placeholder="medNamePh" placeholder="Name of the medley">
+        <nav class="wz-steps" id="wzSteps" aria-label="Steps"></nav>
+        <span class="wz-dur" id="wzDur"></span>
         <button class="icon-btn" id="wizClose" data-i18n-label="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </div>
-      <div class="wiz-settings">
-        <div class="wiz-field">
-          <span class="wf-k" data-i18n="medKey">Key</span>
-          <div class="wiz-step"><button type="button" id="wizKeyDown" aria-label="-1">−</button><b id="wizKey">–</b><button type="button" id="wizKeyUp" aria-label="+1">+</button></div>
-          <small class="wf-hint" id="wizKeyHint"></small>
-        </div>
-        <div class="wiz-field">
-          <span class="wf-k" data-i18n="tempo">Tempo</span>
-          <div class="wiz-step"><button type="button" id="wizBpmDown" aria-label="-1">−</button><input id="wizBpm" inputmode="decimal" aria-label="BPM"><button type="button" id="wizBpmUp" aria-label="+1">+</button></div>
-          <small class="wf-hint" id="wizBpmHint"></small>
-        </div>
-        <div class="wiz-field">
-          <span class="wf-k" data-i18n="medAfter">After the medley</span>
-          <div class="seg-ctl small" id="wizTr" role="radiogroup">
-            <button data-v="1" role="radio" data-i18n="medStop">Stop</button>
-            <button data-v="3" role="radio" data-i18n="medGoOn">Go on</button>
-          </div>
-        </div>
-      </div>
-      <div class="wiz-body">
-        <div class="wiz-pool">
-          <div class="wiz-pool-head"><span data-i18n="medSongs">Songs</span><button type="button" class="chip-btn small ghost" id="wizImport" data-i18n="medImport">Import a song</button></div>
-          <div class="wiz-songs" id="wizSongs"></div>
-        </div>
-        <div class="wiz-lane-wrap" id="wizLaneWrap">
-          <div class="wiz-lane" id="wizLane"></div>
-          <i class="ae-caret" id="wizCaret" hidden></i>
-          <div class="wiz-empty" id="wizEmpty" data-i18n="medEmpty">Drag sections here, or tap them</div>
-        </div>
-      </div>
+      <div class="wz-banner" id="wzBanner" role="status" hidden></div>
+      <div class="wz-body" id="wzBody"></div>
       <div class="wiz-foot">
-        <span class="wiz-info" id="wizInfo"></span>
-        <span class="wiz-help" data-i18n="medHelp">Tap a section to add it after the selected block. Drag blocks to reorder; the x removes one.</span>
         <button type="button" class="chip-btn small ghost wiz-del" id="wizDelete" data-i18n="medDelete">Delete medley</button>
-        <button type="button" class="chip-btn small ghost" id="wizCancel" data-i18n="cancel">Cancel</button>
-        <button type="button" class="wiz-save" id="wizSave" data-i18n="medSave">Save medley</button>
+        <span class="wz-foot-gap"></span>
+        <button type="button" class="chip-btn small ghost" id="wzBack" data-i18n="back">Back</button>
+        <button type="button" class="chip-btn small ghost" id="wzNext"></button>
+        <button type="button" class="wiz-save" id="wzBuild" data-i18n="medBuild">Build medley</button>
+      </div>
+      <div class="wz-over" id="wzOver" hidden>
+        <div class="wz-over-card">
+          <h4 id="wzOverTitle"></h4>
+          <div class="wz-prog"><i id="wzProg"></i></div>
+          <p id="wzOverText"></p>
+          <button type="button" class="wiz-save" id="wzOverOk" hidden data-i18n="medOk">OK</button>
+        </div>
       </div>
     </div>
   </div>

@@ -676,7 +676,7 @@ class Bridge(object):
             return self.probe()
         fn = getattr(obj, f)
         r = fn(*args)
-        if f in ("create_audio_track", "set_or_delete_cue", "create_audio_clip", "delete_clip",
+        if f in ("create_audio_track", "set_or_delete_cue", "create_audio_clip", "duplicate_clip_to_arrangement", "delete_clip",
                  "move_warp_marker", "remove_warp_marker"):
             self.struct_dirty = True
             self.dirty.add((i, "warp_markers")) if f.endswith("warp_marker") else None
