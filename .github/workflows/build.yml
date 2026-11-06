@@ -24,6 +24,7 @@ jobs:
       - run: node dev/test_medley_live.js
       - run: node dev/test_autoprep.js
       - run: node dev/test_sets.js
+      - run: node dev/test_audio_devices.js
       - run: g++ -std=c++17 -O2 -I plugin/src plugin/tests/core_test.cpp -o core_test && ./core_test
 
   plugin-mac:
@@ -67,6 +68,12 @@ jobs:
           mkdir -p plugin-dist
           for z in plugin-zips/*.zip; do ditto -x -k "$z" plugin-dist; done
           ls plugin-dist
+      - name: Build the audio outputs helper
+        run: |
+          mkdir -p native-dist
+          clang -arch arm64 -arch x86_64 -O2 -mmacosx-version-min=11.0 -o native-dist/sp-audio-outputs native/audio_outputs.c -framework CoreAudio -framework CoreFoundation
+          codesign --force -s - native-dist/sp-audio-outputs
+          ./native-dist/sp-audio-outputs
       - run: npm ci
       - run: npx electron-builder --mac zip --arm64 --x64 -c.mac.identity=null
       - name: Sign ad hoc, zip and make the disk images

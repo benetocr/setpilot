@@ -1390,3 +1390,8 @@ html[data-layout="console"] .app.is-empty .stage { justify-content: flex-start; 
 /* an empty set in the Playback layout: only the start screen */
 html[data-layout="console"] .app.is-empty .transport, html[data-layout="console"] .app.is-empty .setlist { display: none; }
 @media (max-width: 760px) { html[data-layout="console"] .app.is-empty .stage { padding-top: 4vh; } }
+.out-device { display: grid; gap: 4px; padding: 10px 12px; margin: 4px 0 8px; border-radius: 12px; background: var(--stage); font-size: 13px; }
+.out-device[hidden] { display: none; }
+.out-device b { font-weight: 700; }
+.out-device span { color: var(--dim); }
+.out-device small { color: var(--faint); font-size: 12px; }

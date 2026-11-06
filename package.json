@@ -48,7 +48,8 @@
       "!desktop/make_icons.js"
     ],
     "extraResources": [
-      { "from": "plugin-dist", "to": "plugins", "filter": ["**/*"] }
+      { "from": "plugin-dist", "to": "plugins", "filter": ["**/*"] },
+      { "from": "native-dist", "to": "bin", "filter": ["**/*"] }
     ],
     "mac": {
       "target": [

@@ -2823,8 +2823,9 @@ function routeopts() {
 	for (var k = 0; k < types.length; k++) {
 		var tn = types[k].display_name;
 		if (/^ext/i.test(tn)) { ext = types[k]; continue; }
-		if (/^(SP Cues|SP Click|SP Tail)$/.test(tn)) continue;
-		list.push({ type: tn, chan: "", label: tn });
+		if (/^(SP Cues|SP Click|SP Tail|SetPilot Cues|SetPilot Click|SetPilot Tail)$/.test(tn)) continue;
+		// Main, then the interface's outputs, then other tracks (buses) and Sends Only
+		list.push({ type: tn, chan: "", label: tn, group: list.length ? "track" : "main" });
 	}
 	if (ext && probe && !playing && clock > tailPlayingUntil) {
 		trackApi.id = probe;
@@ -2833,7 +2834,7 @@ function routeopts() {
 			trackApi.set("output_routing_type", { identifier: ext.identifier });
 			var chans = parseLomDict(trackApi.get("available_output_routing_channels"), "available_output_routing_channels") || [];
 			var extList = [];
-			for (var c = 0; c < chans.length; c++) extList.push({ type: ext.display_name, chan: chans[c].display_name, label: ext.display_name + " " + chans[c].display_name });
+			for (var c = 0; c < chans.length; c++) extList.push({ type: ext.display_name, chan: chans[c].display_name, label: ext.display_name + " " + chans[c].display_name, group: "out" });
 			list = list.slice(0, 1).concat(extList, list.slice(1));
 		} catch (e) { log("could not read the outputs: " + e.message); }
 		if (was) try { trackApi.set("output_routing_type", { identifier: was.identifier }); } catch (e) { }

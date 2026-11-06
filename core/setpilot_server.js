@@ -86,7 +86,12 @@ function start(engine) {
 	let cue = null, voice = null, lastImport = null, mixer = null, routes = null;
 	const waves = {};
 	function setWave(w) { waves[w.song] = w; broadcast("wave", w); }
-	function setRoutes(r) { routes = r; broadcast("routes", routes); }
+	function setRoutes(r) {
+		routes = r;
+		// the interface Live plays through and its outputs' names (the app knows them)
+		try { if (routes && engine.audioInfo) routes.device = engine.audioInfo(); } catch (e) { }
+		broadcast("routes", routes);
+	}
 	function setMixer(m) { mixer = m; broadcast("mixer", mixer); }
 	function setMeters(args) { broadcast("meters", args.map(Number)); }
 	let lastGap = 4;
@@ -362,6 +367,7 @@ if (maxApi) {
 			maxApi.outlet("js", "medleyjson", JSON.stringify(o));
 		},
 		restore(json) { maxApi.outlet("js", "restore", json); },
+		audioInfo() { return maxApi.audioInfo ? maxApi.audioInfo() : null; },
 		getStore() { return lastStoreJson; },
 		importPlan(plan) {
 			maxApi.setDict("setpilot_import", plan)

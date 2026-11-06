@@ -1960,13 +1960,52 @@
     renderSetup();
   }
 
+  // What an interface output is called: Live says "3" or "1/2"; macOS knows
+  // the interface's own names ("Line Out 3", "Monitor L" + "Monitor R").
+  function chanName(chan, dev) {
+    var names = (dev && dev.channels) || [];
+    var nums = String(chan || "").split("/").map(function (x) { return parseInt(x, 10); });
+    var got = nums.map(function (n) { return String(names[n - 1] || "").trim(); });
+    if (got.some(function (x) { return !x; })) return "";
+    if (got.length === 1) return /^\d+$/.test(got[0]) ? "" : got[0];
+    var a = got[0], b = got[1], i = 0;
+    while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    while (i > 0 && a[i - 1] !== " ") i--;
+    var base = a.slice(0, i).trim();
+    return base ? base + " " + a.slice(i) + "/" + b.slice(i) : a + " / " + b;
+  }
+  function outLabel(r, dev) {
+    if (r.group === "main") return T("outMain");
+    if (r.group !== "out") return r.label;
+    var nm = chanName(r.chan, dev);
+    return "Out " + r.chan + (nm ? " · " + nm : "");
+  }
   function renderOutputs() {
     var list = (routes && routes.list) || [], outs = (routes && routes.outputs) || {};
+    var dev = routes && routes.device;
+    var seen = {};
+    list.forEach(function (r) { if (r.group === "out") String(r.chan).split("/").forEach(function (n) { seen[n] = 1; }); });
+    var onCount = Object.keys(seen).length;
+    var info = $("outDevice");
+    if (dev && dev.device) {
+      var all = dev.outputs || 0;
+      info.innerHTML = "<b>" + esc(T("outDevice", { device: dev.device })) + "</b>" +
+        (all && onCount ? " <span>" + esc(T("outOn", { on: Math.min(onCount, all), all: all })) + "</span>" : "") +
+        (all && onCount && onCount < all ? "<small>" + esc(T("outMore")) + "</small>" : "") +
+        (dev.known && !(dev.channels || []).some(function (x) { return x && !/^\d+$/.test(x); }) ? "<small>" + esc(T("outNoNames")) + "</small>" : "");
+      info.hidden = false;
+    } else info.hidden = true;
+    var groups = [["main", ""], ["out", dev && dev.device ? T("outIface", { device: dev.device }) : T("outIfaceNone")], ["track", T("outTracks")]];
     $("optOutputs").innerHTML = KINDS.map(function (k, ki) {
       var cur = outs[k], selIdx = -1;
       if (cur) list.forEach(function (r, i) { if (r.type === cur.type && (r.chan || "") === (cur.chan || "")) selIdx = i; });
-      var opts = '<option value="-1">' + esc(T("outKeep")) + "</option>" + list.map(function (r, i) {
-        return '<option value="' + i + '"' + (i === selIdx ? " selected" : "") + ">" + esc(r.label) + "</option>";
+      var opts = '<option value="-1">' + esc(T("outKeep")) + "</option>" + groups.map(function (g) {
+        var items = list.map(function (r, i) { return { r: r, i: i }; }).filter(function (x) { return (x.r.group || (x.i ? "track" : "main")) === g[0]; });
+        if (!items.length) return "";
+        var o = items.map(function (x) {
+          return '<option value="' + x.i + '"' + (x.i === selIdx ? " selected" : "") + ">" + esc(outLabel(x.r, dev)) + "</option>";
+        }).join("");
+        return g[1] ? '<optgroup label="' + esc(g[1]) + '">' + o + "</optgroup>" : o;
       }).join("");
       if (cur && selIdx < 0) opts += "<option selected disabled>" + esc(cur.type + " " + (cur.chan || "")) + "</option>";
       return '<label class="instr-row"><span>' + esc(kindLabel(k)) + '</span><select class="sel" data-k="' + ki + '">' + opts + "</select></label>";

@@ -65,6 +65,11 @@ function startHost({ log: logOut = console.log } = {}) {
 	const resolve = Module._resolveFilename;
 	Module._resolveFilename = function (req, ...rest) { return req === "max-api" ? shimPath : resolve.call(this, req, ...rest); };
 	const maxApi = require("./maxapi_shim");
+	// the audio interface and its outputs' names, for the dashboard's output choices
+	const { makeAudioInfo } = require("./audio_devices");
+	const audio = makeAudioInfo({ prefsDirs: () => { try { return require("../installer/setup").prefsDirs(); } catch (e) { return []; } }, log });
+	maxApi.audioInfo = () => audio.get();
+	audio.refresh().catch(() => {});
 
 	// ---------------------------------------------------------------- engine thread
 	const sab = new SharedArrayBuffer(4);
