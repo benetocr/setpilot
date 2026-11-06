@@ -1394,6 +1394,23 @@ function listenTick() {
 	if (!playing && clock - listenAt > 2500) listenStop = 0;
 }
 
+// which song this moment belongs to: a medley's part (its bridge counts as the
+// next part), or the song itself
+function songIdentityAt(s, time) {
+	if (s < 0 || !songs[s]) return "";
+	var md = medOf(s);
+	if (!md || !md.parts || !md.parts.length) return songs[s].name;
+	var rel = time - songs[s].start, p = md.parts, k = 0;
+	for (var i = 0; i < p.length; i++) if (rel >= p[i].a - 0.01) k = i;
+	if (rel >= p[k].b - 0.01 && p[k + 1]) k++;
+	return p[k].song;
+}
+
+function songAtTime(time) {
+	for (var i = 0; i < songs.length; i++) if (time >= songs[i].start - 0.001 && time < songs[i].end - 0.001) return i;
+	return -1;
+}
+
 // the song a medley goes into at this point (where the previous part ends), or ""
 function medAnnounce(s, time) {
 	var md = medOf(s);
@@ -2366,7 +2383,7 @@ function loadedCues() {
 
 // the name of the spoken file for a cue: the text alone, or with the count
 // at the tempo and meter it will be said in ("Chorus@72@4")
-function cueKey(text, s, mi) {
+function cueKey(text, s, mi, src) {
 	if (mi == null && med && medHas(med.i, s)) mi = med.i;
 	if (mi != null && medleys[mi]) {
 		var mk = text;
@@ -2376,14 +2393,15 @@ function cueKey(text, s, mi) {
 	var k = text;
 	if (cueStyle && s >= 0 && songs[s]) k = text + "@" + Math.round(effTempo(s) * 100) / 100 + "@" + sigNum;
 	// the server answers with the song's own guide when it has that cue, else the Mac voice
-	if (cueSource && s >= 0 && songs[s]) k = "g|" + songs[s].name + "|" + k;
+	// (a medley's section: the guide of the song it comes from)
+	if (cueSource && s >= 0 && songs[s]) k = "g|" + (src || songs[s].name) + "|" + k;
 	return k;
 }
 
 function cueTexts() {
 	var seen = {}, out = [];
-	function add(c, s, mi) {
-		var k = cueKey(c, s, mi);
+	function add(c, s, mi, src) {
+		var k = cueKey(c, s, mi, src);
 		if (c && !seen[k]) { seen[k] = 1; out.push(k); }
 	}
 	// medleys: one voice and one tempo for all their cues
@@ -2392,10 +2410,15 @@ function cueTexts() {
 		for (var q = 0; q < sl.length; q++) add(cleanCue(songs[sl[q].s].sections[sl[q].j].name), sl[q].s, mi);
 	}
 	for (var i = 0; i < songs.length; i++) {
-		for (var j = 0; j < songs[i].sections.length; j++) add(cleanCue(songs[i].sections[j].name), i);
-		// a medley says the name of each song it goes into (plain, never counted)
 		var md = medOf(i);
-		if (md && md.parts) for (var pk = 1; pk < md.parts.length; pk++) { var an = cleanCue(md.parts[pk].song); if (an && !seen[an]) { seen[an] = 1; out.push(an); } }
+		for (var j = 0; j < songs[i].sections.length; j++) {
+			add(cleanCue(songs[i].sections[j].name), i);
+			if (md) add(cleanCue(songs[i].sections[j].name), i, null, songIdentityAt(i, songs[i].sections[j].start));
+		}
+		// a change of song is announced by its name (plain, never counted)
+		var names = [songs[i].name];
+		if (md && md.parts) for (var pk = 0; pk < md.parts.length; pk++) names.push(md.parts[pk].song);
+		for (var nk = 0; nk < names.length; nk++) { var an = cleanCue(names[nk]); if (an && !seen[an]) { seen[an] = 1; out.push(an); } }
 		// the next song's first section is announced in this song's tempo
 		var n = order.length ? order[(setlistPos(i) + 1) % order.length] : -1;
 		if (n >= MED) { var ms = medSlots(n - MED); n = ms.length ? ms[0].s : -1; }
@@ -2453,15 +2476,19 @@ function computePlan() {
 	if (!target) return null;
 	var cueAt = now ? t : Math.max(sec.start, B - (cueStyle ? 1 : cueBars) * bl);
 	var text = cleanCue(target.name);
-	// a medley going into another song: its name first, two bars before the section's cue
-	var ann = !now ? medAnnounce(curSong, target.start) : "";
+	// going into another song (the next part of a medley, a jump to another song's
+	// section, the next song in the setlist): its name first, two bars before the
+	// section's cue, so the band knows where they are going
+	var ts = queue ? queue.song : (target.start >= s.end - 0.001 ? songAtTime(target.start) : curSong);
+	var src = ts >= 0 ? songIdentityAt(ts, target.start) : "";
+	var ann = !now && src && src != songIdentityAt(curSong, t) ? cleanCue(src) : "";
 	if (ann && t < cueAt - 0.25) {
 		var annAt = Math.max(sec.start, cueAt - 2 * bl);
 		return { cueAt: annAt, B: cueAt, text: ann, natural: false, now: false, song: curSong, announce: 1,
 			key: "ann|" + ann + "@" + Math.round(annAt * 1000) + "|" + cueMode };
 	}
 	return {
-		cueAt: cueAt, B: B, text: text, natural: natural, now: now, song: curSong,
+		cueAt: cueAt, B: B, text: text, natural: natural, now: now, song: curSong, src: src,
 		key: text + "@" + Math.round(cueAt * 1000) + "|" + (natural ? 1 : 0) + "|" + cueMode + "|" + Math.round(B * 1000)
 	};
 }
@@ -2501,7 +2528,7 @@ function runCues() {
 			if (gp) messnamed("setpilot_gate", "gatearm", FAR[0], FAR[1], FAR[2]);
 			if (cueMode != CUE_ALL) setGate(1, true);
 		} else {
-			var idx = p.announce ? (cueMap[p.text] || 0) : (cueMap[cueKey(p.text, p.song)] || cueMap[p.text] || 0);
+			var idx = p.announce ? (cueMap[p.text] || 0) : ((p.src && cueMap[cueKey(p.text, p.song, null, p.src)]) || cueMap[cueKey(p.text, p.song)] || cueMap[p.text] || 0);
 			var beat = 4 / (sigDen || 4);
 			if (cueMode == CUE_FIX && p.cueAt - 0.25 > t) setGate(1, true);
 			if (!p.now && p.cueAt > t + 0.03) {

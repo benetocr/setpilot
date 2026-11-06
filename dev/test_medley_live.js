@@ -98,6 +98,25 @@ const post = (p, body) => new Promise((res, rej) => { const d = JSON.stringify(b
 		assert.ok([...texts].some(x => /Cielo Abierto/.test(x)), "the plan names the next song: " + [...texts].join(" "));
 		assert.ok(annAt >= 519 && secAt > 547 && secAt < 549, "the song first, then the section: " + annAt + " / " + secAt);
 		ok("going into another song, the plan names it first and the section cue comes after (" + annAt + " then " + secAt + ")");
+		await sleep(600);
+		// playing one song and asking for a section of another: that song's name first
+		const gi = st.struct.songs.findIndex(x => x.name === "Grande y Fiel"), ci = st.struct.songs.findIndex(x => x.name === "Cielo Abierto");
+		await post("/cmd", { cmd: "section", args: [ci, 0, 0] });
+		await sleep(400);
+		await post("/cmd", { cmd: "play", args: [] });
+		await sleep(600);
+		await post("/cmd", { cmd: "section", args: [gi, 2, 0] });
+		const seq = [];
+		for (let i = 0; i < 300; i++) {
+			const c = (await get("/state")).cue;
+			if (c && c.text && seq[seq.length - 1] !== c.text) seq.push(c.text);
+			if (seq.length >= 2 && /Grande y Fiel/.test(seq[seq.length - 2])) break;
+			await sleep(100);
+		}
+		await post("/cmd", { cmd: "stop", args: [] });
+		const ai = seq.findIndex(x => /Grande y Fiel/.test(x));
+		assert.ok(ai >= 0 && seq[ai + 1] && !/Grande y Fiel/.test(seq[ai + 1]), "the other song is named, then its section: " + JSON.stringify(seq));
+		ok("jumping from one song to a section of another names that song first: " + seq.join(" then "));
 		assert.ok(seen72 && seen128, "tempo per part: 72 in the first, 128 from the bridge on (" + seen72 + "," + seen128 + ")");
 		ok("playing it follows each part's tempo");
 		await sleep(500);
