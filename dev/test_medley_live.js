@@ -80,6 +80,24 @@ const post = (p, body) => new Promise((res, rej) => { const d = JSON.stringify(b
 			await sleep(100);
 		}
 		await post("/cmd", { cmd: "stop", args: [] });
+		await sleep(600);
+		// going into the next song, the cue says its name first (before the section's cue)
+		await post("/cmd", { cmd: "section", args: [si, 2, 0] });
+		await sleep(400);
+		await post("/cmd", { cmd: "play", args: [] });
+		const texts = new Set();
+		let annAt = -1, secAt = -1;
+		for (let i = 0; i < 400; i++) {
+			const st3 = await get("/state"), c = st3.cue;
+			if (c) texts.add(JSON.stringify(c));
+			if (c && /Cielo Abierto/.test(c.text) && annAt < 0) annAt = st3.pos.t;
+			if (c && c.text === "Transición" && secAt < 0 && annAt >= 0) { secAt = st3.pos.t; break; }
+			await sleep(100);
+		}
+		await post("/cmd", { cmd: "stop", args: [] });
+		assert.ok([...texts].some(x => /Cielo Abierto/.test(x)), "the plan names the next song: " + [...texts].join(" "));
+		assert.ok(annAt >= 519 && secAt > 547 && secAt < 549, "the song first, then the section: " + annAt + " / " + secAt);
+		ok("going into another song, the plan names it first and the section cue comes after (" + annAt + " then " + secAt + ")");
 		assert.ok(seen72 && seen128, "tempo per part: 72 in the first, 128 from the bridge on (" + seen72 + "," + seen128 + ")");
 		ok("playing it follows each part's tempo");
 		await sleep(500);

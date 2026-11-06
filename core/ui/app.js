@@ -1197,15 +1197,32 @@
     return out.sort(function (a, b) { return a - b; });
   }
 
-  function wzParts() {
-    var n = wiz.picked.length;
-    return wiz.picked.map(function (name, pos) {
+  // the medley as blocks (a section of a song each), in any order; parts are runs of one song
+  function wzBlocks() {
+    if (wiz.blocks) return wiz.blocks.filter(function (x) { var I = wzInfo(x.song); return I && I.secs[x.j]; });
+    var n = wiz.picked.length, out = [];
+    wiz.picked.forEach(function (name, pos) {
       var info = wzInfo(name);
-      if (!info) return null;
-      var idx = (wiz.secs[name] || wzAuto(info, pos, n)).filter(function (j) { return info.secs[j]; }), bars = 0;
-      idx.forEach(function (j) { bars += info.secs[j].bars; });
-      return { info: info, idx: idx, bars: Math.max(1, bars), pos: pos, color: WZ_SONGC[pos % WZ_SONGC.length] };
-    }).filter(Boolean);
+      if (info) wzAuto(info, pos, n).forEach(function (j) { out.push({ song: name, j: j }); });
+    });
+    return out;
+  }
+  function wzParts() {
+    var parts = [], blocks = wzBlocks(), colors = {};
+    wiz.picked.forEach(function (n, i) { colors[n] = WZ_SONGC[i % WZ_SONGC.length]; });
+    var extra = wiz.picked.length;
+    blocks.forEach(function (b, g) {
+      var last = parts[parts.length - 1];
+      if (!last || last.info.name !== b.song) {
+        if (!colors[b.song]) colors[b.song] = WZ_SONGC[(extra++) % WZ_SONGC.length];
+        last = { info: wzInfo(b.song), idx: [], gidx: [], bars: 0, pos: parts.length, color: colors[b.song] };
+        parts.push(last);
+      }
+      last.idx.push(b.j);
+      last.gidx.push(g);
+      last.bars += last.info.secs[b.j].bars;
+    });
+    return parts;
   }
 
   function wzSolve(parts) {
@@ -1240,7 +1257,7 @@
     var mode = wiz.tempoMode || sol.mode, T = wiz.tempo || sol.T;
     parts.forEach(function (p) {
       var I = p.info;
-      p.lift = wiz.lift[I.name] || 0;
+      p.lift = wiz.lift[p.pos] || 0;
       p.center = ((K + p.lift) % 12 + 12) % 12;                       // the major key this part sounds in
       p.tonic = I.minor ? (p.center + 9) % 12 : p.center;            // a minor song takes the relative minor
       p.keyText = KEYS[p.tonic] + (I.minor ? "m" : "");
@@ -1260,7 +1277,7 @@
   }
 
   function wizReset() {
-    wiz = { open: true, id: "", legacy: "", step: 1, picked: [], secs: {}, lift: {}, keyFix: {}, key: null, tempoMode: null, tempo: null,
+    wiz = { open: true, id: "", legacy: "", step: 1, picked: [], blocks: null, lift: {}, keyFix: {}, key: null, tempoMode: null, tempo: null,
       seamType: {}, sel: { kind: "part", i: 0 }, magic: false, building: false, built: "", builtKey: "", delArmed: false };
   }
 
@@ -1274,9 +1291,8 @@
         var sg = songs()[x.s];
         if (!sg) return;
         if (wiz.picked.indexOf(sg.name) < 0) wiz.picked.push(sg.name);
-        (wiz.secs[sg.name] = wiz.secs[sg.name] || []).push(x.j);
+        (wiz.blocks = wiz.blocks || []).push({ song: sg.name, j: x.j });
       });
-      for (var nm in wiz.secs) wiz.secs[nm].sort(function (a, b) { return a - b; });
       wiz.step = wiz.picked.length >= 2 ? 3 : 1;
     }
     $("wizName").value = m ? m.name : T("medDefaultName", { n: medleys().length + songs().filter(function (x) { return x.med; }).length + 1 });
@@ -1289,7 +1305,7 @@
     if (!sg || !sg.med) return;
     wizReset();
     var sp = (sg.med.spec && sg.med.spec.ui) || {};
-    ["picked", "secs", "lift", "keyFix", "key", "tempoMode", "tempo", "seamType"].forEach(function (k) { if (sp[k] !== undefined) wiz[k] = JSON.parse(JSON.stringify(sp[k])); });
+    ["picked", "blocks", "lift", "keyFix", "key", "tempoMode", "tempo", "seamType"].forEach(function (k) { if (sp[k] !== undefined) wiz[k] = JSON.parse(JSON.stringify(sp[k])); });
     wiz.picked = wiz.picked.filter(function (n) { return wzSongByName(n) >= 0; });
     wiz.id = sg.med.id;
     wiz.built = sg.name;
@@ -1316,7 +1332,7 @@
   });
 
   function wzSig() {
-    return JSON.stringify([wiz.picked, wiz.secs, wiz.lift, wiz.keyFix, wiz.key, wiz.tempoMode, wiz.tempo, wiz.seamType, $("wizName").value.trim()]);
+    return JSON.stringify([wiz.picked, wiz.blocks, wiz.lift, wiz.keyFix, wiz.key, wiz.tempoMode, wiz.tempo, wiz.seamType, $("wizName").value.trim()]);
   }
   function wzRender() {
     if (!wiz.open) return;
@@ -1428,6 +1444,18 @@
 
   // ---------- step 3: the route and its joins
   var WZ_SEAM_IC = { cut: '<path d="M12 4v16M5 12h4M15 12h4"/>', ant: '<path d="M13 6l-6 6 6 6M7 12h12"/>', pivot: '<path d="M3 15c2-6 4-6 6 0s4 6 6 0 4-6 6 0"/>', count: '<path d="M3 15c2-6 4-6 6 0s4 6 6 0 4-6 6 0"/>', ramp: '<path d="M3 18h5l8-12h5"/>' };
+  // every section of every song in the set, to add anywhere in the medley
+  function wzPalette(title) {
+    var list = order().filter(function (i) { return !isMed(i) && songs()[i] && !songs()[i].med; });
+    return '<p class="wz-sub">' + esc(title) + '</p><div class="wz-pal">' + list.map(function (i) {
+      var sg = songs()[i], I = wzInfo(sg.name);
+      return '<div class="wz-pal-s"><b>' + esc(sg.name) + '</b><div class="wz-chips">' + I.secs.map(function (x, j) {
+        if (WZ_RE.co.test(x.name)) return "";
+        return '<button type="button" class="wz-chip" data-act="add" data-arg="' + esc(sg.name) + "|" + j + '" style="--fc:' + SEC_HEX[family(x.name)] + '"><i></i>' + esc(x.name) + "<small>" + x.bars + "</small></button>";
+      }).join("") + "</div></div>";
+    }).join("") + "</div>";
+  }
+
   function wzStep3(M) {
     var lane = "", keyRow = "", tRow = "", bl = barLen();
     M.parts.forEach(function (p, k) {
@@ -1435,8 +1463,11 @@
       var kc = k > 0 && M.parts[k - 1].center !== p.center, tc = k > 0 && Math.abs(M.parts[k - 1].tempo - p.tempo) > 0.4;
       keyRow += '<span class="wz-ln' + (kc ? " chg" : "") + '" style="flex-grow:' + p.bars + '">' + esc(p.keyText) + (p.semis && p.info.root != null ? " <small>(" + wzSigned(p.d) + ")</small>" : "") + "</span>";
       tRow += '<span class="wz-ln t' + (tc ? " chg" : "") + '" style="flex-grow:' + p.bars + '">' + fmtBpm(p.tempo) + " BPM</span>";
-      lane += '<button type="button" class="wz-part' + (on ? " on" : "") + '" data-act="sel" data-arg="part|' + k + '" style="flex-grow:' + p.bars + ";--sc:" + p.color + '" aria-pressed="' + on + '"><span class="wz-pn"><i class="wz-dot"></i>' + esc(p.info.name) + "</span><span class=\"wz-blocks\">" +
-        p.idx.map(function (j) { var x = p.info.secs[j]; return '<i style="flex-grow:' + x.bars + ";background:" + SEC_HEX[family(x.name)] + '"><b>' + esc(x.name) + "</b><small>" + x.bars + "</small></i>"; }).join("") + "</span></button>";
+      lane += '<div class="wz-part' + (on ? " on" : "") + '" style="flex-grow:' + p.bars + ";--sc:" + p.color + '"><button type="button" class="wz-pn" data-act="sel" data-arg="part|' + k + '" aria-pressed="' + on + '"><i class="wz-dot"></i>' + esc(p.info.name) + '</button><span class="wz-blocks">' +
+        p.idx.map(function (j, n) {
+          var x = p.info.secs[j], g = p.gidx[n], bon = wiz.sel.kind === "block" && wiz.sel.i === g;
+          return '<button type="button" class="wz-blk' + (bon ? " on" : "") + '" data-act="sel" data-arg="block|' + g + '" aria-pressed="' + bon + '" style="flex-grow:' + x.bars + ";background:" + SEC_HEX[family(x.name)] + '"><b>' + esc(x.name) + "</b><small>" + x.bars + "</small></button>";
+        }).join("") + "</span></div>";
       if (k < M.seams.length) {
         var sm = M.seams[k], son = wiz.sel.kind === "seam" && wiz.sel.i === k;
         var gap = '<span class="wz-gap"></span>';
@@ -1445,13 +1476,20 @@
       }
     });
     var insp = "";
-    if (wiz.sel.kind === "part" && M.parts[wiz.sel.i]) {
+    var blocks = wzBlocks();
+    if (wiz.sel.kind === "block" && blocks[wiz.sel.i]) {
+      var g0 = wiz.sel.i, B0 = blocks[g0], I0 = wzInfo(B0.song);
+      insp = '<section class="wz-panel wz-insp"><div class="wz-ia"><h2>' + esc(B0.song + " · " + I0.secs[B0.j].name) + '</h2><div class="wz-moves">' +
+        '<button type="button" class="wz-mv" data-act="mvl"' + (g0 > 0 ? "" : " disabled") + '><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>' + esc(T("medMoveL")) + "</button>" +
+        '<button type="button" class="wz-mv" data-act="mvr"' + (g0 < blocks.length - 1 ? "" : " disabled") + ">" + esc(T("medMoveR")) + '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>' +
+        '<button type="button" class="wz-mv del" data-act="rm"' + (blocks.length > 1 ? "" : " disabled") + ">" + esc(T("aeRemove")) + "</button></div>" +
+        wzPalette(T("medAddAfter")) + "</div></section>";
+    } else if (wiz.sel.kind === "part" && M.parts[wiz.sel.i]) {
       var P = M.parts[wiz.sel.i], last = wiz.sel.i === M.parts.length - 1;
-      insp = '<section class="wz-panel wz-insp"><div class="wz-ia"><h2>' + esc(T("medSectionsOf", { song: P.info.name })) + '</h2><p class="wz-sub">' + esc(T("medSectionsSub")) + '</p><div class="wz-chips">' +
-        P.info.secs.map(function (x, j) { var on = P.idx.indexOf(j) >= 0; return '<button type="button" class="wz-chip' + (on ? " on" : "") + '" data-act="sec" data-arg="' + esc(P.info.name) + "|" + j + '" aria-pressed="' + on + '" style="--fc:' + SEC_HEX[family(x.name)] + '"><i></i>' + esc(x.name) + "<small>" + x.bars + "</small></button>"; }).join("") +
-        '</div></div><div class="wz-ib2"><h2>' + esc(T("medPartKey")) + '</h2><div class="wz-tset"><button type="button" class="wz-ib big" data-act="lift" data-arg="' + esc(P.info.name) + '|-1" aria-label="−1">−</button><b>' + esc(P.keyText) + '</b><button type="button" class="wz-ib big" data-act="lift" data-arg="' + esc(P.info.name) + '|1" aria-label="+1">+</button></div>' +
+      insp = '<section class="wz-panel wz-insp"><div class="wz-ia"><h2>' + esc(P.info.name) + "</h2>" + wzPalette(T("medAddEndPart")) + "</div>" +
+        '<div class="wz-ib2"><h2>' + esc(T("medPartKey")) + '</h2><div class="wz-tset"><button type="button" class="wz-ib big" data-act="lift" data-arg="' + P.pos + '|-1" aria-label="−1">−</button><b>' + esc(P.keyText) + '</b><button type="button" class="wz-ib big" data-act="lift" data-arg="' + P.pos + '|1" aria-label="+1">+</button></div>' +
         '<p class="wz-sub">' + esc(P.lift ? T("medPartLift", { n: wzSigned(P.lift) }) : T("medPartSame")) + "</p>" +
-        (last && !P.lift ? '<button type="button" class="wz-lift" data-act="lift" data-arg="' + esc(P.info.name) + '|1">' + esc(T("medLiftBtn")) + "</button>" : "") +
+        (last && !P.lift && M.parts.length > 1 ? '<button type="button" class="wz-lift" data-act="lift" data-arg="' + P.pos + '|1">' + esc(T("medLiftBtn")) + "</button>" : "") +
         '<p class="wz-sub">' + esc(T("medPartTempo", { t: fmtBpm(P.tempo) })) + "</p></div></section>";
     } else if (wiz.sel.kind === "seam" && M.seams[wiz.sel.i]) {
       var S = M.seams[wiz.sel.i], A = M.parts[S.i], B = M.parts[S.i + 1], why = [];
@@ -1474,16 +1512,16 @@
     if (act === "pick") {
       var at = wiz.picked.indexOf(arg);
       if (at >= 0) wiz.picked.splice(at, 1); else wiz.picked.push(arg);
-      wiz.secs = {}; wiz.lift = {}; wiz.seamType = {}; wiz.key = null; wiz.tempoMode = null; wiz.tempo = null; wiz.magic = false; wiz.sel = { kind: "part", i: 0 };
+      wiz.blocks = null; wiz.lift = {}; wiz.seamType = {}; wiz.key = null; wiz.tempoMode = null; wiz.tempo = null; wiz.magic = false; wiz.sel = { kind: "part", i: 0 };
     } else if (act === "up") {
       var k = +arg;
-      if (k > 0) { var x = wiz.picked.splice(k, 1)[0]; wiz.picked.splice(k - 1, 0, x); wiz.secs = {}; wiz.seamType = {}; wiz.lift = {}; }
+      if (k > 0) { var x = wiz.picked.splice(k, 1)[0]; wiz.picked.splice(k - 1, 0, x); wiz.blocks = null; wiz.seamType = {}; wiz.lift = {}; }
     } else if (act === "keyfix") {
       var kp = arg.split("|"); wiz.keyFix[kp[0]] = +kp[1]; wiz.key = null;
     } else if (act === "import") { openAdd(); return; }
     else if (act === "magic") {
       var M0 = wzModel();
-      wiz.key = M0.sol.best.K; wiz.tempoMode = M0.sol.mode; wiz.tempo = null; wiz.lift = {}; wiz.seamType = {};
+      wiz.blocks = null; wiz.key = M0.sol.best.K; wiz.tempoMode = M0.sol.mode; wiz.tempo = null; wiz.lift = {}; wiz.seamType = {};
       wiz.magic = true; wiz.step = 3; wiz.sel = { kind: M0.parts.length > 1 ? "seam" : "part", i: 0 };
     } else if (act === "step") { wiz.step = +arg; }
     else if (act === "key") { wiz.key = +arg; wiz.lift = {}; wiz.seamType = {}; }
@@ -1491,16 +1529,28 @@
     else if (act === "tdown" || act === "tup") { var M1 = wzModel(); wiz.tempo = Math.max(40, Math.min(240, M1.T + (act === "tup" ? 1 : -1))); wiz.tempoMode = "one"; wiz.seamType = {}; }
     else if (act === "treset") { wiz.tempo = null; wiz.seamType = {}; }
     else if (act === "sel") { var sp = arg.split("|"); wiz.sel = { kind: sp[0], i: +sp[1] }; }
-    else if (act === "sec") {
-      var sp2 = arg.split("|"), nm = sp2[0], j = +sp2[1];
-      parts = wzParts();
-      var P = parts.filter(function (p) { return p.info.name === nm; })[0];
-      if (!P) return;
-      var cur = P.idx.slice(), w = cur.indexOf(j);
-      if (w >= 0) { if (cur.length === 1) return; cur.splice(w, 1); } else { cur.push(j); cur.sort(function (a, c) { return a - c; }); }
-      wiz.secs[nm] = cur;
+    else if (act === "add" || act === "mvl" || act === "mvr" || act === "rm") {
+      var bl = wzBlocks().slice(), g = wiz.sel.kind === "block" ? wiz.sel.i : -1;
+      if (act === "add") {
+        var ap = arg.split("|"), nb = { song: ap[0], j: +ap[1] }, at;
+        if (g >= 0) at = g + 1;
+        else if (wiz.sel.kind === "part") { var PP = wzParts()[wiz.sel.i]; at = PP ? PP.gidx[PP.gidx.length - 1] + 1 : bl.length; }
+        else at = bl.length;
+        bl.splice(at, 0, nb);
+        if (wiz.picked.indexOf(nb.song) < 0) wiz.picked.push(nb.song);
+        wiz.sel = { kind: "block", i: at };
+      } else if (g >= 0) {
+        if (act === "rm") { if (bl.length <= 1) return; bl.splice(g, 1); wiz.sel = { kind: "block", i: Math.min(g, bl.length - 1) }; }
+        else {
+          var to = act === "mvl" ? g - 1 : g + 1;
+          if (to < 0 || to >= bl.length) return;
+          var xb = bl.splice(g, 1)[0]; bl.splice(to, 0, xb);
+          wiz.sel = { kind: "block", i: to };
+        }
+      }
+      wiz.blocks = bl; wiz.seamType = {}; wiz.lift = {}; wiz.magic = false;
     } else if (act === "lift") {
-      var sp3 = arg.split("|"); wiz.lift[sp3[0]] = (wiz.lift[sp3[0]] || 0) + (+sp3[1]); wiz.seamType = {};
+      var sp3 = arg.split("|"); wiz.lift[+sp3[0]] = (wiz.lift[+sp3[0]] || 0) + (+sp3[1]); wiz.seamType = {};
     } else if (act === "seamtype") { var sp4 = arg.split("|"); wiz.seamType[+sp4[0]] = sp4[1]; }
     else if (act === "listen") { var si = wzSongByName(wiz.built); if (si >= 0) send("medlisten", si, +arg); return; }
     wzRender();
@@ -1528,7 +1578,7 @@
     var medley = { id: wiz.id || ("m" + Date.now().toString(36)), name: name, key: keyName,
       parts: M.parts.map(function (p) { return { song: p.info.name, secs: p.idx, semis: p.semis, bpm: p.tempo, key: p.keyText }; }),
       seams: M.seams.map(function (s) { return { type: s.type }; }),
-      ui: { picked: wiz.picked, secs: wiz.secs, lift: wiz.lift, keyFix: wiz.keyFix, key: M.K, tempoMode: M.mode, tempo: wiz.tempo, seamType: wiz.seamType } };
+      ui: { picked: wiz.picked, blocks: wzBlocks(), lift: wiz.lift, keyFix: wiz.keyFix, key: M.K, tempoMode: M.mode, tempo: wiz.tempo, seamType: wiz.seamType } };
     wiz.id = medley.id;
     // a new medley goes into the setlist right before its first song
     var at = -1;
