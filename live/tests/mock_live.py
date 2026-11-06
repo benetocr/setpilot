@@ -187,10 +187,16 @@ class Clip(Observable):
 
     def __setattr__(self, name, value):
         _clip_setattr_guard(self, name, value)
+        looping = self._v.get("looping")
+        # like Live 12: an arrangement clip that doesn't loop ignores its start
+        # marker; loop_start..loop_end is its region, and the start marker follows
+        if name == "start_marker" and not looping and "start_time" in self._v:
+            return
         Observable.__setattr__(self, name, value)
-        # like Live: an unlooped clip's length in the arrangement follows its markers
-        if name in ("start_marker", "end_marker") and not self._v.get("looping"):
-            Observable.__setattr__(self, "end_time", self._v["start_time"] + self._v["end_marker"] - self._v["start_marker"])
+        if name == "loop_start" and not looping:
+            Observable.__setattr__(self, "start_marker", value)
+        if name in ("loop_start", "loop_end") and not looping:
+            Observable.__setattr__(self, "end_time", self._v["start_time"] + self._v["loop_end"] - self._v["loop_start"])
 
     def add_warp_marker(self, m):
         if not isinstance(m, WarpMarker):
@@ -213,6 +219,8 @@ class Clip(Observable):
 def _clip_setattr_guard(clip, name, value):
     if name == "start_marker" and value >= clip._v.get("end_marker", 1e9):
         raise IndexError("StartMarker out of range")
+    if name == "loop_start" and value >= clip._v.get("loop_end", 1e9):
+        raise IndexError("LoopStart out of range")
 
 
 class Track(Observable):

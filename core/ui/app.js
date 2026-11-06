@@ -1185,7 +1185,12 @@
     var s = info.secs, out = [], add = function (i) { if (i >= 0 && out.indexOf(i) < 0) out.push(i); };
     var ch = wzFirst(s, WZ_RE.ch), br = wzFirst(s, WZ_RE.br);
     if (n === 1) { s.forEach(function (x, i) { if (!WZ_RE.co.test(x.name)) out.push(i); }); return out; }
-    if (pos === 0) { add(wzFirst(s, WZ_RE.vs)); add(ch); }
+    if (pos === 0) {
+      var v = wzFirst(s, WZ_RE.vs);
+      add(v);
+      var c2 = wzFirst(s, WZ_RE.ch, v + 1);   // the chorus that follows that verse
+      add(c2 >= 0 ? c2 : ch);
+    }
     else if (pos === n - 1) { add(br); add(wzLast(s, WZ_RE.ch)); add(wzLast(s, WZ_RE.end)); }
     else { add(ch); add(br >= 0 ? br : wzFirst(s, WZ_RE.ch, ch + 1)); }
     if (!out.length) s.forEach(function (x, i) { if (!WZ_RE.co.test(x.name)) out.push(i); });

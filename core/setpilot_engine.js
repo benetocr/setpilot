@@ -1100,8 +1100,10 @@ function clipsUnder(a, b) {
 			if (!num(clipApi.get("is_audio_clip"))) continue;
 			var st = num(clipApi.get("start_time")), et = num(clipApi.get("end_time"));
 			if (et <= a + 0.001 || st >= b - 0.001) continue;
-			out.push({ track: id, name: nm, clip: cid, st: st, et: et, sm: num(clipApi.get("start_marker")),
-				pitched: !NONPITCH_RE.test(nm), vox: VOX_RE.test(nm), click: normTrack(nm) == "click" });
+			// a clip without warp keeps its markers in seconds, on the set's tempo of the moment
+			var warped = !!num(clipApi.get("warping"));
+			out.push({ track: id, name: nm, clip: cid, st: st, et: et, sm: num(clipApi.get("loop_start")), f: warped ? 1 : 60 / (tempo || 120),
+				pitched: warped && !NONPITCH_RE.test(nm), vox: VOX_RE.test(nm), click: normTrack(nm) == "click", warped: warped });
 		}
 	}
 	return out;
@@ -1136,7 +1138,7 @@ function medBuild(o) {
 	// two bars of count-off before the first part, like a song from MultiTracks: the
 	// header takes the song's start and the first section gets its own locator
 	var lead = 2 * bl;
-	var Q = P + lead, cues = [], parts = [], seams = [], dupN = 0, missing = [];
+	var Q = P + lead, cues = [], parts = [], seams = [], dupN = 0, missing = [], unwarped = {};
 	for (var k = 0; k < m.parts.length; k++) {
 		var pt = m.parts[k], s = songIndex(pt.song);
 		if (s < 0) { missing.push(pt.song); continue; }
@@ -1161,7 +1163,7 @@ function medBuild(o) {
 				if (!pre[w].click) continue;
 				var w0 = Math.max(runs[0].a - lead, pre[w].st), w1 = Math.min(runs[0].a, pre[w].et);
 				if (w1 - w0 < 0.5) continue;
-				steps.push({ type: "dup", track: pre[w].track, clip: pre[w].clip, pos: P + (w0 - (runs[0].a - lead)), sm: pre[w].sm + (w0 - pre[w].st), em: pre[w].sm + (w1 - pre[w].st), pitch: 0, name: pre[w].name });
+				steps.push({ type: "dup", track: pre[w].track, clip: pre[w].clip, pos: P + (w0 - (runs[0].a - lead)), sm: pre[w].sm + (w0 - pre[w].st) * pre[w].f, em: pre[w].sm + (w1 - pre[w].st) * pre[w].f, f: pre[w].f, pitch: 0, name: pre[w].name });
 				dupN++;
 			}
 		}
@@ -1170,10 +1172,11 @@ function medBuild(o) {
 			for (var q = 0; q < under.length; q++) {
 				var cl = under[q];
 				var x0 = Math.max(run.a, cl.st), x1 = Math.min(run.b, cl.et);
-				var pos = Q + (x0 - run.a), sm = cl.sm + (x0 - cl.st), em = cl.sm + (x1 - cl.st);
+				var pos = Q + (x0 - run.a), sm = cl.sm + (x0 - cl.st) * cl.f, em = cl.sm + (x1 - cl.st) * cl.f;
 				// the voices of a part that anticipates come in half a bar early
-				if (seamIn == "ant" && u == 0 && cl.vox && Math.abs(x0 - run.a) < 0.01 && x0 - cl.st >= bl / 2) { pos -= bl / 2; sm -= bl / 2; }
-				steps.push({ type: "dup", track: cl.track, clip: cl.clip, pos: pos, sm: sm, em: em, pitch: cl.pitched ? semis : 0, name: cl.name });
+				if (seamIn == "ant" && u == 0 && cl.vox && Math.abs(x0 - run.a) < 0.01 && x0 - cl.st >= bl / 2) { pos -= bl / 2; sm -= bl / 2 * cl.f; }
+				if (!cl.warped) unwarped[sg.name] = 1;
+				steps.push({ type: "dup", track: cl.track, clip: cl.clip, pos: pos, sm: sm, em: em, f: cl.f, pitch: cl.pitched ? semis : 0, name: cl.name });
 				dupN++;
 			}
 			for (var j2 = 0; j2 < run.secs.length; j2++) {
@@ -1192,7 +1195,7 @@ function medBuild(o) {
 			for (var z = 0; z < ck.length; z++) {
 				if (!ck[z].click) continue;
 				var y0 = Math.max(lastRun.b - nb * bl, ck[z].st), y1 = Math.min(lastRun.b, ck[z].et);
-				steps.push({ type: "dup", track: ck[z].track, clip: ck[z].clip, pos: Q + (y0 - (lastRun.b - nb * bl)), sm: ck[z].sm + (y0 - ck[z].st), em: ck[z].sm + (y1 - ck[z].st), pitch: 0, name: ck[z].name });
+				steps.push({ type: "dup", track: ck[z].track, clip: ck[z].clip, pos: Q + (y0 - (lastRun.b - nb * bl)), sm: ck[z].sm + (y0 - ck[z].st) * ck[z].f, em: ck[z].sm + (y1 - ck[z].st) * ck[z].f, f: ck[z].f, pitch: 0, name: ck[z].name });
 				dupN++;
 			}
 			cues.push({ time: Q, name: "Transición" });
@@ -1218,7 +1221,8 @@ function medBuild(o) {
 		spec: m, at: parseInt(o.at, 10), oldName: old >= 0 ? songs[old].name : "" };
 	job = { steps: steps, i: 0, P: P, dest: {}, title: name, savedTempo: tempo, warp: {}, medley: 1 };
 	importMsg("start", name, steps.length, Math.round(P / bl) + 1);
-	log("medley build " + name + " at bar " + (Math.round(P / bl) + 1) + ": " + parts.length + " parts, " + dupN + " clips, " + seams.length + " seams" + (missing.length ? ", missing " + missing.join(", ") : ""));
+	var uw = Object.keys(unwarped);
+	log("medley build " + name + " at bar " + (Math.round(P / bl) + 1) + ": " + parts.length + " parts, " + dupN + " clips, " + seams.length + " seams" + (missing.length ? ", missing " + missing.join(", ") : "") + (uw.length ? ", audio without warp in " + uw.join(", ") + " (kept at its pitch)" : ""));
 }
 
 // one copied clip: Live duplicates it (warp, gain and all), then it is trimmed to the section
@@ -1245,15 +1249,20 @@ function runDup(step) {
 		if (src.length >= 2) rewarp(clipApi, { markers: src, name: step.name, maxEnd: 0, length: step.em - step.sm });
 	}
 	clipApi.id = made;
-	// Live refuses a start marker past the end: when the end moves left, the start goes first
-	var curEnd = num(clipApi.get("end_marker"));
-	if (step.em > curEnd) { clipApi.set("end_marker", step.em); clipApi.set("loop_end", step.em); }
-	if (Math.abs(num(clipApi.get("start_marker")) - step.sm) > 0.001) clipApi.set("start_marker", step.sm);
-	if (Math.abs(num(clipApi.get("end_marker")) - step.em) > 0.001) clipApi.set("end_marker", step.em);
-	if (!num(clipApi.get("looping")) && Math.abs(num(clipApi.get("loop_end")) - step.em) > 0.001) { try { clipApi.set("loop_end", step.em); } catch (e) { } }
+	// Live 12 ignores start_marker on an arrangement clip that doesn't loop: its
+	// region is loop_start..loop_end (the start marker follows loop_start). The
+	// start can't pass the end, so the order depends on where the region moves.
+	if (step.sm < num(clipApi.get("loop_end")) - 0.0001) {
+		clipApi.set("loop_start", step.sm);
+		clipApi.set("loop_end", step.em);
+	} else {
+		clipApi.set("loop_end", step.em);
+		clipApi.set("loop_start", step.sm);
+	}
+	try { clipApi.set("end_marker", step.em); } catch (e) { }
 	if (num(clipApi.get("pitch_coarse")) != step.pitch) clipApi.set("pitch_coarse", step.pitch);
 	if (step.pitch && num(clipApi.get("warping")) && num(clipApi.get("warp_mode")) != 6) clipApi.set("warp_mode", 6);
-	(job.dups = job.dups || []).push({ track: step.track, pos: step.pos, len: step.em - step.sm, name: step.name });
+	(job.dups = job.dups || []).push({ track: step.track, pos: step.pos, len: (step.em - step.sm) / (step.f || 1), name: step.name });
 }
 
 function findClipAt(track, pos) {
@@ -3631,7 +3640,8 @@ function runJob() {
 			if (step.length > 0 && step.startBeat + step.length > num(clipApi.get("end_marker"))) {
 				try { clipApi.set("end_marker", step.startBeat + step.length); clipApi.set("loop_end", step.startBeat + step.length); } catch (e) { }
 			}
-			if (step.startBeat > 0) clipApi.set("start_marker", step.startBeat);
+			// Live 12 drives an arrangement clip that doesn't loop by loop_start (the start marker follows it)
+			if (step.startBeat > 0) { clipApi.set("loop_start", step.startBeat); try { clipApi.set("start_marker", step.startBeat); } catch (e) { } }
 			if (step.length > 0) {
 				var wantEnd = step.startBeat + step.length;
 				if (Math.abs(num(clipApi.get("end_marker")) - wantEnd) > 0.01) {
