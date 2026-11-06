@@ -1944,7 +1944,7 @@ function send() {
 		l ? l.song : -1, l ? l.sec : -1, l ? l.once : 0, liveLoop,
 		armSong, pendingSong, autoStop, structVersion,
 		fade ? (fade.dir < 0 ? 1 : 2) : (faded ? 1 : 0), pre ? 1 : 0,
-		(arrCur && arrCur.song == curSong) ? arrCur.k : -1,
+		(arrCur && arrCur.song == curSong) ? arrCur.k : (!playing && arrHint && arrHint.song == curSong ? arrHint.k : -1),
 		q && q.arrK != null ? q.arrK : -1, q && q.auto ? 1 : 0,
 		med ? med.i : -1, med ? med.k : -1, q && q.medK != null ? q.medK : (q && q.medStart != null ? 0 : -1)
 	];

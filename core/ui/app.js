@@ -539,6 +539,7 @@
     BEATS_DONE = -1;
   }
 
+  var stageL = null;   // the arrangement the pads show, when it is edited
   function renderSong() {
     var s = songs()[shownIdx];
     var empty = !s;
@@ -556,14 +557,21 @@
     var len = s.end - s.start;
     var bl = barLen();
     var strip = "", pads = "";
-    s.sections.forEach(function (sec, j) {
-      var w = ((sec.end - sec.start) / len) * 100;
+    // an edited arrangement: the pads and the strip show its blocks, in its order
+    var L = shownMed < 0 ? mapLayout(s) : null;
+    stageL = L && L.edited ? L : null;
+    var list = stageL ? stageL.items : s.sections.map(function (sec, j) { return { k: j, j: j, sec: sec, d0: sec.start - s.start, d1: sec.end - s.start }; });
+    var tot = stageL ? stageL.total : len;
+    list.forEach(function (it, n) {
+      var sec = it.sec, j = it.j;
+      var w = ((it.d1 - it.d0) / tot) * 100;
       var c = color(sec.name);
       var bars = Math.round((sec.end - sec.start) / bl);
-      strip += '<button class="seg" data-j="' + j + '" style="--c:' + c + ";width:" + w + '%" title="' + esc(sec.name) + '"><i class="fill"></i><span>' + esc(sec.name) + "</span></button>";
-      pads += '<button class="pad" data-j="' + j + '" style="--c:' + c + '">' +
+      var dk = stageL ? ' data-k="' + it.k + '"' : "";
+      strip += '<button class="seg" data-j="' + j + '"' + dk + ' style="--c:' + c + ";width:" + w + '%" title="' + esc(sec.name) + '"><i class="fill"></i><span>' + esc(sec.name) + "</span></button>";
+      pads += '<button class="pad" data-j="' + j + '"' + dk + ' style="--c:' + c + '">' +
         '<i class="p-fill"></i>' +
-        '<span class="p-top"><span class="p-num">' + (j < 9 ? j + 1 : "") + '</span><span class="p-tag"></span></span>' +
+        '<span class="p-top"><span class="p-num">' + (n < 9 ? n + 1 : "") + '</span><span class="p-tag"></span></span>' +
         '<span class="p-name">' + esc(sec.name) + "</span>" +
         '<span class="p-bars">' + (bars === 1 ? T("barCount") : T("barsCount", { n: bars })) + "</span></button>";
     });
@@ -1681,8 +1689,11 @@
     if (!s) return;
     var pads = $("tiles").children;
     var segs = $("strip").querySelectorAll(".seg");
-    for (var j = 0; j < s.sections.length; j++) {
-      var st = sectionState(j);
+    var nPads = stageL ? stageL.items.length : s.sections.length;
+    for (var j = 0; j < nPads; j++) {
+      var st;
+      if (stageL) { st = itemState(stageL, stageL.items[j]); st.landing = st.queued && !!pos.qFired; }
+      else st = sectionState(j);
       var pad = pads[j], seg = segs[j];
       if (!pad || !seg) continue;
       pad.classList.toggle("is-current", st.current);
@@ -2310,8 +2321,9 @@
     var len = s.end - s.start;
     var ph = $("playhead");
     var phx = Math.min(100, (inSong / len) * 100);
-    if (ph) ph.style.transform = "translateX(" + phx + "%)";
     var mp = mapPos(s, t, here);
+    if (stageL && mp.total) phx = mp.x;
+    if (ph) ph.style.transform = "translateX(" + phx + "%)";
     $("smHead").style.transform = "translateX(" + mp.x + "%)";
     if ($("smHead").classList.contains("live") !== playing) $("smHead").classList.toggle("live", playing);
     if (mp.total) {
@@ -2325,10 +2337,12 @@
     var p = here ? Math.min(1, Math.max(0, (t - sec.start) / (sec.end - sec.start))) : 0;
     var segs = $("strip").children;
     var pads = $("tiles").children;
+    var cur = j;
+    if (stageL) { var ci2 = here ? curItem(stageL) : null; cur = ci2 ? ci2.k : -1; }
     for (var k = 0; k < segs.length; k++) {
       var f = segs[k].firstChild;
       if (!f || !segs[k].classList.contains("seg")) continue;
-      var fx = "scaleX(" + (k === j ? p : 0) + ")";
+      var fx = "scaleX(" + (k === cur ? p : 0) + ")";
       if (f.style.transform !== fx) f.style.transform = fx;
       var pf = pads[k] && pads[k].firstChild;
       if (pf && pf.style.transform !== fx) pf.style.transform = fx;
@@ -2444,9 +2458,12 @@
     if (press && press.long) { press = null; return; }
     press = null;
     var now = Date.now();
-    if (lastTap.j === j && now - lastTap.at < 350) send("section", shownIdx, j, 1);
-    else send("section", shownIdx, j, 0);
-    lastTap = { j: j, at: now };
+    var slot = el.dataset.k != null && stageL ? +el.dataset.k : -1;
+    var id = slot >= 0 ? "k" + slot : j;
+    var dbl = lastTap.j === id && now - lastTap.at < 350 ? 1 : 0;
+    if (slot >= 0) send("arrgo", shownIdx, slot, dbl);
+    else send("section", shownIdx, j, dbl);
+    lastTap = { j: id, at: now };
   }
   $("tiles").addEventListener("click", onSectionClick);
   $("lane").addEventListener("click", function (e) {
