@@ -875,6 +875,7 @@
     if (!it) return;
     if (sm.edit) { sm.sel = sm.sel === it.j ? -1 : it.j; updateAutoMode(); render(); return; }
     var now = Date.now(), dbl = smTap.k === it.k && now - smTap.at < 350 ? 1 : 0;
+    if (dbl && !(sm.lay && sm.lay.med) && repeatOnDouble(shownIdx, it.j)) { smTap = { k: -1, at: 0 }; return; }
     if (sm.lay && sm.lay.med) send("medgo", shownMed, it.k, dbl);
     else if (sm.lay && sm.lay.edited) send("arrgo", shownIdx, it.k, dbl);
     else send("section", shownIdx, it.j, dbl);
@@ -1703,6 +1704,20 @@
   $("dockAutoClear").addEventListener("click", function () { if (autoMode()) send("autoclear", shownIdx, sm.sel, -1); });
   $("dockAutoDone").addEventListener("click", function () { sm.sel = -1; updateAutoMode(); render(); });
 
+  // Double tap on the section that is playing: play it once more; another
+  // double tap: loop it; another: back to normal. (On other sections a double
+  // tap still jumps there now.)
+  function repeatOnDouble(s, j) {
+    if (!pos || !pos.playing || pos.song !== s || pos.sec !== j) return false;
+    var looping = pos.loopSong === s && pos.loopSec === j && !!pos.liveLoop;
+    send("cancel");
+    if (!looping) send("repeat", s, j);
+    else if (pos.loopOnce) send("loop", s, j);
+    else send("loopoff");
+    if (navigator.vibrate) try { navigator.vibrate(looping ? [8, 40, 8] : 12); } catch (er) { }
+    return true;
+  }
+
   function sectionState(j) {
     var st = { current: false, queued: false, landing: false, loop: false, past: false };
     if (!pos) return st;
@@ -2493,6 +2508,7 @@
     var slot = el.dataset.k != null && stageL ? +el.dataset.k : -1;
     var id = slot >= 0 ? "k" + slot : j;
     var dbl = lastTap.j === id && now - lastTap.at < 350 ? 1 : 0;
+    if (dbl && repeatOnDouble(shownIdx, j)) { lastTap = { j: null, at: 0 }; return; }
     if (slot >= 0) send("arrgo", shownIdx, slot, dbl);
     else send("section", shownIdx, j, dbl);
     lastTap = { j: id, at: now };
