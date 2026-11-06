@@ -83,7 +83,8 @@ const post = (p, body) => new Promise((res, rej) => { const d = JSON.stringify(b
 		await sleep(600);
 		// going into the next song, the cue says its name first (before the section's cue)
 		await post("/cmd", { cmd: "section", args: [si, 2, 0] });
-		await sleep(400);
+		for (let i = 0; i < 50; i++) { const p = (await get("/state")).pos; if (!p.playing && p.song === si && p.sec === 2 && Math.abs(p.t - 520) < 0.01) break; await sleep(100); }
+		await sleep(300);
 		await post("/cmd", { cmd: "play", args: [] });
 		const texts = new Set();
 		let annAt = -1, secAt = -1;
@@ -102,7 +103,8 @@ const post = (p, body) => new Promise((res, rej) => { const d = JSON.stringify(b
 		// playing one song and asking for a section of another: that song's name first
 		const gi = st.struct.songs.findIndex(x => x.name === "Grande y Fiel"), ci = st.struct.songs.findIndex(x => x.name === "Cielo Abierto");
 		await post("/cmd", { cmd: "section", args: [ci, 0, 0] });
-		await sleep(400);
+		for (let i = 0; i < 50; i++) { const p = (await get("/state")).pos; if (!p.playing && p.song === ci && p.sec === 0) break; await sleep(100); }
+		await sleep(300);
 		await post("/cmd", { cmd: "play", args: [] });
 		await sleep(600);
 		await post("/cmd", { cmd: "section", args: [gi, 2, 0] });
