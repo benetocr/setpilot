@@ -255,6 +255,9 @@ function initImpl() {
 	});
 	observe("cue_points", function () { dirty = true; });
 
+	// a new connection numbers Live's objects anew: forget ids from before
+	mutedGuide = {}; mutedClick = {};
+	mix.tracks = []; mix.ids = ""; mix.sig = ""; mix.curve = null; mix.dirty = true;
 	loadStore();
 	scanTracks();
 	applyMode();
