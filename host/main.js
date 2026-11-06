@@ -67,8 +67,13 @@ function startHost({ log: logOut = console.log } = {}) {
 	const maxApi = require("./maxapi_shim");
 	// the audio interface and its outputs' names, for the dashboard's output choices
 	const { makeAudioInfo } = require("./audio_devices");
-	const audio = makeAudioInfo({ prefsDirs: () => { try { return require("../installer/setup").prefsDirs(); } catch (e) { return []; } }, log });
+	const audio = makeAudioInfo({
+		prefsDirs: () => { try { return require("../installer/setup").prefsDirs(); } catch (e) { return []; } }, log,
+		// Live switched interface: read its outputs again (the engine reads Ext. Out's channels)
+		onChange: () => worker.postMessage({ send: ["routeopts", []] })
+	});
 	maxApi.audioInfo = () => audio.get();
+	maxApi.audioRefresh = () => audio.refresh();
 	audio.refresh().catch(() => {});
 
 	// ---------------------------------------------------------------- engine thread

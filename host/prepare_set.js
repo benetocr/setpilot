@@ -7,7 +7,7 @@
 const TRACKS = [
 	{ role: "cues", name: "SetPilot Cues" },
 	{ role: "click", name: "SetPilot Click" },
-	{ role: "tail", name: "SetPilot Tail" }
+	{ role: "tail", name: "SetPilot Crossfade" }
 ];
 const ROLE_INDEX = { click: 0, cues: 1, guide: 2, tail: 3 };
 const GUIDE_RE = /^(guide|gu[ií]a|cues?|voice ?cues?|vocal ?cues?)\b/i;

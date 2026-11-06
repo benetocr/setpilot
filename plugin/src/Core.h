@@ -50,6 +50,7 @@ struct ClickParams {
 	float lvlAcc = 1.0f, lvlBeat = 0.8f, lvlSub = 0.5f;
 	int sound = 0;          // 0 beep, 1 wood, 2 rim
 	float gain = 1.0f;
+	bool thru = false;      // let the track's own audio (a song's click stem) through
 };
 
 // Commands from the app. The network thread pushes, the audio thread pops.
@@ -107,7 +108,7 @@ public:
 		const double beatsPerSample = tr.bpm / 60.0 / sampleRate;
 		// samples that are about to be released go away outside the loop
 		for (int ch = 0; ch < numCh; ++ch) {
-			if (role == Role::Guide && in && in[ch]) std::copy(in[ch], in[ch] + n, out[ch]);
+			if ((role == Role::Guide || (role == Role::Click && click.thru)) && in && in[ch]) std::copy(in[ch], in[ch] + n, out[ch]);
 			else std::fill(out[ch], out[ch] + n, 0.0f);
 		}
 

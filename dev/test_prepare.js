@@ -23,7 +23,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 		assert.deepStrictEqual(h.status.setRoles, {}, "no SetPilot Audio yet");
 		const r = await h.prepareSet();
 		assert.ok(r.ok, r.err);
-		assert.deepStrictEqual(r.done, ["SetPilot Cues", "SetPilot Click", "SetPilot Tail", "Guide (Guide)"]);
+		assert.deepStrictEqual(r.done, ["SetPilot Cues", "SetPilot Click", "SetPilot Crossfade", "Guide (Guide)"]);
 		await sleep(1500);
 		assert.deepStrictEqual(Object.keys(h.status.setRoles).sort(), ["click", "cues", "guide", "tail"]);
 		const again = await h.prepareSet();

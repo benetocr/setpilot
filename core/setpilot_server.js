@@ -287,6 +287,15 @@ function start(engine) {
 			});
 			return;
 		}
+		// the interface may have changed in Live: look for its outputs again
+		if (req.method === "POST" && url.pathname === "/outputs/refresh") {
+			Promise.resolve(engine.audioRefresh ? engine.audioRefresh() : null).catch(() => null).then(() => {
+				runCommand("routeopts", []);
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ ok: true }));
+			});
+			return;
+		}
 		// saved setlists
 		if (req.method === "GET" && url.pathname === "/sets") {
 			res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
@@ -368,6 +377,7 @@ if (maxApi) {
 		},
 		restore(json) { maxApi.outlet("js", "restore", json); },
 		audioInfo() { return maxApi.audioInfo ? maxApi.audioInfo() : null; },
+		audioRefresh() { return maxApi.audioRefresh ? maxApi.audioRefresh() : null; },
 		getStore() { return lastStoreJson; },
 		importPlan(plan) {
 			maxApi.setDict("setpilot_import", plan)

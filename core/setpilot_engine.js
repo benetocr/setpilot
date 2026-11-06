@@ -170,6 +170,10 @@ var INSTR_RE = [
 	["vox", /\b(vox|vocals?|bgvs?|bv|alto|altos|tenors?|sopranos?|choir|voz|voces|harmony|harm|lead vocal)\b/],
 	["loops", /\b(loops?|tracks?|fx|sfx|ambient|drones?|seq\w*|textures?)\b/]
 ];
+// SetPilot's own channels get an output too; unset, Click goes with the click
+// tracks and Cues with the guide
+var SPK = ["spclick", "spcues", "sptail"];
+var SPK_FOLLOW = { spclick: "click", spcues: "guide", sptail: "" };
 var instr = { tracks: {}, outputs: {} };   // tracks: normName -> kind; outputs: kind -> { type, chan } by display name
 var routes = { list: [], at: 0 };          // output choices offered in the dashboard
 var ROUTE_DICT = "setpilot_routes";
@@ -1092,7 +1096,8 @@ function clipsUnder(a, b) {
 	var out = [], ids = trackIds();
 	for (var i = 0; i < ids.length; i++) {
 		var id = ids[i];
-		if (id == ownTrackId || id == clickTrackId || id == tailTrackId || id == gateTrackId) continue;
+		// SetPilot Click is in: songs' click stems live there
+		if (id == ownTrackId || id == tailTrackId || id == gateTrackId) continue;
 		trackApi.id = id;
 		if (num(trackApi.get("has_midi_input"))) continue;
 		var nm = str(trackApi.get("name"));
@@ -2823,21 +2828,24 @@ function routeopts() {
 	for (var k = 0; k < types.length; k++) {
 		var tn = types[k].display_name;
 		if (/^ext/i.test(tn)) { ext = types[k]; continue; }
-		if (/^(SP Cues|SP Click|SP Tail|SetPilot Cues|SetPilot Click|SetPilot Tail)$/.test(tn)) continue;
+		if (/^(SP Cues|SP Click|SP Tail|SetPilot (Cues|Click|Tail|Crossfade))$/.test(tn)) continue;
 		// Main, then the interface's outputs, then other tracks (buses) and Sends Only
 		list.push({ type: tn, chan: "", label: tn, group: list.length ? "track" : "main" });
 	}
 	if (ext && probe && !playing && clock > tailPlayingUntil) {
 		trackApi.id = probe;
 		var was = parseLomDict(trackApi.get("output_routing_type"), "output_routing_type");
+		var wasChan = parseLomDict(trackApi.get("output_routing_channel"), "output_routing_channel");
+		var already = was && was.identifier == ext.identifier;
 		try {
-			trackApi.set("output_routing_type", { identifier: ext.identifier });
+			if (!already) trackApi.set("output_routing_type", { identifier: ext.identifier });
 			var chans = parseLomDict(trackApi.get("available_output_routing_channels"), "available_output_routing_channels") || [];
 			var extList = [];
 			for (var c = 0; c < chans.length; c++) extList.push({ type: ext.display_name, chan: chans[c].display_name, label: ext.display_name + " " + chans[c].display_name, group: "out" });
 			list = list.slice(0, 1).concat(extList, list.slice(1));
 		} catch (e) { log("could not read the outputs: " + e.message); }
-		if (was) try { trackApi.set("output_routing_type", { identifier: was.identifier }); } catch (e) { }
+		if (was && !already) try { trackApi.set("output_routing_type", { identifier: was.identifier }); } catch (e) { }
+		if (wasChan && wasChan.identifier != null) try { trackApi.set("output_routing_channel", { identifier: wasChan.identifier }); } catch (e) { }
 	}
 	routes.list = list;
 	routes.at = clock;
@@ -2846,13 +2854,14 @@ function routeopts() {
 
 function publishRoutes() {
 	var d = new Dict(ROUTE_DICT);
-	d.parse(JSON.stringify({ kinds: INSTR, list: routes.list, outputs: instr.outputs }));
+	d.parse(JSON.stringify({ kinds: INSTR, spKinds: SPK, list: routes.list, outputs: instr.outputs }));
 	outlet(0, "routes", clock);
 }
 
 // point one track at the output chosen for its kind of instrument
 function routeTrack(id, kind) {
 	var out = instr.outputs[kind];
+	if ((!out || !out.type) && SPK_FOLLOW[kind]) out = instr.outputs[SPK_FOLLOW[kind]];
 	if (!out || !out.type) return false;
 	trackApi.id = id;
 	var types = parseLomDict(trackApi.get("available_output_routing_types"), "available_output_routing_types") || [];
@@ -2885,6 +2894,14 @@ function applyOutputs(onlyKind) {
 		if (onlyKind && kind != onlyKind) continue;
 		if (routeTrack(id, kind)) n++;
 	}
+	// SetPilot's channels (theirs, or the one they follow)
+	var spIds = { spclick: clickTrackId, spcues: ownTrackId, sptail: tailTrackId };
+	for (var si = 0; si < SPK.length; si++) {
+		var sk = SPK[si];
+		if (!spIds[sk]) continue;
+		if (onlyKind && onlyKind != sk && onlyKind != SPK_FOLLOW[sk]) continue;
+		if (routeTrack(spIds[sk], sk)) n++;
+	}
 	if (n) log("outputs applied to " + n + " tracks" + (onlyKind ? " (" + onlyKind + ")" : ""));
 	mix.dirty = true;
 }
@@ -2892,7 +2909,7 @@ function applyOutputs(onlyKind) {
 // dashboard: kind index, choice index (-1 = leave the tracks alone)
 function setoutput(k, r) {
 	k = parseInt(k, 10); r = parseInt(r, 10);
-	var kind = INSTR[k];
+	var kind = k >= 100 ? SPK[k - 100] : INSTR[k];
 	if (!kind) return;
 	if (r < 0 || !routes.list[r]) delete instr.outputs[kind];
 	else {
@@ -2979,7 +2996,9 @@ function sendClick() {
 	}
 	var P = ["on", click.on ? 1 : 0, "beats", sigNum, "sub", click.sub, "accmask", accMask, "mutemask", muteMask,
 		"lvlacc", click.acc / 100, "lvlbeat", click.beat / 100, "lvlsub", click.subl / 100,
-		"sound", click.sound, "gain", click.gain / 100];
+		"sound", click.sound, "gain", click.gain / 100,
+		// songs' click stems land on this track too: heard only when SetPilot's click doesn't replace them
+		"thru", click.on && click.muteSong ? 0 : 1];
 	for (var k = 0; k < P.length; k += 2) messnamed("setpilot_click", "param", P[k], P[k + 1]);
 }
 
@@ -3213,15 +3232,20 @@ function importplan() {
 	var P = last > 0 ? Math.ceil(last / bl - 1e-6) * bl + gap * bl : 0;
 
 	// destination tracks by normalized name (never the SetPilot cue/click tracks)
-	var dest = {}, ids = trackIds();
+	var dest = {}, ids = trackIds(), spClick = 0;
 	for (var i = 0; i < ids.length; i++) {
 		var id = ids[i];
 		if (id == ownTrackId || id == clickTrackId) continue;
 		trackApi.id = id;
 		if (num(trackApi.get("has_midi_input"))) continue;
-		var key = normTrack(str(trackApi.get("name")));
+		var tnm = str(trackApi.get("name"));
+		if (tnm == "SetPilot Click") { spClick = id; continue; }
+		var key = normTrack(tnm);
 		if (!dest[key]) dest[key] = id;
 	}
+	// one click track: a song's click stem goes onto SetPilot Click (its plug-in
+	// plays SetPilot's click there, or lets the stem through when that is off)
+	if (!dest.click && (clickTrackId || spClick)) dest.click = clickTrackId || spClick;
 
 	var steps = [{ type: "tempo", bpm: plan.bpm }];
 	var created = 0, matched = 0, missing = 0;

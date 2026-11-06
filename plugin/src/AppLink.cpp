@@ -141,6 +141,7 @@ void AppLink::handle(const juce::var& m) {
 		k.lvlSub = (float)(double)p.getProperty("lvlsub", 0.5);
 		k.sound = (int)p.getProperty("sound", 0);
 		k.gain = (float)(double)p.getProperty("gain", 1.0);
+		k.thru = (int)p.getProperty("thru", 0) != 0;
 		c.type = sp::Command::ClickSet;
 	} else if (t == "preload") {
 		c.type = sp::Command::CueSlot;

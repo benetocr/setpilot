@@ -1996,10 +1996,10 @@
       info.hidden = false;
     } else info.hidden = true;
     var groups = [["main", ""], ["out", dev && dev.device ? T("outIface", { device: dev.device }) : T("outIfaceNone")], ["track", T("outTracks")]];
-    $("optOutputs").innerHTML = KINDS.map(function (k, ki) {
+    function row(k, ki, label, keepText) {
       var cur = outs[k], selIdx = -1;
       if (cur) list.forEach(function (r, i) { if (r.type === cur.type && (r.chan || "") === (cur.chan || "")) selIdx = i; });
-      var opts = '<option value="-1">' + esc(T("outKeep")) + "</option>" + groups.map(function (g) {
+      var opts = '<option value="-1">' + esc(keepText) + "</option>" + groups.map(function (g) {
         var items = list.map(function (r, i) { return { r: r, i: i }; }).filter(function (x) { return (x.r.group || (x.i ? "track" : "main")) === g[0]; });
         if (!items.length) return "";
         var o = items.map(function (x) {
@@ -2008,14 +2008,25 @@
         return g[1] ? '<optgroup label="' + esc(g[1]) + '">' + o + "</optgroup>" : o;
       }).join("");
       if (cur && selIdx < 0) opts += "<option selected disabled>" + esc(cur.type + " " + (cur.chan || "")) + "</option>";
-      return '<label class="instr-row"><span>' + esc(kindLabel(k)) + '</span><select class="sel" data-k="' + ki + '">' + opts + "</select></label>";
-    }).join("");
+      return '<label class="instr-row"><span>' + esc(label) + '</span><select class="sel" data-k="' + ki + '">' + opts + "</select></label>";
+    }
+    // SetPilot's own channels first, then the songs' tracks by instrument
+    var sp = [["spclick", T("outSpClick"), T("outFollowClick")], ["spcues", T("outSpCues"), T("outFollowGuide")], ["sptail", T("outSpTail"), T("outKeep")]];
+    $("optOutputs").innerHTML = '<p class="out-sub">' + esc(T("outSpTitle")) + "</p>" +
+      sp.map(function (x, i) { return row(x[0], 100 + i, x[1], x[2]); }).join("") +
+      '<p class="out-sub">' + esc(T("outSongsTitle")) + "</p>" +
+      KINDS.map(function (k, ki) { return row(k, ki, kindLabel(k), T("outKeep")); }).join("");
   }
   $("optOutputs").addEventListener("change", function (e) {
     var sel = e.target.closest("select");
     if (sel) send("setoutput", +sel.dataset.k, +sel.value);
   });
   $("btnApplyOutputs").addEventListener("click", function () { send("applyoutputs"); });
+  $("btnRefreshOutputs").addEventListener("click", function () {
+    var b = this;
+    b.disabled = true;
+    fetch("/outputs/refresh", { method: "POST" }).catch(function () { }).then(function () { setTimeout(function () { b.disabled = false; }, 800); });
+  });
 
   function renderAccents(acc) {
     var n = pos ? pos.sigNum : acc.length;

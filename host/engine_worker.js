@@ -84,10 +84,18 @@ function songCount() {
 	const d = eng && eng.dicts && eng.dicts.setpilot_struct;
 	return d && Array.isArray(d.songs) ? d.songs.length : null;
 }
+// SetPilot's own tracks keep simple names ("SetPilot Tail" was renamed)
+function tidyNames() {
+	try {
+		const have = router.roleTracks();
+		if (have.tail && String(mirror.get(have.tail, "name")) === "SetPilot Tail") mirror.set(have.tail, "name", "SetPilot Crossfade");
+	} catch (e) { }
+}
 function autoPrepare(why) {
 	if (!mirror.ready || autoFailed || process.env.SETPILOT_AUTO_PREPARE === "0") return;
 	const song = mirror.objs.get(mirror.roots.song);
 	if (!song || song.p.is_playing) { clearTimeout(autoTimer); autoTimer = setTimeout(() => autoPrepare(why), 3000); return; }
+	tidyNames();
 	if (why === "connect" && songCount() !== 0) return;
 	const have = router.roleTracks();
 	const guideTrack = (song.p.tracks || []).some(r => /^(guide|gu[ií]a)\b/i.test(String(mirror.get(r.$, "name"))));

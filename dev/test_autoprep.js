@@ -26,7 +26,7 @@ const get = p => new Promise((res, rej) => http.get({ host: "127.0.0.1", port: P
 	try {
 		for (let i = 0; i < 100 && !(h.status.autoPrepared); i++) await sleep(100);
 		assert.ok(h.status.autoPrepared && h.status.autoPrepared.ok, "prepared on connect: " + JSON.stringify(h.status.autoPrepared));
-		assert.deepStrictEqual(h.status.autoPrepared.done, ["SetPilot Cues", "SetPilot Click", "SetPilot Tail"]);
+		assert.deepStrictEqual(h.status.autoPrepared.done, ["SetPilot Cues", "SetPilot Click", "SetPilot Crossfade"]);
 		await sleep(1500);
 		assert.deepStrictEqual(Object.keys(h.status.setRoles).sort(), ["click", "cues", "tail"]);
 		ok("an empty set gets its SetPilot tracks as soon as Live connects");
@@ -38,7 +38,8 @@ const get = p => new Promise((res, rej) => http.get({ host: "127.0.0.1", port: P
 			locators: [{ time: 0, name: "Intro" }, { time: 32, name: "Verse 1" }],
 			tracks: [
 				{ name: "Guide", clips: [{ time: 0, file: "/x/Guide.wav", startBeat: 0, length: 64, markers: null }] },
-				{ name: "Drums", clips: [{ time: 0, file: "/x/Drums.wav", startBeat: 0, length: 64, markers: null }] }
+				{ name: "Drums", clips: [{ time: 0, file: "/x/Drums.wav", startBeat: 0, length: 64, markers: null }] },
+				{ name: "Click Track", clips: [{ time: 0, file: "/x/Click.wav", startBeat: 0, length: 64, markers: null }] }
 			]
 		};
 		h.worker.postMessage({ setDict: ["setpilot_import", plan] });
@@ -51,6 +52,10 @@ const get = p => new Promise((res, rej) => http.get({ host: "127.0.0.1", port: P
 		await sleep(1500);
 		assert.deepStrictEqual(Object.keys(h.status.setRoles).sort(), ["click", "cues", "guide", "tail"]);
 		ok("the first song's Guide gets SetPilot Audio by itself");
+		const clips = await new Promise(res => { h.worker.once("message", function on(m) { if (m.clipsDump) res(m.clipsDump); else h.worker.once("message", on); }); h.worker.postMessage({ dumpClips: [0, 1000] }); });
+		assert.ok(!clips.some(c => /^Click Track$/.test(c.track)), "no second click track: " + JSON.stringify(clips.map(c => c.track)));
+		assert.ok(clips.some(c => c.track === "SetPilot Click"), "the song's click stem is on SetPilot Click: " + JSON.stringify(clips.map(c => c.track)));
+		ok("one click track: the song's click stem lands on SetPilot Click");
 		console.log("\nall passing");
 	} catch (e) { bad++; console.log("FAIL " + e.message); }
 	await h.stop();

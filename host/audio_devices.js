@@ -19,10 +19,19 @@ function helperPath() {
 }
 
 // the device named in the newest "Output Device:" line of Live's log
+function tail(file, bytes) {
+	const fd = fs.openSync(file, "r");
+	try {
+		const size = fs.fstatSync(fd).size, n = Math.min(size, bytes), buf = Buffer.alloc(n);
+		fs.readSync(fd, buf, 0, n, size - n);
+		return buf.toString("utf8");
+	} finally { fs.closeSync(fd); }
+}
+
 function liveOutputDevice(prefsDirs) {
 	for (const p of prefsDirs || []) {
 		let txt;
-		try { txt = fs.readFileSync(path.join(p.dir, "Log.txt"), "utf8"); } catch (e) { continue; }
+		try { txt = tail(path.join(p.dir, "Log.txt"), 512 * 1024); } catch (e) { continue; }
 		const re = /Audio In Out: Output Device: (.+?) \((\d+) In, (\d+) Out\)/g;
 		let m, last = null;
 		while ((m = re.exec(txt))) last = { name: m[1], outputs: Number(m[3]) };
@@ -42,10 +51,18 @@ function listDevices() {
 	});
 }
 
-function makeAudioInfo({ prefsDirs, log = () => {} }) {
-	let info = null, at = 0, busy = null;
+function makeAudioInfo({ prefsDirs, log = () => {}, onChange = null }) {
+	let info = null, at = 0, busy = null, lastLive = null;
+	const dirs = () => (typeof prefsDirs === "function" ? prefsDirs() : prefsDirs);
+	// a new interface chosen in Live's settings: look again and tell the app
+	if (onChange) setInterval(() => {
+		const d = liveOutputDevice(dirs());
+		const key = d ? d.name + "|" + d.outputs : "";
+		if (lastLive !== null && key !== lastLive) refresh().then(i => { log("audio interface now:", i.device || "none"); onChange(i); }).catch(() => {});
+		lastLive = key;
+	}, 3000).unref();
 	async function refresh() {
-		const live = liveOutputDevice(typeof prefsDirs === "function" ? prefsDirs() : prefsDirs);
+		const live = liveOutputDevice(dirs());
 		const devs = await listDevices();
 		let dev = live ? devs.find(d => d.name === live.name) : null;
 		if (!dev && live) dev = devs.find(d => live.name.startsWith(d.name) || d.name.startsWith(live.name)) || null;
