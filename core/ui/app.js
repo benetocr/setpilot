@@ -787,6 +787,16 @@
         if (labs[i] && labs[i].classList.contains(k) !== c[k]) labs[i].classList.toggle(k, c[k]);
       }
     });
+    // on a phone the section names are a row that scrolls: keep the one playing in view
+    var ck = ci ? ci.k : -1, lb = $("smLabels");
+    if (ck !== sm.labK) {
+      sm.labK = ck;
+      var cl = ck >= 0 && labs[L.items.indexOf(ci)];
+      if (cl && lb.scrollWidth > lb.clientWidth + 2) {
+        var x = cl.offsetLeft - (lb.clientWidth - cl.offsetWidth) / 2;
+        try { lb.scrollTo({ left: Math.max(0, x), behavior: reduceMotion ? "auto" : "smooth" }); } catch (e) { lb.scrollLeft = x; }
+      }
+    }
     var key = shownIdx + "|" + shownMed + "|" + (ci ? ci.k : -1) + ":" + (pos ? pos.playing : "") + "|" + Object.keys(waves).length + "|" + sm.sel + "|" + L.total;
     if (key !== sm.drawnKey) drawWave();
     $("smHint").textContent = sm.edit ? (pos && pos.playing ? T("smHintStopped") : (L.edited ? T("smHintEditArr") : T("smHintEdit"))) : T("smHintPlay");
@@ -2639,11 +2649,15 @@
   // Stage: big and readable from the floor. Console: Playback-style, with the
   // setlist as a row of tiles, a large song map and the mixer docked below.
   var layout = "stage";
-  try { layout = localStorage.getItem("sp_layout") || "stage"; } catch (e) { }
+  // phones and tablets open in the Playback-style layout (it is made for touch)
+  var touchFirst = false;
+  try { touchFirst = window.matchMedia("(pointer: coarse)").matches; } catch (e) { }
+  layout = touchFirst ? "console" : "stage";
+  try { layout = localStorage.getItem("sp_layout") || layout; } catch (e) { }
   var dockOpen = true;
   try {
     var dk = localStorage.getItem("sp_dock");
-    dockOpen = dk === null ? window.innerWidth > 640 : dk !== "0";
+    dockOpen = dk === null ? window.innerWidth > 760 && window.innerHeight > 600 : dk !== "0";
   } catch (e) { }
   function isConsole() { return layout === "console"; }
   var dockPing = null;

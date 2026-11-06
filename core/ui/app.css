@@ -1227,3 +1227,120 @@ html[data-layout="console"] .song.is-medley .s-title { padding-right: 66px; }
   .sm-edit { min-height: 40px; }
   .pad, .seg, .act, .t-btn { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 }
+
+/* ============================================================= Playback-style layout on phones */
+/* Like Playback on an iPhone: transport on top, the setlist as a row of
+   tiles, the song map filling the screen with its sections as a row of
+   bubbles, the mixer folded at the bottom. */
+@media (max-width: 760px) {
+  html[data-layout="console"] { --top-h: 52px; }
+  html[data-layout="console"] .app { grid-template-rows: var(--top-h) auto auto minmax(0, 1fr) auto; }
+  html[data-layout="console"] .mark { display: none; }
+  html[data-layout="console"] .topbar { padding: 0 6px 0 14px; }
+  html[data-layout="console"] .transport {
+    grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px 10px 10px;
+  }
+  html[data-layout="console"] .t-group { order: 0; width: 100%; justify-content: space-between; gap: 6px; }
+  html[data-layout="console"] .t-btn { flex: 1 1 0; width: auto; min-width: 0; height: 50px; }
+  html[data-layout="console"] .t-btn.play { flex: 1.7 1 0; width: auto; height: 54px; }
+  html[data-layout="console"] .t-extra { order: 1; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; width: 100%; }
+  html[data-layout="console"] .t-now, html[data-layout="console"] .t-extra .t-now { order: 0; display: flex; flex: 1 0 100%; justify-content: center; font-size: 22px; gap: 8px; }
+  html[data-layout="console"] .count-in { margin-right: auto; }
+  html[data-layout="console"] .med-new { width: 60px; height: 60px; margin: 8px 0 8px 4px; }
+  html[data-layout="console"] .med-new span { display: none; }
+  html[data-layout="console"] .tn-in { font-size: 13px; }
+  html[data-layout="console"] .t-extra .count-in .ci-k, html[data-layout="console"] .fade-btn span { display: none; }
+  html[data-layout="console"] .count-in { order: 1; flex: none; }
+  html[data-layout="console"] #btnFadeOut { order: 2; }
+  html[data-layout="console"] #btnFadeIn { order: 3; }
+  html[data-layout="console"] .fade-btn { height: 34px; padding: 0 10px; flex: none; }
+  html[data-layout="console"] .count-in button { min-width: 34px; height: 28px; }
+
+  html[data-layout="console"] .songs { padding: 8px 4px 8px 10px; }
+  html[data-layout="console"] .song { flex-basis: 150px; height: 60px; padding: 8px 10px 8px 8px; }
+  html[data-layout="console"] .s-title { font-size: 15px; padding-right: 0; }
+  html[data-layout="console"] .s-state { display: none; }
+  html[data-layout="console"] .song .s-meta .m-dur, html[data-layout="console"] .song .handle { display: none; }
+  html[data-layout="console"] .add-song { width: 60px; height: 60px; margin: 8px 10px 8px 4px; }
+  html[data-layout="console"] .add-song span { display: none; }
+  html[data-layout="console"] .tr-chip { width: 24px; height: 24px; }
+
+  html[data-layout="console"] .stage { padding: 8px 10px 10px; }
+  html[data-layout="console"] .sm-bar { min-height: 32px; }
+  html[data-layout="console"] .sm-k { font-size: 14px; }
+  html[data-layout="console"] .sm-body { grid-template-rows: 40px minmax(0, 1fr) 16px; gap: 6px; min-height: 0; }
+  html[data-layout="console"] .sm-labels {
+    display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+    scroll-snap-type: x proximity; padding: 2px 0; margin: 0 -10px; padding-left: 10px; padding-right: 10px;
+  }
+  html[data-layout="console"] .sm-labels::-webkit-scrollbar { display: none; }
+  html[data-layout="console"] .sm-label {
+    position: relative; left: auto !important; max-width: none !important; flex: none; height: 36px;
+    margin: 0; padding: 0 12px 0 10px; font-size: 15px; border-radius: 12px; scroll-snap-align: center;
+  }
+  html[data-layout="console"] .sm-label.is-short .full { display: inline; }
+  html[data-layout="console"] .sm-label .short { display: none; }
+  html[data-layout="console"] .sm-canvas { border-radius: 14px; min-height: 110px; }
+  html[data-layout="console"] .sm-count { font-size: 64px; right: 12px; top: 8px; }
+  html[data-layout="console"] .sm-ruler span { font-size: 10px; }
+
+  html[data-layout="console"] .dock-head { height: 40px; padding: 0 14px calc(0px + env(safe-area-inset-bottom)); }
+  html[data-layout="console"] .dock .mix-strips { padding: 16px 10px 10px; scroll-snap-type: x proximity; }
+  html[data-layout="console"] .dock .ch { flex-basis: 64px; scroll-snap-align: start; }
+  html[data-layout="console"] .dock .ch-fader { height: 128px; }
+  html[data-layout="console"] .dock .ch-track { width: 30px; }
+  html[data-layout="console"] .dock .ch-btns button { width: 28px; height: 28px; }
+  html[data-layout="console"] .dock.open .dock-inner { max-height: 46vh; overflow-y: auto; }
+}
+
+/* phones on their side: transport, setlist and map in one screen */
+@media (max-height: 520px) and (orientation: landscape) {
+  html[data-layout="console"] { --top-h: 46px; }
+  html[data-layout="console"] .mark { display: none; }
+  html[data-layout="console"] .transport {
+    grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px;
+    padding: 6px calc(12px + env(safe-area-inset-right)) 6px calc(12px + env(safe-area-inset-left));
+  }
+  html[data-layout="console"] .t-group { order: -1; width: auto; gap: 5px; }
+  html[data-layout="console"] .t-btn { flex: none; width: 46px; height: 42px; }
+  html[data-layout="console"] .t-btn.play { width: 72px; height: 44px; }
+  html[data-layout="console"] .t-now { order: 1; font-size: 18px; }
+  html[data-layout="console"] .t-extra { order: 2; width: auto; }
+  html[data-layout="console"] .t-extra { flex: 1 1 auto; }
+  html[data-layout="console"] .songs { padding: 6px 4px 6px calc(10px + env(safe-area-inset-left)); }
+  html[data-layout="console"] .song { flex-basis: 150px; height: 52px; padding: 6px 10px 6px 8px; }
+  html[data-layout="console"] .song .s-meta, html[data-layout="console"] .s-state, html[data-layout="console"] .song .handle { display: none; }
+  html[data-layout="console"] .add-song { width: 52px; height: 52px; margin: 6px 10px 6px 4px; }
+  html[data-layout="console"] .med-new { width: 52px; height: 52px; margin: 6px 0 6px 4px; }
+  html[data-layout="console"] .med-new span { display: none; }
+  html[data-layout="console"] .t-now, html[data-layout="console"] .t-extra .t-now { flex: 1 1 auto; justify-content: flex-start; font-size: 18px; }
+  html[data-layout="console"] .t-extra { flex-wrap: nowrap; }
+  html[data-layout="console"] .count-in { margin-right: 0; }
+  html[data-layout="console"] .add-song span { display: none; }
+  html[data-layout="console"] .stage { padding: 6px calc(12px + env(safe-area-inset-right)) 6px calc(12px + env(safe-area-inset-left)); }
+  html[data-layout="console"] .sm-bar { display: none; }
+  html[data-layout="console"] .sm-body { grid-template-rows: 34px minmax(0, 1fr) 14px; min-height: 0; gap: 4px; }
+  html[data-layout="console"] .sm-label { height: 32px; font-size: 14px; }
+  html[data-layout="console"] .sm-count { font-size: 52px; }
+  html[data-layout="console"] .dock-head { height: 34px; }
+  html[data-layout="console"] .dock .ch-fader { height: 90px; }
+  html[data-layout="console"] .dock.open .dock-inner { max-height: 55vh; overflow-y: auto; }
+}
+
+/* tablets: Playback's iPad proportions, bigger targets */
+@media (min-width: 761px) and (max-width: 1200px) and (pointer: coarse) {
+  html[data-layout="console"] .t-btn { height: 54px; width: 60px; }
+  html[data-layout="console"] .t-btn.play { height: 58px; width: 96px; }
+  html[data-layout="console"] .sm-label { height: 36px; font-size: 15px; }
+  html[data-layout="console"] .sm-body { grid-template-rows: 38px minmax(0, 1fr) 20px; }
+  html[data-layout="console"] .dock .ch { flex-basis: 74px; }
+  html[data-layout="console"] .dock .ch-fader { height: 150px; }
+  html[data-layout="console"] .dock .ch-track { width: 32px; }
+  html[data-layout="console"] .dock .ch-btns button { width: 30px; height: 30px; }
+}
+/* tablets upright: what plays now gets its own line under the transport */
+@media (min-width: 761px) and (max-width: 1000px) {
+  html[data-layout="console"] .transport { grid-template-columns: auto minmax(0, 1fr); row-gap: 8px; }
+  html[data-layout="console"] .t-extra { flex-wrap: wrap; justify-content: flex-end; }
+  html[data-layout="console"] .t-extra .t-now { flex: 1 0 100%; order: 3; justify-content: flex-start; font-size: 22px; }
+}
