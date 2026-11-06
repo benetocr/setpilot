@@ -92,6 +92,23 @@ test("Live's log tells which slot uses SetPilot and its MIDI input", () => {
 	assert.deepStrictEqual(S.surfaceState(o), { selected: true, slot: 2, input: "SetPilot Bridge" });
 });
 
+test("the app puts SetPilot Audio in the user's plug-in folders, once", () => {
+	const o = mac();
+	const src = tmp();
+	put(path.join(src, "SetPilot Audio.component", "Contents", "Info.plist"), "au");
+	put(path.join(src, "SetPilot Audio.vst3", "Contents", "Info.plist"), "vst3");
+	o.pluginSrc = src;
+	const r1 = S.installPlugins(o);
+	assert.deepStrictEqual(r1.map(x => x.changed), [true, true]);
+	assert.strictEqual(fs.readFileSync(path.join(o.home, "Library", "Audio", "Plug-Ins", "VST3", "SetPilot Audio.vst3", "Contents", "Info.plist"), "utf8"), "vst3");
+	assert.deepStrictEqual(S.installPlugins(o).map(x => x.changed), [false, false], "same plug-in: nothing to do");
+	put(path.join(src, "SetPilot Audio.vst3", "Contents", "Info.plist"), "vst3 v2");
+	assert.deepStrictEqual(S.installPlugins(o).map(x => x.changed), [false, true], "a new version replaces the old one");
+	o.running = true;
+	put(path.join(src, "SetPilot Audio.vst3", "Contents", "Info.plist"), "vst3 v3");
+	assert.ok(S.setup(o).steps.some(s => s.id === "restart-live"), "Live open: restart it once to see the new plug-in");
+});
+
 test("Library.cfg parsing (Live 12: folder and name apart)", () => {
 	assert.strictEqual(S.userLibraryFromCfg('<UserLibrary>\n<LibraryProject Id="0">\n<ProjectLocation />\n<ProjectName Value="User Library" />\n<ProjectPath Value="/Users/elvin/Music/Ableton" />\n</LibraryProject></UserLibrary>'), "/Users/elvin/Music/Ableton/User Library");
 	assert.strictEqual(S.userLibraryFromCfg("nothing"), null);

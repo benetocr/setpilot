@@ -65,10 +65,38 @@ const LiveAPI = makeLiveAPI(mirror, {
 
 eng = loadEngine({
 	LiveAPI,
-	onOutlet: (n, flat) => { if (n === 1) router.outlet1(flat); else parentPort.postMessage({ outlet: [n, flat] }); },
+	onOutlet: (n, flat) => {
+		if (n === 1) { router.outlet1(flat); return; }
+		// a song came in: its Guide gets SetPilot Audio (and anything else missing)
+		if (flat[0] === "importmsg" && flat[1] === "done") setTimeout(() => autoPrepare("import"), 600);
+		parentPort.postMessage({ outlet: [n, flat] });
+	},
 	onMessnamed: (name, args) => router.messnamed(name, args),
 	onPost: s => parentPort.postMessage({ post: s })
 });
+
+// Make the set ready for SetPilot's sound without asking: in an empty set
+// (no songs yet) as soon as Live connects, and after every import. A set
+// that already has songs and no SetPilot tracks is left alone until the
+// user imports a song or presses "Prepare".
+let autoFailed = false, autoTimer = null;
+function songCount() {
+	const d = eng && eng.dicts && eng.dicts.setpilot_struct;
+	return d && Array.isArray(d.songs) ? d.songs.length : null;
+}
+function autoPrepare(why) {
+	if (!mirror.ready || autoFailed || process.env.SETPILOT_AUTO_PREPARE === "0") return;
+	const song = mirror.objs.get(mirror.roots.song);
+	if (!song || song.p.is_playing) { clearTimeout(autoTimer); autoTimer = setTimeout(() => autoPrepare(why), 3000); return; }
+	if (why === "connect" && songCount() !== 0) return;
+	const have = router.roleTracks();
+	const guideTrack = (song.p.tracks || []).some(r => /^(guide|gu[ií]a)\b/i.test(String(mirror.get(r.$, "name"))));
+	if (have.cues && have.click && have.tail && (have.guide || !guideTrack)) return;
+	let r;
+	try { r = { ok: true, done: prepareSet({ mirror, router, log: x => parentPort.postMessage({ post: x }) }) }; }
+	catch (e) { r = { ok: false, err: e.message }; autoFailed = true; }
+	parentPort.postMessage({ prepared: Object.assign({ id: 0, auto: why }, r) });
+}
 
 let started = false;
 function onBridge(x) {
@@ -89,6 +117,9 @@ function onBridge(x) {
 		eng.send("voiceplayer", [router.connected.cues ? 1 : 0]);
 		eng.send("cueops", [1]);
 		parentPort.postMessage({ live: "ready", info: mirror.info, objects: mirror.objs.size, again: wasReady || undefined });
+		autoFailed = false;
+		clearTimeout(autoTimer);
+		autoTimer = setTimeout(() => autoPrepare("connect"), 2500);
 	}
 }
 

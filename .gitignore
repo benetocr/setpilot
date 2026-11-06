@@ -7,3 +7,4 @@ live/SetPilot/selfcheck.json
 probe-result.json
 data/
 dist/
+plugin-dist/

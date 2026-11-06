@@ -22,6 +22,8 @@ jobs:
       - run: node dev/test_prepare.js
       - run: node dev/test_import_live.js
       - run: node dev/test_medley_live.js
+      - run: node dev/test_autoprep.js
+      - run: node dev/test_sets.js
       - run: g++ -std=c++17 -O2 -I plugin/src plugin/tests/core_test.cpp -o core_test && ./core_test
 
   plugin-mac:
@@ -52,23 +54,43 @@ jobs:
           path: SetPilot-Audio-*.zip
 
   app-mac:
+    needs: [plugin-mac]
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
+      - uses: actions/download-artifact@v4
+        with: { name: SetPilot-Audio-mac, path: plugin-zips }
+      - name: Put SetPilot Audio inside the app
+        run: |
+          mkdir -p plugin-dist
+          for z in plugin-zips/*.zip; do ditto -x -k "$z" plugin-dist; done
+          ls plugin-dist
       - run: npm ci
       - run: npx electron-builder --mac zip --arm64 --x64 -c.mac.identity=null
-      - name: Sign ad hoc
+      - name: Sign ad hoc, zip and make the disk images
         run: |
-          for a in dist/mac*/SetPilot.app; do codesign --force --deep -s - "$a"; done
-          cd dist/mac-arm64 && ditto -c -k --keepParent SetPilot.app "$GITHUB_WORKSPACE/SetPilot-mac-arm64.zip"
+          for a in dist/mac*/SetPilot.app; do codesign --force --deep -s - "$a"; codesign --verify --deep "$a"; done
+          pack() {
+            local dir="$1" arch="$2"
+            ditto -c -k --keepParent "$dir/SetPilot.app" "$GITHUB_WORKSPACE/SetPilot-mac-$arch.zip"
+            local stage="$RUNNER_TEMP/dmg-$arch"
+            rm -rf "$stage"; mkdir -p "$stage"
+            ditto "$dir/SetPilot.app" "$stage/SetPilot.app"
+            ln -s /Applications "$stage/Applications"
+            hdiutil create -volname "SetPilot" -srcfolder "$stage" -ov -format UDZO "$GITHUB_WORKSPACE/SetPilot-mac-$arch.dmg"
+          }
+          pack dist/mac-arm64 arm64
+          pack dist/mac x64
       - uses: actions/upload-artifact@v4
         with:
           name: SetPilot-app-mac
-          path: SetPilot-mac-arm64.zip
+          path: |
+            SetPilot-mac-*.zip
+            SetPilot-mac-*.dmg
 
-  # the builds also go to the "builds" branch, so they can be fetched with git
+  # the builds go to the "latest" pre-release (files over 100 MB do not fit in git)
   publish:
     needs: [tests, plugin-mac, app-mac]
     runs-on: ubuntu-latest
@@ -77,13 +99,13 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with: { path: out, merge-multiple: true }
-      - name: Commit to the builds branch
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           cd out
-          git init -q -b builds
-          git config user.name "SetPilot CI"
-          git config user.email "ci@setpilot.app"
           echo "${GITHUB_SHA}" > COMMIT
-          git add -A
-          git commit -qm "Builds for ${GITHUB_SHA}"
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}" builds
+          ls -la
+          gh release view latest -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create latest -R "$GITHUB_REPOSITORY" --prerelease --title "Latest build" --notes "Built from main on every push."
+          gh release upload latest -R "$GITHUB_REPOSITORY" --clobber COMMIT SetPilot-* 
+          gh release edit latest -R "$GITHUB_REPOSITORY" --notes "Built from ${GITHUB_SHA} on $(date -u +%Y-%m-%dT%H:%MZ)."

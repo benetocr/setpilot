@@ -38,6 +38,9 @@
     <div class="top-right">
       <span class="clock" id="clock">--:--</span>
       <span class="conn" id="liveChip" title=""><i></i><span id="liveText" data-i18n="connecting">Connecting…</span></span>
+      <button class="icon-btn" id="btnSave" data-i18n-label="saveSet" hidden>
+        <svg viewBox="0 0 24 24"><path d="M6 3.5h9.5L20 8v11.5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z"/><path d="M8 3.5V9h7V3.5M7.5 20.5v-6h9v6"/></svg>
+      </button>
       <button class="icon-btn" id="btnMixer" data-i18n-label="mixer">
         <svg viewBox="0 0 24 24"><path d="M6 4v16M12 4v16M18 4v16"/><rect x="3.5" y="13" width="5" height="3" rx="1"/><rect x="9.5" y="7" width="5" height="3" rx="1"/><rect x="15.5" y="11" width="5" height="3" rx="1"/></svg>
       </button>
@@ -261,9 +264,13 @@
     </section>
 
     <section class="empty" id="empty" hidden>
-      <h2 data-i18n="emptyTitle"></h2>
-      <p data-i18n="emptyText"></p>
+      <h2 id="homeTitle" data-i18n="emptyTitle"></h2>
+      <p id="homeText" data-i18n="emptyText"></p>
       <button class="cta" id="emptyAdd"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span data-i18n="addSong">Add song</span></button>
+      <div class="home-sets" id="homeSets" hidden>
+        <h3 data-i18n="homeSaved">Your saved setlists</h3>
+        <ul class="home-list" id="homeList"></ul>
+      </div>
       <details class="manual">
         <summary data-i18n="emptyManual">Mark songs by hand instead</summary>
         <ul class="example">
@@ -475,6 +482,24 @@
       <div class="tr-list" id="trList"></div>
       <p class="set-help" id="trNote"></p>
     </div>
+  </div>
+
+  <div class="sheet" id="saveSheet" hidden>
+    <div class="sheet-card save-card" role="dialog" aria-modal="true" aria-labelledby="saveTitle">
+      <div class="tk-head">
+        <h3 id="saveTitle" data-i18n="saveSet">Save setlist</h3>
+        <button class="icon-btn" id="saveClose" data-i18n-label="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <label class="save-field"><span data-i18n="saveName">Name</span><input id="saveName" type="text" maxlength="80" autocomplete="off" spellcheck="false"></label>
+      <p class="set-help" id="saveHelp" data-i18n="saveHelp"></p>
+      <p class="save-warn" id="saveWarn" hidden></p>
+      <button class="cta" id="saveGo"><span data-i18n="saveGo">Save</span></button>
+    </div>
+  </div>
+
+  <div class="setload" id="setLoad" hidden>
+    <div class="sl-text"><b id="slName"></b><span id="slStep"></span></div>
+    <div class="sl-bar"><i id="slFill"></i></div>
   </div>
 
   <div class="toasts" id="toasts" aria-live="polite"></div>

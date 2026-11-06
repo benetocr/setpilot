@@ -55,6 +55,7 @@ function startHost({ log: logOut = console.log } = {}) {
 			const r = setup();
 			status.setup = r;
 			for (const i of r.installed) if (i.changed) log("installed the SetPilot Remote Script in", i.dir);
+			for (const i of r.plugins || []) if (i.changed) log("installed SetPilot Audio in", i.dir);
 			for (const st of r.steps) log("setup:", st.text);
 		} catch (e) { log("setup failed:", e.message); }
 	}
@@ -92,6 +93,10 @@ function startHost({ log: logOut = console.log } = {}) {
 		if (m.outlet) { if (m.outlet[0] === 0) maxApi._dispatch(m.outlet[1]); }
 		else if (m.plugin) plugins.send(m.plugin.role, m.plugin.msg);
 		else if (m.setRoles) status.setRoles = m.setRoles;
+		else if (m.prepared && m.prepared.auto) {
+			log("prepare set (" + m.prepared.auto + "):", m.prepared.ok ? (m.prepared.done.join(", ") || "nothing to do") : m.prepared.err);
+			status.autoPrepared = m.prepared;
+		}
 		else if (m.prepared) { const w = prepWait.get(m.prepared.id); prepWait.delete(m.prepared.id); if (w) w(m.prepared); }
 		else if (m.post) { if (process.env.SP_DEBUG) log("[engine]", m.post); }
 		else if (m.dict) { const w = dictWait.get(m.dict.id); dictWait.delete(m.dict.id); if (w) w(m.dict.value); }

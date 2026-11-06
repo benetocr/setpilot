@@ -47,6 +47,9 @@
       "!**/*.log",
       "!desktop/make_icons.js"
     ],
+    "extraResources": [
+      { "from": "plugin-dist", "to": "plugins", "filter": ["**/*"] }
+    ],
     "mac": {
       "target": [
         "zip"

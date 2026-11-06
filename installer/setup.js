@@ -135,6 +135,66 @@ function installScript(userLibrary) {
 	return { dir, changed: true };
 }
 
+// ---------------------------------------------------------------- SetPilot Audio
+// The app carries the plug-in (AU and VST3) and puts it where Live finds it
+// without any setting: the user's Audio Units and VST3 folders. Only when it
+// is missing or different. The "downloaded from the internet" mark is taken
+// off, so macOS does not stop Live from loading it.
+const PLUGINS = [
+	{ name: "SetPilot Audio.component", dir: ["Library", "Audio", "Plug-Ins", "Components"] },
+	{ name: "SetPilot Audio.vst3", dir: ["Library", "Audio", "Plug-Ins", "VST3"] }
+];
+
+function pluginSource(o = {}) {
+	if (o.pluginSrc) return o.pluginSrc;
+	if (process.env.SETPILOT_PLUGIN_SRC) return process.env.SETPILOT_PLUGIN_SRC;
+	if (process.resourcesPath) {
+		const p = path.join(process.resourcesPath, "plugins");
+		if (isDir(p)) return p;
+	}
+	return null;
+}
+
+function treeHash(dir) {
+	const h = crypto.createHash("sha1");
+	const walk = (d, rel) => {
+		for (const n of ls(d).sort()) {
+			if (n === ".DS_Store") continue;
+			const full = path.join(d, n), r = rel ? rel + "/" + n : n;
+			let st;
+			try { st = fs.lstatSync(full); } catch (e) { continue; }
+			if (st.isDirectory()) walk(full, r);
+			else if (st.isFile()) { h.update(r); h.update(fs.readFileSync(full)); }
+		}
+	};
+	walk(dir, "");
+	return h.digest("hex");
+}
+
+function installPlugins(o = {}) {
+	const e = env(o), src = pluginSource(o), out = [];
+	if (!src || e.platform !== "darwin") return out;
+	for (const pl of PLUGINS) {
+		const from = path.join(src, pl.name);
+		if (!isDir(from)) continue;
+		const destDir = path.join(e.home, ...pl.dir), to = path.join(destDir, pl.name);
+		if (isDir(to) && treeHash(to) === treeHash(from)) { out.push({ dir: to, changed: false }); continue; }
+		fs.mkdirSync(destDir, { recursive: true });
+		const tmp = to + ".installing";
+		fs.rmSync(tmp, { recursive: true, force: true });
+		// ditto keeps the bundle's signature and links as they are
+		if (exists("/usr/bin/ditto")) execFileSync("/usr/bin/ditto", [from, tmp]);
+		else fs.cpSync(from, tmp, { recursive: true });
+		if (exists("/usr/bin/xattr")) { try { execFileSync("/usr/bin/xattr", ["-dr", "com.apple.quarantine", tmp]); } catch (err) { } }
+		fs.rmSync(to, { recursive: true, force: true });
+		fs.renameSync(tmp, to);
+		out.push({ dir: to, changed: true });
+	}
+	// Audio Units are cached by macOS: make it look again
+	if (out.some(r => r.changed && /\.component$/.test(r.dir))) { try { execFileSync("/usr/bin/killall", ["-9", "AudioComponentRegistrar"]); } catch (err) { } }
+	return out;
+}
+
 // ---------------------------------------------------------------- is it selected?
 // Live writes its control surface slots to Log.txt in plain text on every
 // start and settings change:
@@ -185,7 +245,11 @@ function setup(o = {}) {
 			} catch (e) { res.steps.push({ id: "install-failed", text: "Could not copy the SetPilot script into " + lib + ": " + e.message }); }
 		}
 	}
-	const changed = res.installed.some(r => r.changed);
+	if (!o.checkOnly) {
+		try { res.plugins = installPlugins(o); }
+		catch (e) { res.plugins = []; res.steps.push({ id: "plugin-failed", text: "Could not install SetPilot Audio: " + e.message }); }
+	}
+	const changed = res.installed.some(r => r.changed) || (res.plugins || []).some(r => r.changed);
 	if (!live.length && (o.platform || process.platform) !== "linux") res.steps.push({ id: "no-live", text: "Ableton Live was not found on this computer." });
 	if (changed && res.running) res.steps.push({ id: "restart-live", text: "Restart Live once so it loads SetPilot." });
 	if (res.selected && surf.input && surf.input !== "SetPilot Bridge") res.steps.push({ id: "input", text: "SetPilot is selected but its MIDI input is " + surf.input + "; choose SetPilot Bridge for the fastest response." });
@@ -193,7 +257,7 @@ function setup(o = {}) {
 	return res;
 }
 
-module.exports = { setup, findLive, prefsDirs, findUserLibraries, userLibraryFromCfg, installScript, surfaceSelected, surfaceState, sourceHash, defaultUserLibrary };
+module.exports = { setup, installPlugins, findLive, prefsDirs, findUserLibraries, userLibraryFromCfg, installScript, surfaceSelected, surfaceState, sourceHash, defaultUserLibrary };
 
 if (require.main === module) {
 	const r = setup({ checkOnly: process.argv.includes("--check") });

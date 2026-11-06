@@ -7,6 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { parseAls, findSessions, findByName, guessInstr, INSTR } = require("./setpilot_als.js");
+const { makeSets } = require("./setpilot_sets.js");
 const { buildTail, afconvertDecoder, buildWave, buildCounted, normalizeCueFile, extractGuide } = require("./setpilot_tail.js");
 
 let maxApi = null;
@@ -90,6 +91,16 @@ function start(engine) {
 	function setMeters(args) { broadcast("meters", args.map(Number)); }
 	let lastGap = 4;
 	const importRoots = engine.importRoots || ["Downloads", "Desktop", "Music", "Documents"].map(d => path.join(os.homedir(), d));
+	const sets = makeSets({
+		dataDir: DATA_DIR, roots: importRoots, findByName,
+		importFile: o => importFile(o),
+		medley: o => { if (engine.medley) engine.medley(o); },
+		restore: json => { if (engine.restore) engine.restore(json); },
+		getStore: () => (engine.getStore ? engine.getStore() : null),
+		getStruct: () => struct,
+		broadcast: (e, d) => broadcast(e, d),
+		log: (...m) => engine.log(...m)
+	});
 
 	function setNotice(args) {
 		broadcast("notice", { kind: String(args[0]), a: args[1] == null ? "" : String(args[1]), b: args[2] == null ? "" : args[2], c: args[3] == null ? "" : args[3], at: Date.now() });
@@ -98,6 +109,7 @@ function start(engine) {
 	function setImport(args) {
 		lastImport = { kind: String(args[0]), a: args[1], b: args[2], c: args[3], at: Date.now() };
 		broadcast("import", lastImport);
+		sets.onImportMsg(lastImport.kind);
 	}
 
 	// parse a song's Live Set and hand the plan to the engine
@@ -125,6 +137,7 @@ function start(engine) {
 			tracks: p.tracks.map(t => ({ name: t.name, clips: t.clips.map(c => ({ time: c.time, file: c.file, startBeat: c.startBeat, length: c.length, markers: c.markers })) }))
 		};
 		engine.importPlan(plan);
+		try { sets.rememberImport(plan.title, file, { instr: plan.instr, gap, key: opts.key, bpm: opts.bpm }); } catch (e) { }
 		return { ok: true, title: plan.title, key: plan.key, bpm: plan.bpm, sections: p.locators.length, tracks: p.tracks.length, missing: p.missing, tempoChanges: p.tempoChanges };
 	}
 	function setCue(args) {
@@ -259,9 +272,33 @@ function start(engine) {
 					const okDel = o && (o.action === "delete" || o.action === "unbuild") && o.id;
 					const okSave = o && o.medley && Array.isArray(o.medley.slots) && o.medley.slots.length;
 					if (okBuild || okDel || okSave) {
+						if (okBuild) { try { sets.rememberMedley(o); } catch (e) { } }
 						if (engine.medley) engine.medley(o);
 						out = { ok: true };
 					} else out = { ok: false, error: "bad_medley" };
+				} catch (e) { out = { ok: false, error: "bad_request" }; }
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify(out));
+			});
+			return;
+		}
+		// saved setlists
+		if (req.method === "GET" && url.pathname === "/sets") {
+			res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+			res.end(JSON.stringify({ sets: sets.list(), loading: sets.loading }));
+			return;
+		}
+		if (req.method === "POST" && /^\/sets\/(save|delete|open)$/.test(url.pathname)) {
+			let body = "";
+			req.on("data", c => { body += c; if (body.length > 1e4) req.destroy(); });
+			req.on("end", async () => {
+				let out = { ok: false };
+				try {
+					const q = JSON.parse(body || "{}");
+					const act = url.pathname.split("/")[2];
+					if (act === "save") out = sets.save(q.name);
+					else if (act === "delete") out = sets.remove(q.id);
+					else out = await sets.open(q.id);
 				} catch (e) { out = { ok: false, error: "bad_request" }; }
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify(out));
@@ -317,12 +354,15 @@ if (maxApi) {
 	};
 	writeLog("server starting, node", process.version);
 	let localUrl = `http://localhost:${BASE_PORT}`;
+	let lastStoreJson = null;
 	const srv = start({
 		send(cmd, args) { maxApi.outlet("js", cmd, ...args); },
 		medley(o) {
 			// one JSON message, like the stored setlist (no dict object needed in the patch)
 			maxApi.outlet("js", "medleyjson", JSON.stringify(o));
 		},
+		restore(json) { maxApi.outlet("js", "restore", json); },
+		getStore() { return lastStoreJson; },
 		importPlan(plan) {
 			maxApi.setDict("setpilot_import", plan)
 				.then(() => maxApi.outlet("js", "importplan"))
@@ -621,6 +661,7 @@ if (maxApi) {
 		try { srv.setRoutes(await maxApi.getDict("setpilot_routes")); } catch (e) { writeLog("routes read failed: " + e.message); }
 	});
 	maxApi.addHandler("store", (...args) => {
+		lastStoreJson = args.join(" ");
 		if (!current) return;
 		try {
 			const o = JSON.parse(args.join(" "));

@@ -570,8 +570,10 @@
     $("hero").hidden = empty;
     $("mapWrap").hidden = empty;
     $("app").classList.toggle("is-empty", empty);
+    $("btnSave").hidden = empty;
     if (empty) {
       $("songTitle").textContent = struct ? "" : T("waitingLive");
+      renderHome();
       return;
     }
     $("songTitle").textContent = shownMed >= 0 ? medleys()[shownMed].name : s.name;
@@ -2322,6 +2324,9 @@
     else if (n.kind === "warpnoref") { warn = true; txt = T("ntWarpNoRef", { song: n.a }); }
     else if (n.kind === "guideready") txt = +n.b > 0 ? T("ntGuide", { song: n.a, found: n.b, total: n.c }) : T("ntGuideNone", { song: n.a });
     if (!txt) return;
+    showToast(txt, warn);
+  }
+  function showToast(txt, warn) {
     var box = $("toasts"), el = document.createElement("div");
     el.className = "toast" + (warn ? " warn" : "");
     el.textContent = txt;
@@ -2546,6 +2551,104 @@
   $("actLoop").addEventListener("click", function () { if (pos && pos.song >= 0) send("loop", pos.song, pos.sec); });
   $("actRepeat").addEventListener("click", function () { if (pos && pos.song >= 0) send("repeat", pos.song, pos.sec); });
   $("emptyAdd").addEventListener("click", function () { openAdd(); });
+
+  // ------------------------------------------------------------ saved setlists
+  // The start screen (an empty set) lists the setlists saved before; one tap
+  // opens it: SetPilot imports its songs again, builds its medleys and puts
+  // every setting back.
+  var savedSets = [], setLoad = null, delArmed = "";
+  var lastSetName = "";
+  try { lastSetName = localStorage.getItem("sp_lastset") || ""; } catch (e) { }
+  function postJson(url, body) {
+    return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }).then(function (r) { return r.json(); });
+  }
+  function loadSets() {
+    fetch("/sets").then(function (r) { return r.json(); }).then(function (d) {
+      savedSets = d.sets || [];
+      if (d.loading && !d.loading.done) onSetLoad(d.loading);
+      renderHome();
+    }).catch(function () { });
+  }
+  function fmtDate(iso) {
+    try { return new Date(iso).toLocaleDateString(window.SPI18N.lang === "es" ? "es" : "en", { day: "numeric", month: "short", year: "numeric" }); } catch (e) { return ""; }
+  }
+  function renderHome() {
+    var has = savedSets.length > 0, live = !!struct;
+    $("homeSets").hidden = !has || !live;
+    $("emptyAdd").hidden = !live;
+    $("homeTitle").textContent = T(!live ? "homeWaitTitle" : has ? "homeTitle" : "emptyTitle");
+    $("homeText").textContent = T(!live ? "homeWaitText" : has ? "homeText" : "emptyText");
+    $("homeList").innerHTML = savedSets.map(function (x) {
+      var n = x.songs.length, miss = x.songs.filter(function (q) { return q.missing; }).length;
+      var names = x.songs.slice(0, 5).map(function (q) { return esc(q.name); }).join(" · ") + (n > 5 ? " …" : "");
+      return '<li class="home-set" data-id="' + esc(x.id) + '">' +
+        '<div class="hs-main"><b>' + esc(x.name) + '</b><span>' + esc(n === 1 ? T("homeSong") : T("homeSongs", { n: n })) + " · " + esc(fmtDate(x.savedAt)) +
+        (miss ? ' · <em>' + esc(T("homeMissing", { n: miss })) + "</em>" : "") + '</span><small>' + names + '</small></div>' +
+        '<div class="hs-acts"><button class="hs-del' + (delArmed === x.id ? " armed" : "") + '" data-act="del" type="button">' + esc(T(delArmed === x.id ? "homeDeleteSure" : "homeDelete")) + '</button>' +
+        '<button class="hs-open" data-act="open" type="button">' + esc(T("homeOpen")) + "</button></div></li>";
+    }).join("");
+  }
+  $("homeList").addEventListener("click", function (e) {
+    var b = e.target.closest("button"), li = e.target.closest(".home-set");
+    if (!b || !li) return;
+    var id = li.dataset.id;
+    if (b.dataset.act === "del") {
+      if (delArmed !== id) { delArmed = id; renderHome(); setTimeout(function () { if (delArmed === id) { delArmed = ""; renderHome(); } }, 3000); return; }
+      delArmed = "";
+      postJson("/sets/delete", { id: id }).then(loadSets);
+      return;
+    }
+    var x = savedSets.filter(function (q) { return q.id === id; })[0];
+    if (x) { lastSetName = x.name; try { localStorage.setItem("sp_lastset", x.name); } catch (er) { } }
+    b.disabled = true;
+    postJson("/sets/open", { id: id }).then(function (r) {
+      b.disabled = false;
+      if (!r.ok) showToast(T(r.error === "not_empty" ? "openNotEmpty" : r.error === "busy" ? "openBusy" : "openNotEmpty"), true);
+    });
+  });
+  function onSetLoad(p) {
+    setLoad = p;
+    var bar = $("setLoad");
+    if (p.done) {
+      bar.hidden = true;
+      var sk = p.skipped || [];
+      showToast(sk.length ? T("slSkipped", { name: p.name, list: sk.join(", ") }) : T("slDone", { name: p.name }), sk.length > 0);
+      return;
+    }
+    bar.hidden = false;
+    $("slName").textContent = p.name || T("slOpening");
+    $("slStep").textContent = T(p.stage === "medley" ? "slMedley" : "slSong", { i: p.i, n: p.n, title: p.title || "" });
+    $("slFill").style.transform = "scaleX(" + Math.max(0.04, ((p.i || 1) - 0.5) / Math.max(1, p.n)) + ")";
+  }
+  function openSave() {
+    $("saveName").value = lastSetName || (T("setlist") + " " + fmtDate(new Date().toISOString()));
+    $("saveWarn").hidden = true;
+    $("saveGo").disabled = false;
+    $("saveSheet").hidden = false;
+    setTimeout(function () { try { $("saveName").focus(); $("saveName").select(); } catch (e) { } }, 50);
+  }
+  function doSave() {
+    var name = $("saveName").value.trim();
+    if (!name) { $("saveName").focus(); return; }
+    $("saveGo").disabled = true;
+    postJson("/sets/save", { name: name }).then(function (r) {
+      $("saveGo").disabled = false;
+      if (!r.ok) { $("saveWarn").textContent = T("saveEmpty"); $("saveWarn").hidden = false; return; }
+      lastSetName = name;
+      try { localStorage.setItem("sp_lastset", name); } catch (e) { }
+      $("saveSheet").hidden = true;
+      showToast(T("saveDone", { name: name }), false);
+      if (r.missing) {
+        setTimeout(function () { showToast(T("saveMissing", { n: r.missing, list: (r.missingNames || []).join(", ") }), true); }, 400);
+      }
+    });
+  }
+  $("btnSave").addEventListener("click", openSave);
+  $("saveGo").addEventListener("click", doSave);
+  $("saveName").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); doSave(); } });
+  $("saveClose").addEventListener("click", function () { $("saveSheet").hidden = true; });
+  $("saveSheet").addEventListener("click", function (e) { if (e.target === $("saveSheet")) $("saveSheet").hidden = true; });
+  loadSets();
   $("countIn").addEventListener("click", function (e) {
     var b = e.target.closest("button");
     if (!b) return;
@@ -2618,6 +2721,8 @@
     var es = new EventSource("/events");
     es.onopen = function () { setConnected(true); };
     es.onerror = function () { setConnected(false); };
+    es.addEventListener("sets", function (e) { savedSets = JSON.parse(e.data) || []; renderHome(); });
+    es.addEventListener("setload", function (e) { onSetLoad(JSON.parse(e.data)); });
     es.addEventListener("struct", function (e) {
       struct = JSON.parse(e.data);
       renderedKey = "";

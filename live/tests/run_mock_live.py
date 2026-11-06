@@ -26,6 +26,16 @@ CUES = [("# Grande y Fiel | 72 | G", 0), ("Intro", 0), ("Verso 1", 16), ("Coro",
         ("Instrumental", 352), ("Puente", 368), ("Coro", 400), ("Tag", 432), ("Final", 448), ("STOP", 464)]
 
 
+def build_empty():
+    # what Live opens for a new set: a couple of empty tracks, no locators
+    s = mock_live.Song()
+    for name in ("1-Audio", "2-Audio"):
+        s.add_track(name)
+    s.last_event_time = 0.0
+    s.song_length = 0.0
+    return s
+
+
 def build_song():
     s = mock_live.Song()
     for name in ("Click", "Guide", "Drums", "SP Cues", "Keys", "Bass"):
@@ -64,7 +74,7 @@ def main():
     ap.add_argument("--plugins", action="store_true", help="SetPilot Audio on SP Cues (Cues), Guide (Guide) and Click (Click)")
     a = ap.parse_args()
 
-    song = build_song()
+    song = build_empty() if os.environ.get("SP_MOCK_EMPTY") == "1" else build_song()
     if a.plugins:
         by = {t.name: t for t in song.tracks}
         by["SP Cues"].devices = (mock_live.setpilot_audio("Cues"),)
