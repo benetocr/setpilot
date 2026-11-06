@@ -20,6 +20,9 @@ with open(os.path.join(HERE, "spec.json")) as _f:
 KINDS = SPEC["kinds"]
 LISTS = set(SPEC["lists"])
 ROUTING = set(SPEC["routing"])
+# levels Live changes all the time while it plays: read on a timer, not per change
+# (output_meter_level holds its peak for about two seconds; left and right are live)
+METER_PROPS = set(["output_meter_level", "output_meter_left", "output_meter_right"])
 STRUCT = set(["tracks", "cue_points", "arrangement_clips", "mixer_device", "volume", "panning", "master_track", "devices", "parameters"])
 # devices whose parameters we follow (all others: name only; a synth can have
 # thousands of parameters)
@@ -85,6 +88,12 @@ class Bridge(object):
         self.last_time_sent = 0
         self.last_meter_flush = 0
         self.meter_dirty = set()
+        # Live calls meter listeners only now and then (a level can sit at its
+        # top for seconds), so the meters asked for are also read ~30 times a
+        # second and sent when they move
+        self.meter_keys = set()  # (id, prop)
+        self.meter_last = {}
+        self.last_meter_poll = 0
         self.roots = {}
         self.cue_ops = []      # locator work spread over Live's ticks (see run_cue_ops)
         self.cue_zoom = 0      # arranger zoom-in steps to undo when that work is done
@@ -135,8 +144,9 @@ class Bridge(object):
         if prop == "current_song_time":
             return self._on_time
         if prop == "output_meter_level":
+            self.meter_keys.add((i, prop))
             def meter():
-                self.meter_dirty.add(i)
+                self.meter_dirty.add((i, prop))
             return meter
         if prop in STRUCT:
             def structural():
@@ -155,6 +165,9 @@ class Bridge(object):
         return changed
 
     def forget(self, i):
+        for k in [k for k in self.meter_keys if k[0] == i]:
+            self.meter_keys.discard(k)
+            self.meter_last.pop(k, None)
         for obj, prop, fn in self.watch.pop(i, []):
             try:
                 getattr(obj, "remove_%s_listener" % prop)(fn)
@@ -313,8 +326,25 @@ class Bridge(object):
         if t - self.last_time_sent >= 8:
             self.last_time_sent = t
             self.send_time()
+        self.poll_meters(t)
         if self.meter_dirty and t - self.last_meter_flush >= 33:
             self.flush_meters()
+
+    def poll_meters(self, t):
+        if not self.meter_keys or t - self.last_meter_poll < 30:
+            return
+        self.last_meter_poll = t
+        for k in list(self.meter_keys):
+            if k[0] not in self.objs:
+                continue
+            try:
+                v = float(getattr(self.objs[k[0]][0], k[1]))
+            except Exception:
+                continue
+            if k not in self.meter_last:
+                self.meter_last[k] = v
+            elif abs(v - self.meter_last[k]) >= 0.004:
+                self.meter_dirty.add(k)
 
     def send_time(self):
         s = self.song
@@ -325,9 +355,14 @@ class Bridge(object):
     def flush_meters(self):
         self.last_meter_flush = now_ms()
         o = {}
-        for i in self.meter_dirty:
+        for (i, prop) in self.meter_dirty:
             if i in self.objs:
-                o[str(i)] = {"p": {"output_meter_level": self.read(i, "output_meter_level")}}
+                v = self.read(i, prop)
+                o.setdefault(str(i), {"p": {}})["p"][prop] = v
+                try:
+                    self.meter_last[(i, prop)] = float(v)
+                except Exception:
+                    pass
         self.meter_dirty.clear()
         if o:
             self.send({"t": "d", "aw": self.aw, "o": o})
@@ -617,6 +652,8 @@ class Bridge(object):
             i = int(msg["id"])
             if msg.get("watch"):
                 self.extra.setdefault(i, set()).add(msg["p"])
+                if msg["p"] in METER_PROPS:
+                    self.meter_keys.add((i, msg["p"]))
             return self.read(i, msg["p"])
         if t == "call":
             return self._call(int(msg["id"]), msg["f"], msg.get("a") or [])
@@ -766,6 +803,7 @@ class Bridge(object):
         self.stats["ticks"] += 1
         self.run_inbox(reply)
         self.run_cue_ops(reply)
+        self.poll_meters(t)
         self.flush()
         if not self.song.is_playing and t - self.last_time_sent > 250:
             self.last_time_sent = t

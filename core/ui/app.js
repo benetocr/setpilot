@@ -234,6 +234,20 @@
       if (!mixDrag || mixDrag.id !== x.id) { setFader(el, x.vol); el.querySelector(".ch-db").textContent = shortDb(x.db); }
     });
   }
+  // Live's dB for a fader position, read off the curve the engine sends
+  function dbAt(v) {
+    var c = mixer && mixer.curve;
+    if (!c || c.length < 2) return null;
+    var x = Math.max(0, Math.min(1, v)) * (c.length - 1), i = Math.min(c.length - 2, Math.floor(x)), f = x - i;
+    var a = c[i], b = c[i + 1];
+    if (f < 1e-6) return a == null ? "−∞" : a.toFixed(1);
+    if (a == null || b == null) return f < 0.5 ? (a == null ? "−∞" : a.toFixed(1)) : (b == null ? "−∞" : b.toFixed(1));
+    return (a + (b - a) * f).toFixed(1);
+  }
+  function liveDb(el, v) {
+    var d = dbAt(v), lab = el.querySelector(".ch-db");
+    if (d != null && lab && lab.textContent !== d) lab.textContent = d;
+  }
   function shortDb(d) { return String(d || "").replace(/\s*dB$/i, "").replace("-inf", "−∞"); }
   function setFader(el, v) {
     var pct = Math.max(0, Math.min(1, v)) * 100;
@@ -304,6 +318,7 @@
       track.setPointerCapture(e.pointerId);
       var v = valueAt(track, e.clientY);
       setFader(el, v);
+      liveDb(el, v);
       pendingV = v;
       push();
     });
@@ -311,6 +326,7 @@
       if (!mixDrag || mixDrag.ended) return;
       var v = valueAt(mixDrag.track, e.clientY);
       setFader(mixDrag.el, v);
+      liveDb(mixDrag.el, v);
       pendingV = v;
       push();
     });
@@ -328,14 +344,15 @@
       if (!track) return;
       var el = track.closest(".ch");
       setFader(el, 0.85);
+      liveDb(el, 0.85);
       if (autoMode()) send("autoset", shownIdx, sm.sel, +el.dataset.id, 850, -1);
       else send("mixvol", +el.dataset.id, 850);
     });
   })();
-  // Meters: Live is read about 20 times a second; between readings the bars
-  // move like a hardware meter (instant rise, smooth fall, a peak that holds),
-  // drawn every frame with transforms only so nothing has to be laid out again.
-  var meters = { els: {}, key: "", tgt: {}, cur: {}, peak: {}, peakAt: {}, last: 0 };
+  // Meters: Live's level (left/right, the louder) arrives about 25 times a
+  // second with Live's own peak hold. Between readings the bar rises at once
+  // and falls like Live's, so it follows the music instead of sticking.
+  var meters = { els: {}, key: "", tgt: {}, pkT: {}, cur: {}, peak: {}, last: 0 };
   function meterEls() {
     var box = $("mixStrips");
     if (meters.key === box.dataset.k) return meters.els;
@@ -349,27 +366,32 @@
     return meters.els;
   }
   function onMeters(a) {
-    for (var i = 0; i + 1 < a.length; i += 2) meters.tgt[a[i]] = Math.max(0, Math.min(1, +a[i + 1] || 0));
+    var step = 3;   // id, level, peak
+    for (var i = 0; i + step - 1 < a.length; i += step) {
+      meters.tgt[a[i]] = Math.max(0, Math.min(1, +a[i + 1] || 0));
+      meters.pkT[a[i]] = step === 3 ? Math.max(0, Math.min(1, +a[i + 2] || 0)) : meters.tgt[a[i]];
+    }
     meters.at = performance.now();
   }
   function drawMeters(now) {
     var dt = Math.min(0.1, (now - (meters.last || now)) / 1000);
     meters.last = now;
     if ($("mixSheet").hidden && $("mixStrips").parentNode !== $("dockInner")) return;
-    var els = meterEls(), stale = now - (meters.at || 0) > 500;
-    var fall = 1 - Math.exp(-dt / 0.16);
+    var els = meterEls(), stale = now - (meters.at || 0) > 400;
+    var fall = 1 - Math.exp(-dt / 0.07), rise = 1 - Math.exp(-dt / 0.008);
     for (var id in els) {
       var el = els[id];
       var tgt = stale ? 0 : (meters.tgt[id] || 0);
       var cur = meters.cur[id] || 0;
-      cur = tgt > cur ? cur + (tgt - cur) * (1 - Math.exp(-dt / 0.012)) : cur + (tgt - cur) * fall;
+      cur += (tgt - cur) * (tgt > cur ? rise : fall);
       if (cur < 0.002) cur = 0;
       meters.cur[id] = cur;
+      // the peak line is Live's: it holds, then drops with the music
+      var pt = stale ? 0 : Math.max(cur, meters.pkT[id] || 0);
       var pk = meters.peak[id] || 0;
-      if (cur >= pk) { pk = cur; meters.peakAt[id] = now; }
-      else if (now - (meters.peakAt[id] || 0) > 900) pk = Math.max(cur, pk - dt * 0.6);
+      pk = pt > pk ? pt : pk + (pt - pk) * (1 - Math.exp(-dt / 0.12));
       meters.peak[id] = pk;
-      var v = Math.round(cur * 400) / 400, p = Math.round(pk * 400) / 400;
+      var v = Math.round(cur * 500) / 500, p = Math.round(pk * 500) / 500;
       if (v !== el.v) { el.v = v; el.cover.style.transform = "scaleY(" + (1 - v) + ")"; }
       if (p !== el.p) { el.p = p; el.peak.style.transform = "translateY(" + (-p * 100) + "%)"; el.peak.style.opacity = p > 0.02 ? 1 : 0; }
     }

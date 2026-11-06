@@ -401,6 +401,18 @@ class TimeTest(unittest.TestCase):
         meter_msgs = [m for m in h.out if m["t"] == "d" and any("output_meter_level" in v["p"] for v in m["o"].values())]
         self.assertEqual(len(meter_msgs), 1)
 
+    def test_meters_are_read_even_when_live_does_not_announce_them(self):
+        h = Harness()
+        tr = h.song.tracks[2]
+        tr.output_meter_level = 0.9
+        h.tick()
+        time.sleep(0.04)
+        h.out[:] = []
+        tr._v["output_meter_level"] = 0.2      # Live changed it and said nothing
+        h.tick()
+        vals = [v["p"]["output_meter_level"] for m in h.out if m["t"] == "d" for v in m["o"].values() if "output_meter_level" in v["p"]]
+        self.assertEqual(vals, [0.2])
+
     def test_probe(self):
         h = Harness()
         for _ in range(3):

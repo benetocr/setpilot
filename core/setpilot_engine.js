@@ -701,7 +701,7 @@ function tick() {
 	if (clearCues >= 0) { guard("clear", clearCueStep)(); return; }
 	if (rewarpQueue.length && !playing) { guard("rewarp", runRewarp)(); return; }
 	if (clock - mix.at > (mix.dirty ? 60 : 700)) guard("mixer", pollMixer)();
-	if (clock < mix.meterUntil && clock - mix.meterAt >= 50) guard("meters", sendMeters)();
+	if (clock < mix.meterUntil && clock - mix.meterAt >= 40) guard("meters", sendMeters)();
 	if (needStore && songs.length && !dirty) { needStore = false; saveStore(); }
 	if (clock % 500 < TICK_MS) guard("tails", runTails)();
 	if (cueSource && clock - guideAt > 400) { guideAt = clock; guard("guide", runGuides)(); }
@@ -2710,7 +2710,23 @@ function pollMixer() {
 		}
 		out.push(row);
 	}
-	var json = JSON.stringify({ tracks: out });
+	// the volume curve (Live's dB for each fader position), so the dashboard can
+	// show the number while a fader moves
+	if (!mix.curve) {
+		for (var ci = 0; ci < mix.tracks.length && !mix.curve; ci++) {
+			if (!mix.tracks[ci].vol) continue;
+			paramApi.id = mix.tracks[ci].vol;
+			var cv = [];
+			try {
+				for (var cx = 0; cx <= 100; cx++) {
+					var cs = str(paramApi.call("str_for_value", cx / 100)), cd = parseFloat(cs);
+					cv.push(/inf/i.test(cs) || isNaN(cd) ? null : Math.round(cd * 100) / 100);
+				}
+				mix.curve = cv;
+			} catch (e) { }
+		}
+	}
+	var json = JSON.stringify({ tracks: out, curve: mix.curve || null });
 	if (json == mix.sig) return;
 	mix.sig = json;
 	var d = new Dict(MIX_DICT);
@@ -2725,8 +2741,11 @@ function sendMeters() {
 		var tr = mix.tracks[i];
 		if (tr.main) mixApi.goto("live_set master_track");
 		else mixApi.id = tr.id;
-		var l = num(mixApi.get("output_meter_level"));
-		a.push(tr.id, Math.round(l * 100) / 100);
+		// the level as it is (left/right) and Live's own peak hold (output_meter_level)
+		var pk = num(mixApi.get("output_meter_level"));
+		var lv = Math.max(num(mixApi.get("output_meter_left")), num(mixApi.get("output_meter_right")));
+		if (!(lv >= 0)) lv = pk;
+		a.push(tr.id, Math.round(lv * 1000) / 1000, Math.round(pk * 1000) / 1000);
 	}
 	outlet(0, a);
 }
