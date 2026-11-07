@@ -396,6 +396,26 @@ function start(engine) {
 			});
 			return;
 		}
+		// the guide's cues as words: [{ id, pcm (16 kHz mono, 16 bit, base64) }]
+		if (req.method === "POST" && url.pathname === "/stems/hear") {
+			let body = "";
+			req.on("data", c => { body += c; if (body.length > 2e7) req.destroy(); });
+			req.on("end", () => {
+				const reply = o => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(o)); };
+				let cues;
+				try {
+					cues = (JSON.parse(body || "{}").cues || []).slice(0, 80).map(c => {
+						const b = Buffer.from(String(c.pcm || ""), "base64");
+						const n = Math.min(b.length >> 1, 16000 * 10), pcm = new Int16Array(n);
+						for (let i = 0; i < n; i++) pcm[i] = b.readInt16LE(i * 2);
+						return { id: c.id, pcm };
+					});
+				} catch (e) { return reply({ ok: false, error: "bad_request" }); }
+				if (!engine.canHear()) return reply({ ok: false, error: "no_whisper" });
+				Promise.resolve(engine.hear(cues)).then(reply, e => reply({ ok: false, error: String(e && e.message || e) }));
+			});
+			return;
+		}
 		if (req.method === "POST" && (url.pathname === "/stems/find" || url.pathname === "/stems/create")) {
 			let body = "";
 			req.on("data", c => { body += c; if (body.length > 5e5) req.destroy(); });
@@ -562,6 +582,8 @@ if (maxApi) {
 		},
 		restore(json) { maxApi.outlet("js", "restore", json); },
 		audioInfo() { return maxApi.audioInfo ? maxApi.audioInfo() : null; },
+		hear(cues) { return maxApi.hear ? maxApi.hear(cues) : Promise.resolve({ ok: false, error: "no_whisper" }); },
+		canHear() { return !!(maxApi.canHear && maxApi.canHear()); },
 		audioRefresh() { return maxApi.audioRefresh ? maxApi.audioRefresh() : null; },
 		getStore() { return lastStoreJson; },
 		importPlan(plan) {

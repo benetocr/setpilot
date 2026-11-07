@@ -28,6 +28,7 @@ jobs:
       - run: node dev/test_songs.js
       - run: node dev/test_stems_dsp.js
       - run: node dev/test_stems.js
+      - run: node dev/test_cue_words.js
       - run: g++ -std=c++17 -O2 -I plugin/src plugin/tests/core_test.cpp -o core_test && ./core_test
 
   plugin-mac:
@@ -57,8 +58,41 @@ jobs:
           name: SetPilot-Audio-mac
           path: SetPilot-Audio-*.zip
 
+  # whisper.cpp and its model, to hear the guide's spoken cues (built once, then cached)
+  whisper-mac:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        id: wcache
+        with:
+          path: whisper-dist
+          key: whisper-v1.7.5-base-q5_1-universal-2
+      - name: Build whisper.cpp (universal) and get the model
+        if: steps.wcache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch v1.7.5 https://github.com/ggml-org/whisper.cpp wsrc
+          cmake -S wsrc -B wbuild -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=OFF -DGGML_NATIVE=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF -DWHISPER_SDL2=OFF
+          cmake --build wbuild --config Release -j 4 --target whisper-cli
+          mkdir -p whisper-dist/models
+          cp wbuild/bin/whisper-cli whisper-dist/
+          otool -L whisper-dist/whisper-cli
+          lipo -info whisper-dist/whisper-cli
+          codesign --force -s - whisper-dist/whisper-cli
+          curl -fL -o whisper-dist/models/ggml-base-q5_1.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin
+          ls -la whisper-dist whisper-dist/models
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Hear spoken cues (English and Spanish)
+        run: SETPILOT_WHISPER_DIR="$PWD/whisper-dist" node dev/test_hear.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whisper-mac
+          path: whisper-dist
+
   app-mac:
-    needs: [plugin-mac]
+    needs: [plugin-mac, whisper-mac]
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -77,6 +111,13 @@ jobs:
           clang -arch arm64 -arch x86_64 -O2 -mmacosx-version-min=11.0 -o native-dist/sp-audio-outputs native/audio_outputs.c -framework CoreAudio -framework CoreFoundation
           codesign --force -s - native-dist/sp-audio-outputs
           ./native-dist/sp-audio-outputs
+      - uses: actions/download-artifact@v4
+        with: { name: whisper-mac, path: native-dist }
+      - name: whisper.cpp inside the app
+        run: |
+          chmod +x native-dist/whisper-cli
+          codesign --force -s - native-dist/whisper-cli
+          ls -la native-dist native-dist/models
       - run: npm ci
       - run: npx electron-builder --mac zip --arm64 --x64 -c.mac.identity=null
       - name: Sign ad hoc, zip and make the disk images

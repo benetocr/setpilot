@@ -74,6 +74,11 @@ function startHost({ log: logOut = console.log } = {}) {
 	});
 	maxApi.audioInfo = () => audio.get();
 	maxApi.audioRefresh = () => audio.refresh();
+	// the guide's spoken cues, heard on this computer (whisper.cpp in the app)
+	const { makeHear } = require("./hear");
+	const hearer = makeHear({ log });
+	maxApi.hear = cues => hearer.hear(cues);
+	maxApi.canHear = () => hearer.available();
 	audio.refresh().catch(() => {});
 
 	// ---------------------------------------------------------------- engine thread
