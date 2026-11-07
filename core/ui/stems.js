@@ -300,10 +300,13 @@
       el.className = "sw-status busy";
     } else {
       var h = W.heard || {}, bits = [];
-      if (h.from === "click") bits.push(T(h.accented ? "swHeardClick" : "swHeardClickNoAccent", { bpm: fmtBpm(h.bpm), meter: h.meter, at: fmtTime(h.down) }));
-      else if (h.from === "music") bits.push(T("swHeardMusic", { at: fmtTime(h.down) }));
-      if (h.key) bits.push(T("swHeardKey", { key: h.key }));
-      if (h.from === "click" && h.steady === false) bits.push(T("swTempoMoves"));
+      if (W.step === 2) bits.push(T("swUsing", { bpm: fmtBpm(W.bpm), meter: W.meter, at: fmtTime(W.down), key: W.key || "?" }));
+      else {
+        if (h.from === "click") bits.push(T(h.accented ? "swHeardClick" : "swHeardClickNoAccent", { bpm: fmtBpm(h.bpm), meter: h.meter, at: fmtTime(h.down) }));
+        else if (h.from === "music") bits.push(T("swHeardMusic", { at: fmtTime(h.down) }));
+        if (h.key) bits.push(T("swHeardKey", { key: h.key }));
+        if (h.from === "click" && h.steady === false) bits.push(T("swTempoMoves"));
+      }
       el.innerHTML = (bits.length ? '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></svg><span>' + esc(bits.join(" ")) + "</span>" : "") +
         (W.hearing ? '<span class="sw-spin"></span><span>' + esc(T("swHearing")) + "</span>" : "");
       el.className = "sw-status";
@@ -315,13 +318,15 @@
   }
   function songStep() {
     var h = W.heard || {};
-    var meterBtn = function (m) { return '<button type="button" role="radio" data-meter="' + m + '" aria-checked="' + (W.meter === m) + '">' + m + "</button>"; };
+    // key, tempo and time signature wait until every track has been heard (what is heard fills them)
+    var dis = W.busy ? " disabled" : "";
+    var meterBtn = function (m) { return '<button type="button" role="radio" data-meter="' + m + '" aria-checked="' + (!W.busy && W.meter === m) + '"' + dis + ">" + m + "</button>"; };
     var html = '<div class="sw-song">' +
       '<div class="sw-fields">' +
       '<label class="field sw-name"><span>' + esc(T("addTitleField")) + '</span><input id="swTitleIn" type="text" maxlength="80" value="' + esc(W.title) + '"></label>' +
       '<div class="field-row">' +
-      '<label class="field"><span>' + esc(T("addKey")) + (h.key && h.key !== W.key ? ' <em class="sw-heard" data-use="key">' + esc(T("swUse", { v: h.key })) + "</em>" : "") + '</span><input id="swKeyIn" type="text" maxlength="3" value="' + esc(W.key) + '" placeholder="G"></label>' +
-      '<label class="field"><span>BPM' + (h.bpm && h.bpm !== W.bpm ? ' <em class="sw-heard" data-use="bpm">' + esc(T("swUse", { v: fmtBpm(h.bpm) })) + "</em>" : "") + '</span><span class="sw-bpm"><input id="swBpmIn" type="number" min="20" max="300" step="0.01" value="' + (W.bpm || "") + '"><button type="button" class="chip-btn" id="swTap">' + esc(T("swTap")) + "</button></span></label>" +
+      '<label class="field"><span>' + esc(T("addKey")) + (h.key && h.key !== W.key ? ' <em class="sw-heard" data-use="key">' + esc(T("swUse", { v: h.key })) + "</em>" : "") + '</span><input id="swKeyIn" type="text" maxlength="3" value="' + (W.busy ? "" : esc(W.key)) + '" placeholder="' + (W.busy ? "…" : "G") + '"' + dis + "></label>" +
+      '<label class="field"><span>BPM' + (h.bpm && h.bpm !== W.bpm ? ' <em class="sw-heard" data-use="bpm">' + esc(T("swUse", { v: fmtBpm(h.bpm) })) + "</em>" : "") + '</span><span class="sw-bpm"><input id="swBpmIn" type="number" min="20" max="300" step="0.01" value="' + (W.busy ? "" : W.bpm || "") + '"' + (W.busy ? ' placeholder="…"' : "") + dis + '><button type="button" class="chip-btn" id="swTap"' + dis + ">" + esc(T("swTap")) + "</button></span></label>" +
       "</div>" +
       '<div class="field"><span>' + esc(T("swMeter")) + '</span><div class="seg-ctl sw-meter">' + ["4/4", "3/4", "6/8"].map(meterBtn).join("") + "</div></div>" +
       "</div>" +
@@ -760,6 +765,7 @@
         W.down = Math.max(0, W.down + d);
         if (W.down >= barSec()) W.down -= barSec();
         draw();
+        renderStatus();
         return;
       }
       var pop = e.target.closest("#swPop");
