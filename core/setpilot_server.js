@@ -38,7 +38,7 @@ const COMMANDS = {
 	autostop: 1, setorder: -1, cuemode: 1, cuebars: 1, cuelang: 1,
 	clickon: 1, clicksound: 1, clicksub: 1, clickmute: 1, clickaccent: 2, clicklevel: 2,
 	temposet: 2, keyset: 2, clearfrom: 1, transition: 2, transdefault: 1, warpinfo: 1, rewarpsong: 1, mixvol: 2, mixmute: 2, mixsolo: 2, mixeron: 0,
-	precount: 1, cuestyle: 1, arrset: -1, arrgo: 3, selectmed: 2, medgo: 3, playmed: 1, medlisten: 2, clipinfo: 1, cuesource: 1, warpcheck: 1, fadeout: 1, fadein: 1, autoset: 5, autoclear: 3, movesec: 3, wave: 1, routeopts: 0, setoutput: 2, applyoutputs: 0, settrackinstr: 2
+	precount: 1, cuestyle: 1, arrset: -1, arrgo: 3, selectmed: 2, medgo: 3, playmed: 1, medlisten: 2, padfree: -1, clipinfo: 1, cuesource: 1, warpcheck: 1, fadeout: 1, fadein: 1, autoset: 5, autoclear: 3, movesec: 3, wave: 1, routeopts: 0, setoutput: 2, applyoutputs: 0, settrackinstr: 2
 };
 
 function lanAddress() {
@@ -77,7 +77,7 @@ function start(engine) {
 			song: a[5], sec: a[6],
 			qSong: a[7], qSec: a[8], qFired: a[9],
 			loopSong: a[10], loopSec: a[11], loopOnce: a[12], liveLoop: a[13],
-			armSong: a[14], pendingSong: a[15], autoStop: a[16], version: a[17], fade: a[18] || 0, countIn: a[19] || 0, arrK: a[20] == null ? -1 : a[20], qArrK: a[21] == null ? -1 : a[21], qAuto: a[22] || 0, med: a[23] == null ? -1 : a[23], medK: a[24] == null ? -1 : a[24], qMedK: a[25] == null ? -1 : a[25],
+			armSong: a[14], pendingSong: a[15], autoStop: a[16], version: a[17], fade: a[18] || 0, countIn: a[19] || 0, arrK: a[20] == null ? -1 : a[20], qArrK: a[21] == null ? -1 : a[21], qAuto: a[22] || 0, med: a[23] == null ? -1 : a[23], medK: a[24] == null ? -1 : a[24], qMedK: a[25] == null ? -1 : a[25], padFree: a[26] || 0,
 			at: Date.now()
 		};
 		broadcast("pos", pos);

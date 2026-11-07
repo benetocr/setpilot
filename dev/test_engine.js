@@ -973,6 +973,31 @@ test("a song whose arrangement leaves out its first section starts at its first 
 	assert.ok(Math.abs(t.song.props.current_song_time - sc[1].start) < 0.01, "at " + t.song.props.current_song_time + " want " + sc[1].start);
 });
 
+test("the Pad button: a pad now, in the song's key, playing or stopped; it follows the key and fades out when turned off", () => {
+	const t = setup({ tail: true });
+	t.run(4000);
+	t.cmd("selectsong", 0, 0);
+	t.run(300);
+	t.song.tailLog.length = 0;
+	t.cmd("padfree");
+	t.run(200);
+	const on = t.song.tailLog.filter(x => x[0] === "pad");
+	assert.strictEqual(on.length, 1, JSON.stringify(t.song.tailLog));
+	assert.strictEqual(on[0][1], -1, "now");
+	const k = t.eng.dicts.setpilot_struct.songs[0].key, root = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[String(k)[0]];
+	if (root != null && !/[#b]/.test(String(k).slice(1, 2))) assert.strictEqual(on[0][2], root, "in " + k);
+	assert.ok(on[0][3] > 0);
+	t.cmd("keyset", 0, 2);
+	t.run(300);
+	const moved = t.song.tailLog.filter(x => x[0] === "pad");
+	assert.strictEqual(moved.length, 2, "follows the new key: " + JSON.stringify(moved));
+	assert.strictEqual(moved[1][2], (on[0][2] + 2) % 12);
+	t.cmd("padfree");
+	t.run(200);
+	const off = t.song.tailLog.filter(x => x[0] === "pad").pop();
+	assert.strictEqual(off[3], 0, "off: it fades out");
+});
+
 test("count-in and arrangement survive Live confirming play late", () => {
 	const t = setup();
 	t.song.playLatency = 120;

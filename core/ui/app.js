@@ -1910,6 +1910,9 @@
     $("btnFadeOut").classList.toggle("on", fd === 1);
     $("btnFadeIn").classList.toggle("on", fd === 2);
     $("btnFadeIn").disabled = !fd;
+    var pf = !!(pos && pos.padFree);
+    $("btnPad").classList.toggle("on", pf);
+    $("btnPad").setAttribute("aria-pressed", pf ? "true" : "false");
     $("app").classList.toggle("counting-in", !!(pos && pos.countIn));
     $("app").classList.toggle("is-playing", playing);
     $("liveChip").classList.toggle("playing", playing);
@@ -2707,6 +2710,7 @@
   });
   $("btnFadeOut").addEventListener("click", function () { send("fadeout", 4000); });
   $("btnFadeIn").addEventListener("click", function () { send("fadein", 3000); });
+  $("btnPad").addEventListener("click", function () { send("padfree"); });
 
   function closeSetlist() { $("app").classList.remove("setlist-open"); }
   $("btnSetlist").addEventListener("click", function () { $("app").classList.toggle("setlist-open"); });

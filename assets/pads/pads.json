@@ -1,0 +1,78 @@
+{
+ "source": "Reawaken Worship Pads - Foundations",
+ "rate": 44100,
+ "pads": [
+  {
+   "key": "C",
+   "root": 0,
+   "file": "C.ogg",
+   "length": 1587600
+  },
+  {
+   "key": "Db",
+   "root": 1,
+   "file": "Db.ogg",
+   "length": 1631700
+  },
+  {
+   "key": "D",
+   "root": 2,
+   "file": "D.ogg",
+   "length": 1455300
+  },
+  {
+   "key": "Eb",
+   "root": 3,
+   "file": "Eb.ogg",
+   "length": 1631700
+  },
+  {
+   "key": "E",
+   "root": 4,
+   "file": "E.ogg",
+   "length": 1587600
+  },
+  {
+   "key": "F",
+   "root": 5,
+   "file": "F.ogg",
+   "length": 1631700
+  },
+  {
+   "key": "Gb",
+   "root": 6,
+   "file": "Gb.ogg",
+   "length": 1367100
+  },
+  {
+   "key": "G",
+   "root": 7,
+   "file": "G.ogg",
+   "length": 1367100
+  },
+  {
+   "key": "Ab",
+   "root": 8,
+   "file": "Ab.ogg",
+   "length": 1675800
+  },
+  {
+   "key": "A",
+   "root": 9,
+   "file": "A.ogg",
+   "length": 1323000
+  },
+  {
+   "key": "Bb",
+   "root": 10,
+   "file": "Bb.ogg",
+   "length": 1587600
+  },
+  {
+   "key": "B",
+   "root": 11,
+   "file": "B.ogg",
+   "length": 1675800
+  }
+ ]
+}

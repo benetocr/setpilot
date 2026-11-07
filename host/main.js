@@ -80,7 +80,13 @@ function startHost({ log: logOut = console.log } = {}) {
 	const sab = new SharedArrayBuffer(4);
 	const signal = new Int32Array(sab);
 	const { port1, port2 } = new MessageChannel();
-	const worker = new Worker(path.join(__dirname, "engine_worker.js"), { workerData: { sab, bridgePort: port2 }, transferList: [port2] });
+	// the recorded pads that come with the app (one loop per key)
+	let pads = null;
+	for (const dir of [process.env.SETPILOT_PADS, process.resourcesPath && path.join(process.resourcesPath, "pads"), path.join(__dirname, "..", "assets", "pads")]) {
+		if (!dir) continue;
+		try { const j = JSON.parse(fs.readFileSync(path.join(dir, "pads.json"), "utf8")); pads = { dir, list: j.pads }; break; } catch (e) { }
+	}
+	const worker = new Worker(path.join(__dirname, "engine_worker.js"), { workerData: { sab, bridgePort: port2, pads }, transferList: [port2] });
 	const toBridge = x => { port1.postMessage(x); Atomics.add(signal, 0, 1); Atomics.notify(signal, 0); };
 	let dictReq = 0, prepReq = 0;
 	const prepWait = new Map();

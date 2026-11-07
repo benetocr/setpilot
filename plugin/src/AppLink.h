@@ -22,7 +22,7 @@ private:
 	bool connectOnce();
 	void handle(const juce::var& msg);
 	void send(const juce::var& msg);
-	sp::SamplePtr load(const juce::String& path);
+	sp::SamplePtr load(const juce::String& path, juce::int64 maxLen = 0);
 	void hold(const sp::SamplePtr& s);
 
 	SetPilotProcessor& proc;

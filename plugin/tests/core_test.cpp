@@ -184,7 +184,36 @@ static void testPadClear() {
 	CHECK(r.core.padLevel() == 0.0f, "clear releases it");
 }
 
+static void testRecordedPads() {
+	Run r(Role::Tail);
+	auto load = [&](int root) { Command c; c.type = Command::PadLoad; c.idx = root; c.sample = tone(r.sr, 0.5); r.core.push(c); };
+	load(2); load(9);   // D and A
+	auto ev = [&](double beat, int root, int q) { Command c; c.type = Command::PadEvent; c.beat = beat; c.a = root; c.b = q; r.core.push(c); };
+	ev(0, 2, 1); ev(8, 9, 1); ev(16, 0, 0);
+	r.go(2.0);
+	CHECK(r.core.padHasLoops(), "loops loaded");
+	CHECK(r.core.padLoopRoot() == 2, "D plays its recorded loop");
+	CHECK(rms(r.L, r.beatSample(3), r.beatSample(4)) > 0.05, "and it sounds (the loop goes round)");
+	r.go(3.0);   // to beat 10
+	CHECK(r.core.padLoopRoot() == 9, "A after beat 8: crossfaded into the A loop");
+	r.go(5.5);   // to beat 21: off at 16 + 2 s release
+	CHECK(r.core.padLevel() == 0.0f, "off after its release");
+	// the Pad button: now, with Live stopped
+	r.playing = false;
+	ev(-1, 9, 1);
+	r.go(1.5);
+	CHECK(r.core.padLoopRoot() == 9 && r.core.padLevel() > 0.9f, "the Pad button plays at once, stopped");
+	ev(-1, 9, 0);
+	r.go(2.5);
+	CHECK(r.core.padLevel() == 0.0f, "and fades out when turned off");
+	// a key without a loop falls back to the synth
+	ev(-1, 4, 1);
+	r.go(1.5);
+	CHECK(std::fabs(r.core.padFreq(1) - 164.81) < 1.0 && r.core.padLevel() > 0.5f, "E has no loop: the synth plays it");
+}
+
 int main() {
+	testRecordedPads();
 	testClickOnTheGrid(); testClickNotBetweenBeats(); testClickAccentAndMute(); testClickSubdivision(); testClickSilentWhenStopped();
 	testCueStartsOnItsBeat(); testCueDisarmAndPlayNow();
 	testGateClosesOnItsBeat(); testGateNow();

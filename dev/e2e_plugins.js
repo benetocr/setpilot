@@ -71,6 +71,12 @@ function fakePlugin(home, role) {
 		P.click.sock.write(JSON.stringify({ t: "hello", role: "tail" }) + "\n");
 		await until(() => /plugins: .*tail/.test(log), 3000, "role change seen");
 		check("role change is noticed", () => assert.ok(/plugins: .*tail/.test(log)));
+		await until(() => P.click.got.filter(m => m.t === "padload").length >= 12, 5000, "pads sent");
+		check("the tail plugin gets the 12 recorded pads", () => {
+			const pl = P.click.got.filter(m => m.t === "padload");
+			assert.deepStrictEqual(pl.map(m => m.root).sort((a, b) => a - b), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+			assert.ok(pl.every(m => fs.existsSync(m.path) && m.len > 44100 * 20), JSON.stringify(pl[0]));
+		});
 	} catch (e) { bad++; console.log("FAIL " + e.message + "\n" + log.split("\n").slice(-15).join("\n")); }
 	host.kill(); live.kill();
 	console.log(bad ? `\n${bad} failing` : "\nall passing");

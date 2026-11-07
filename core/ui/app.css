@@ -1398,3 +1398,5 @@ html[data-layout="console"] .app.is-empty .transport, html[data-layout="console"
 .out-sub { margin: 10px 2px 2px; font-size: 12px; font-weight: 700; color: var(--faint); }
 .out-sub:first-child { margin-top: 2px; }
 .out-btns { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.pad-btn.on { background: var(--live); border-color: var(--live); color: #0d1a12; }
+html[data-layout="stage"] .pad-btn span { display: inline; }

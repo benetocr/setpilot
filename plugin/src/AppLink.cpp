@@ -101,17 +101,20 @@ void AppLink::hold(const sp::SamplePtr& s) {
 }
 
 // decodes a WAV/AIFF into memory at the host's sample rate
-sp::SamplePtr AppLink::load(const juce::String& path) {
+sp::SamplePtr AppLink::load(const juce::String& path, juce::int64 maxLen) {
 	auto it = cache.find(path);
 	if (it != cache.end()) return it->second;
 	juce::File f(path);
 	std::unique_ptr<juce::AudioFormatReader> r(formats.createReaderFor(f));
 	if (!r || r->lengthInSamples <= 0 || r->lengthInSamples > (juce::int64)r->sampleRate * 600) return nullptr;
-	juce::AudioBuffer<float> b((int)std::min<unsigned>(2, r->numChannels), (int)r->lengthInSamples);
-	r->read(&b, 0, (int)r->lengthInSamples, 0, true, true);
+	const juce::int64 len = maxLen > 0 ? std::min(maxLen, r->lengthInSamples) : r->lengthInSamples;
+	juce::AudioBuffer<float> b((int)std::min<unsigned>(2, r->numChannels), (int)len + 1);
+	r->read(&b, 0, (int)len, 0, true, true);
+	// a loop: the sample after the last is the first (for the interpolation below)
+	for (int ch = 0; ch < b.getNumChannels(); ++ch) b.setSample(ch, (int)len, maxLen > 0 ? b.getSample(ch, 0) : b.getSample(ch, (int)len - 1));
 	auto s = std::make_shared<sp::Sample>();
 	const double ratio = r->sampleRate / sr.load();
-	const int outLen = (int)std::floor((b.getNumSamples() - 1) / ratio);
+	const int outLen = (int)std::floor((double)len / ratio);
 	s->l.resize((size_t)std::max(0, outLen));
 	if (b.getNumChannels() > 1) s->r.resize(s->l.size());
 	for (int i = 0; i < outLen; ++i) {
@@ -172,6 +175,12 @@ void AppLink::handle(const juce::var& m) {
 		c.a = (double)m.getProperty("root", 0); c.b = (double)m.getProperty("q", 0);
 	} else if (t == "padclear") {
 		c.type = sp::Command::PadClear;
+	} else if (t == "padload") {
+		// one recorded pad loop: exactly "len" samples of the file loop (encoders pad the end)
+		c.type = sp::Command::PadLoad;
+		c.idx = (int)m.getProperty("root", -1);
+		c.sample = load(m.getProperty("path", "").toString(), (juce::int64)(double)m.getProperty("len", 0.0));
+		hold(c.sample);
 	} else return;
 	proc.core.push(std::move(c));
 }

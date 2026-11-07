@@ -46,6 +46,7 @@ const OWN_RE = /^(SP Cues|SetPilot)$/i;
 let eng = null;
 const router = new AudioRouter({
 	mirror,
+	pads: workerData.pads || null,
 	send: (role, msg) => parentPort.postMessage({ plugin: { role, msg } }),
 	reply: (cmd, args) => { if (started) eng.send(cmd, args); }
 });

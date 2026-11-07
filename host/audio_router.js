@@ -16,8 +16,9 @@ const ROLE_NAMES = { click: "Click", cues: "Cues", guide: "Guide", tail: "Tail" 
 
 class AudioRouter {
 	// send(role, msg) to plugins; reply(cmd, args) to the engine (later, not inside its tick)
-	constructor({ mirror, send, reply, log = () => {} }) {
+	constructor({ mirror, send, reply, log = () => {}, pads = null }) {
 		this.mirror = mirror;
+		this.pads = pads;    // { dir, list: [{ root, file, length }] }: the recorded pads, one per key
 		this.send = send;
 		this.reply = reply;
 		this.log = log;
@@ -124,7 +125,10 @@ class AudioRouter {
 		else if (role === "guide") {
 			if (s.gate) this.send("guide", { t: "gatearm", beat: s.gate.beat, v: s.gate.v });
 			else if (s.gateNow != null) this.send("guide", { t: "gatenow", v: s.gateNow });
-		} else if (role === "tail" && s.tailPath) this.send("tail", { t: "tailload", path: s.tailPath });
+		} else if (role === "tail") {
+			if (s.tailPath) this.send("tail", { t: "tailload", path: s.tailPath });
+			if (this.pads) for (const p of this.pads.list) this.send("tail", { t: "padload", root: p.root, path: require("path").join(this.pads.dir, p.file), len: p.length });
+		}
 	}
 
 	event(role, m) {

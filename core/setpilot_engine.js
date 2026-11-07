@@ -1479,8 +1479,51 @@ function medPadEvents(s) {
 	return ev;
 }
 
+// The Pad button: a pad in the key of what is playing, any time (playing or
+// stopped). It swells in, follows the key from song to song (and part to
+// part in a medley), and fades out when turned off. While it is on, a
+// medley's own transition pads wait.
+var padFree = false, padFreeRoot = -1, padFreeQ = 0;
+function keyRootNow() {
+	var s = curSong;
+	if (s < 0 || !songs[s]) return null;
+	var md = medOf(s);
+	if (md && md.parts && md.parts.length) {
+		var rel = t - songs[s].start, k = md.parts[0];
+		for (var i = 0; i < md.parts.length; i++) if (rel >= md.parts[i].a - 0.01) k = md.parts[i];
+		var pk = keyParse(k.pkey || k.key || md.key);
+		if (pk) return pk;
+	}
+	var kp = keyParse(songs[s].key);
+	if (!kp) return null;
+	return { root: (((kp.root + (opt(s).semis || 0)) % 12) + 12) % 12, minor: kp.minor };
+}
+function padfree(on) {
+	padFree = on === undefined || on === "" ? !padFree : !!parseInt(on, 10);
+	if (!tailPresent()) { padFree = false; send(); return; }
+	if (padFree) {
+		messnamed("setpilot_tail", "padclear");
+		padFreeRoot = -1;
+		freePadTick();
+	} else {
+		messnamed("setpilot_tail", "pad", -1, padFreeRoot < 0 ? 0 : padFreeRoot, 0);
+		padFreeRoot = -1;
+		padSent = "";          // a medley's pads come back where they belong
+	}
+	send();
+}
+function freePadTick() {
+	var k = keyRootNow() || (padFreeRoot >= 0 ? { root: padFreeRoot, minor: padFreeQ == 2 } : { root: 0, minor: false });
+	var q = k.minor ? 2 : 1;
+	if (k.root == padFreeRoot && q == padFreeQ) return;
+	padFreeRoot = k.root; padFreeQ = q;
+	// beat -1: now, whether Live is playing or not
+	messnamed("setpilot_tail", "pad", -1, k.root, q);
+}
+
 function medPadTick() {
 	if (!tailPresent()) return;
+	if (padFree) { freePadTick(); return; }
 	var md = playing && curSong >= 0 ? medOf(curSong) : null;
 	if (!md) {
 		if (padOn) { messnamed("setpilot_tail", "padclear"); padOn = false; padSent = ""; }
@@ -1955,7 +1998,8 @@ function send() {
 		fade ? (fade.dir < 0 ? 1 : 2) : (faded ? 1 : 0), pre ? 1 : 0,
 		(arrCur && arrCur.song == curSong) ? arrCur.k : (!playing && arrHint && arrHint.song == curSong ? arrHint.k : -1),
 		q && q.arrK != null ? q.arrK : -1, q && q.auto ? 1 : 0,
-		med ? med.i : -1, med ? med.k : -1, q && q.medK != null ? q.medK : (q && q.medStart != null ? 0 : -1)
+		med ? med.i : -1, med ? med.k : -1, q && q.medK != null ? q.medK : (q && q.medStart != null ? 0 : -1),
+		padFree ? 1 : 0
 	];
 	var key = msg.slice(2).join(" ");
 	// the dashboard runs its own clock between messages: the time alone is sent 20 times a second

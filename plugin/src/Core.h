@@ -55,7 +55,7 @@ struct ClickParams {
 
 // Commands from the app. The network thread pushes, the audio thread pops.
 struct Command {
-	enum Type { None, ClickSet, CueSlot, CueArm, CueDisarm, CuePlay, GateArm, GateNow, TailLoad, TailPlay, TailStop, PadEvent, PadClear } type = None;
+	enum Type { None, ClickSet, CueSlot, CueArm, CueDisarm, CuePlay, GateArm, GateNow, TailLoad, TailPlay, TailStop, PadEvent, PadClear, PadLoad } type = None;
 	int idx = 0;
 	double beat = 0, a = 0, b = 0, c = 0, d = 0;
 	ClickParams click;
@@ -125,6 +125,8 @@ public:
 	double cueArmBeat() const { return cueArm; }
 	float gateGain() const { return gate; }
 	float padLevel() const { return padAmp; }
+	int padLoopRoot() const { return padCur >= 0 ? padVoice[(size_t)padCur].root : -1; }
+	bool padHasLoops() const { for (auto& s : padBank) if (s) return true; return false; }
 	double padFreq(int i) const { return padOsc[(size_t)i].freq; }
 
 private:
@@ -160,8 +162,10 @@ private:
 					tailPlayed = 0;
 					break;
 				case Command::TailStop: tailStopping = true; break;
-				case Command::PadEvent: addPadEvent(c.beat, (int)c.a, (int)c.b); break;
+				// beat < 0: now (the Pad button), playing or stopped
+				case Command::PadEvent: if (c.beat < 0) padChord((((int)c.a % 12) + 12) % 12, (int)c.b); else addPadEvent(c.beat, (int)c.a, (int)c.b); break;
 				case Command::PadClear: padEvN = 0; padAmpTarget = 0; break;
+				case Command::PadLoad: if (c.idx >= 0 && c.idx < 12) padBank[(size_t)c.idx] = c.sample; break;
 				case Command::None: break;
 			}
 		}
@@ -316,6 +320,13 @@ private:
 	float padAmp = 0, padAmpTarget = 0;
 	double lpL1 = 0, lpL2 = 0, lpR1 = 0, lpR2 = 0;
 	bool padHasChord = false;
+	// recorded pads, one loop per key (C = 0): when the key has one, it plays
+	// instead of the synth; a change of key crossfades from one loop to the next
+	std::array<SamplePtr, 12> padBank{};
+	struct PadVoice { SamplePtr s; int root = -1; double pos = 0; float g = 0, gTarget = 0; };
+	std::array<PadVoice, 2> padVoice{};
+	int padCur = -1;
+	bool padSampled = false;
 
 	void addPadEvent(double beat, int root, int q) {
 		if (padEvN >= (int)padEv.size()) return;
@@ -326,6 +337,24 @@ private:
 
 	void padChord(int root, int q) {
 		if (q == 0) { padAmpTarget = 0; return; }
+		if (padBank[(size_t)root]) {
+			const bool fresh = !padSampled || padAmp < 0.001f;
+			if (padCur < 0 || padVoice[(size_t)padCur].root != root || fresh) {
+				const int nx = padCur < 0 ? 0 : 1 - padCur;
+				if (padCur >= 0) padVoice[(size_t)padCur].gTarget = 0;
+				auto& v = padVoice[(size_t)nx];
+				// a new pad starts at a point of its loop that moves on each time, so it never sounds the same twice
+				v.s = padBank[(size_t)root]; v.root = root;
+				v.pos = fresh ? 0 : std::fmod(padVoice[(size_t)std::max(0, padCur)].pos, (double)v.s->size());
+				v.g = fresh ? 1.0f : 0.0f; v.gTarget = 1.0f;
+				if (fresh && padCur >= 0) padVoice[(size_t)padCur].g = 0;
+				padCur = nx;
+			}
+			padSampled = true;
+			padAmpTarget = 1;
+			return;
+		}
+		padSampled = false;
 		int r = 48 + root;                // C3..B3, the top of a voicing that stays warm
 		if (root > 7) r -= 12;
 		const int third = q == 2 ? 3 : 4;
@@ -355,6 +384,7 @@ private:
 			}
 		}
 		if (padAmp <= 0 && padAmpTarget <= 0) return;
+		if (padSampled) { renderPadLoops(out, numCh, n); return; }
 		const double sr = sampleRate;
 		const float up = (float)(1.0 / (1.2 * sr)), down = (float)(1.0 / (2.0 * sr));
 		const double glide = 1.0 - std::exp(-1.0 / (0.12 * sr));
@@ -377,6 +407,39 @@ private:
 			if (numCh > 1) out[1][i] += (float)(lpR2 * g);
 		}
 		if (padAmp <= 0 && padAmpTarget <= 0) { padHasChord = false; lpL1 = lpL2 = lpR1 = lpR2 = 0; }
+	}
+
+	void renderPadLoops(float* const* out, int numCh, int n) {
+		const double sr = sampleRate;
+		const float up = (float)(1.0 / (1.2 * sr)), down = (float)(1.0 / (2.0 * sr));
+		const float xf = (float)(1.0 / (1.5 * sr));     // one key into the next: 1.5 s
+		for (int i = 0; i < n; ++i) {
+			if (padAmp < padAmpTarget) padAmp = std::min(padAmpTarget, padAmp + up);
+			else if (padAmp > padAmpTarget) padAmp = std::max(padAmpTarget, padAmp - down);
+			float l = 0, r = 0;
+			for (auto& v : padVoice) {
+				if (!v.s || v.s->size() < 2) continue;
+				if (v.g < v.gTarget) v.g = std::min(v.gTarget, v.g + xf);
+				else if (v.g > v.gTarget) v.g = std::max(v.gTarget, v.g - xf);
+				if (v.g <= 0 && v.gTarget <= 0) continue;
+				const Sample& smp = *v.s;
+				const size_t p = (size_t)v.pos;
+				// equal power between the two keys
+				const float eg = std::sin(v.g * 1.5707963f);
+				l += smp.l[p] * eg;
+				r += (smp.r.empty() ? smp.l[p] : smp.r[p]) * eg;
+				v.pos += 1;
+				if (v.pos >= (double)smp.size()) v.pos -= (double)smp.size();   // the loop's own crossfade makes the seam
+			}
+			const float g = 0.8f * padAmp * padAmp;
+			out[0][i] += l * g;
+			if (numCh > 1) out[1][i] += r * g;
+		}
+		if (padAmp <= 0 && padAmpTarget <= 0) {
+			padSampled = false;
+			for (auto& v : padVoice) { v.g = v.gTarget = 0; v.root = -1; }
+			padCur = -1;
+		}
 	}
 };
 
