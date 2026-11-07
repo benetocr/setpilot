@@ -1954,7 +1954,7 @@
     $("optClickMute").checked = c.muteSong !== 0;
     setSeg("optClickSound", c.sound || 0);
     setSeg("optClickSub", c.sub || 1);
-    var levels = [c.acc, c.beat, c.subl, c.gain];
+    var levels = [c.acc, c.beat, c.subl, c.gain, c.pad == null ? 80 : c.pad];
     Array.prototype.forEach.call(document.querySelectorAll("[data-level]"), function (r) {
       if (document.activeElement !== r) r.value = levels[+r.dataset.level] != null ? levels[+r.dataset.level] : 100;
     });
@@ -2092,6 +2092,9 @@
     send("clickaccent", +b.dataset.b, next);
   });
   Array.prototype.forEach.call(document.querySelectorAll("[data-level]"), function (r) {
+    // heard while it moves (a few times a second), and once more where it stops
+    var last = 0;
+    r.addEventListener("input", function () { var n = Date.now(); if (n - last > 90) { last = n; send("clicklevel", +r.dataset.level, +r.value); } });
     r.addEventListener("change", function () { send("clicklevel", +r.dataset.level, +r.value); });
   });
   $("optClickOn").addEventListener("change", function () { send("clickon", this.checked ? 1 : 0); });
@@ -2716,35 +2719,77 @@
   $("btnSetlist").addEventListener("click", function () { $("app").classList.toggle("setlist-open"); });
   $("scrim").addEventListener("click", closeSetlist);
 
+  // Settings: a whole screen that drops from the top, its sections listed on
+  // the left (a row of tabs on a phone); tapping one scrolls to it.
+  function openSettings() {
+    send("routeopts");
+    var el = $("settings");
+    el.classList.remove("closing");
+    el.hidden = false;
+    $("btnSettings").setAttribute("aria-expanded", "true");
+    updateSettings();
+    $("setBody").scrollTop = 0;
+    markSetNav("general");
+    setTimeout(function () { try { $("setClose").focus({ preventScroll: true }); } catch (e) { } }, 60);
+  }
+  function closeSettings() {
+    var el = $("settings");
+    if (el.hidden || el.classList.contains("closing")) return;
+    $("btnSettings").setAttribute("aria-expanded", "false");
+    if (reduceMotion) { el.hidden = true; return; }
+    el.classList.add("closing");
+    setTimeout(function () { el.hidden = true; el.classList.remove("closing"); }, 300);
+  }
+  function markSetNav(sec) {
+    Array.prototype.forEach.call($("setNav").children, function (b) {
+      var on = b.dataset.go === sec;
+      b.classList.toggle("on", on);
+      if (on && b.scrollIntoView && window.innerWidth <= 760) try { b.scrollIntoView({ inline: "nearest", block: "nearest" }); } catch (e) { }
+    });
+  }
   $("btnSettings").addEventListener("click", function (e) {
     e.stopPropagation();
-    send("routeopts");
-    var open = $("settings").hidden;
-    $("settings").hidden = !open;
-    $("btnSettings").setAttribute("aria-expanded", open ? "true" : "false");
-    if (open) updateSettings();
+    if ($("settings").hidden) openSettings(); else closeSettings();
   });
-  document.addEventListener("click", function (e) {
-    if (!$("settings").hidden && !e.target.closest("#settings") && !e.target.closest("#btnSettings")) $("settings").hidden = true;
+  $("setClose").addEventListener("click", closeSettings);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !$("settings").hidden) closeSettings(); });
+  $("setNav").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-go]");
+    if (!b) return;
+    var sec = $("set-" + b.dataset.go);
+    if (!sec) return;
+    markSetNav(b.dataset.go);
+    navLock = Date.now();
+    $("setBody").scrollTo({ top: sec.offsetTop - $("setBody").offsetTop - 12, behavior: reduceMotion ? "auto" : "smooth" });
   });
-  $("btnRefresh").addEventListener("click", function () { send("refresh"); $("settings").hidden = true; });
+  var navLock = 0;
+  $("setBody").addEventListener("scroll", function () {
+    if (Date.now() - navLock < 700) return;
+    var body = $("setBody"), top = body.scrollTop + 40, cur = "general";
+    Array.prototype.forEach.call(body.querySelectorAll(".set-group"), function (g) { if (g.offsetTop - body.offsetTop <= top) cur = g.dataset.sec; });
+    if (body.scrollTop + body.clientHeight >= body.scrollHeight - 4) { var all = body.querySelectorAll(".set-group"); cur = all[all.length - 1].dataset.sec; }
+    markSetNav(cur);
+  }, { passive: true });
+  $("btnRefresh").addEventListener("click", function () { send("refresh"); closeSettings(); });
   $("btnFullscreen").addEventListener("click", function () {
     var d = document.documentElement;
     if (document.fullscreenElement) document.exitFullscreen();
     else if (d.requestFullscreen) d.requestFullscreen();
     else if (d.webkitRequestFullscreen) d.webkitRequestFullscreen();
-    $("settings").hidden = true;
+    closeSettings();
   });
 
   document.addEventListener("keydown", function (e) {
     var k = e.key;
     if (k !== "Escape" && e.target.matches && e.target.matches("input, textarea, select")) return;
+    // the settings screen keeps the keys to itself (Escape closes it)
+    if (!$("settings").hidden) return;
     if (k === " ") { e.preventDefault(); send("toggle"); }
     else if (k === "ArrowRight") send("nextsec");
     else if (k === "ArrowLeft") send("prevsec");
     else if (k === "ArrowDown") { e.preventDefault(); send("nextsong"); }
     else if (k === "ArrowUp") { e.preventDefault(); send("prevsong"); }
-    else if (k === "Escape") { send("cancel"); $("sheet").hidden = true; $("settings").hidden = true; $("tkSheet").hidden = true; $("addSheet").hidden = true; $("trSheet").hidden = true; $("mixSheet").hidden = true; }
+    else if (k === "Escape") { send("cancel"); $("sheet").hidden = true; $("tkSheet").hidden = true; $("addSheet").hidden = true; $("trSheet").hidden = true; $("mixSheet").hidden = true; }
     else if (k === "l" || k === "L" || k === "i" || k === "I") { if (pos && pos.song >= 0) send("loop", pos.song, pos.sec); }
     else if (k === "r" || k === "R") { if (pos && pos.song >= 0) send("repeat", pos.song, pos.sec); }
     else if (k === "t" || k === "T") openTk("tempo");

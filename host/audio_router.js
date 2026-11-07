@@ -95,6 +95,7 @@ class AudioRouter {
 			// pads between the keys of a medley: chords on beats (root 0-11, quality 1 major, 2 minor, 0 off)
 			else if (m === "pad") this.send("tail", { t: "padev", beat: Number(r[0]), root: Number(r[1]), q: Number(r[2]) });
 			else if (m === "padclear") this.send("tail", { t: "padclear" });
+			else if (m === "padlevel") { s.padLevel = Number(r[0]); this.send("tail", { t: "padlevel", v: s.padLevel }); }
 		}
 	}
 
@@ -127,6 +128,7 @@ class AudioRouter {
 			else if (s.gateNow != null) this.send("guide", { t: "gatenow", v: s.gateNow });
 		} else if (role === "tail") {
 			if (s.tailPath) this.send("tail", { t: "tailload", path: s.tailPath });
+			if (s.padLevel != null) this.send("tail", { t: "padlevel", v: s.padLevel });
 			if (this.pads) for (const p of this.pads.list) this.send("tail", { t: "padload", root: p.root, path: require("path").join(this.pads.dir, p.file), len: p.length });
 		}
 	}

@@ -55,7 +55,7 @@ struct ClickParams {
 
 // Commands from the app. The network thread pushes, the audio thread pops.
 struct Command {
-	enum Type { None, ClickSet, CueSlot, CueArm, CueDisarm, CuePlay, GateArm, GateNow, TailLoad, TailPlay, TailStop, PadEvent, PadClear, PadLoad } type = None;
+	enum Type { None, ClickSet, CueSlot, CueArm, CueDisarm, CuePlay, GateArm, GateNow, TailLoad, TailPlay, TailStop, PadEvent, PadClear, PadLoad, PadLevel } type = None;
 	int idx = 0;
 	double beat = 0, a = 0, b = 0, c = 0, d = 0;
 	ClickParams click;
@@ -166,6 +166,7 @@ private:
 				case Command::PadEvent: if (c.beat < 0) padChord((((int)c.a % 12) + 12) % 12, (int)c.b); else addPadEvent(c.beat, (int)c.a, (int)c.b); break;
 				case Command::PadClear: padEvN = 0; padAmpTarget = 0; break;
 				case Command::PadLoad: if (c.idx >= 0 && c.idx < 12) padBank[(size_t)c.idx] = c.sample; break;
+				case Command::PadLevel: padGain = std::max(0.0f, std::min(1.5f, (float)c.a)); break;
 				case Command::None: break;
 			}
 		}
@@ -326,6 +327,7 @@ private:
 	struct PadVoice { SamplePtr s; int root = -1; double pos = 0; float g = 0, gTarget = 0; };
 	std::array<PadVoice, 2> padVoice{};
 	int padCur = -1;
+	float padGain = 0.8f;      // the pad's own level (Settings > Pad), 1 = as recorded
 	bool padSampled = false;
 
 	void addPadEvent(double beat, int root, int q) {
@@ -402,7 +404,7 @@ private:
 			}
 			lpL1 += (l - lpL1) * a; lpL2 += (lpL1 - lpL2) * a;
 			lpR1 += (r - lpR1) * a; lpR2 += (lpR1 - lpR2) * a;
-			const double g = 0.09 * padAmp * padAmp;
+			const double g = 0.1125 * padGain * padAmp * padAmp;
 			out[0][i] += (float)(lpL2 * g);
 			if (numCh > 1) out[1][i] += (float)(lpR2 * g);
 		}
@@ -431,7 +433,7 @@ private:
 				v.pos += 1;
 				if (v.pos >= (double)smp.size()) v.pos -= (double)smp.size();   // the loop's own crossfade makes the seam
 			}
-			const float g = 0.8f * padAmp * padAmp;
+			const float g = padGain * padAmp * padAmp;
 			out[0][i] += l * g;
 			if (numCh > 1) out[1][i] += r * g;
 		}

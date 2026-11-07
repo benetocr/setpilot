@@ -48,131 +48,157 @@
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>
       </button>
     </div>
-    <div class="popover" id="settings" hidden>
-      <div class="set-group">
-        <p class="set-title" data-i18n="setGeneral">General</p>
-        <div class="set-row column">
-          <span><strong data-i18n="trDefault">When a song ends</strong></span>
-          <div class="tr-pick" id="optTrDefault" role="radiogroup"></div>
-          <small class="set-help" data-i18n="trDefaultHelp"></small>
-        </div>
-        <div class="set-row">
-          <span data-i18n="layout">Layout</span>
-          <div class="seg-ctl small" id="optLayout" role="radiogroup">
-            <button data-v="stage" role="radio" data-i18n="layoutStageShort">Stage</button>
-            <button data-v="console" role="radio" data-i18n="layoutConsoleShort">Console</button>
-          </div>
-        </div>
-        <div class="set-row">
-          <span data-i18n="language">Language</span>
-          <div class="seg-ctl small" id="optLang" role="radiogroup">
-            <button data-v="en" role="radio">English</button>
-            <button data-v="es" role="radio">Español</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="set-group">
-        <p class="set-title" data-i18n="setCues">Voice cues</p>
-        <div class="seg-ctl" id="optCueMode" role="radiogroup">
-          <button data-v="2" role="radio" data-i18n="cueAll">SetPilot</button>
-          <button data-v="1" role="radio" data-i18n="cueFix">Fix the Guide</button>
-          <button data-v="0" role="radio" data-i18n="cueOff">Off</button>
-        </div>
-        <p class="set-help" id="cueModeHelp"></p>
-        <div class="set-row">
-          <span data-i18n="cueSource">Source</span>
-          <div class="seg-ctl small" id="optCueSource" role="radiogroup">
-            <button data-v="1" role="radio" data-i18n="cueSrcGuide">The song's guide</button>
-            <button data-v="0" role="radio" data-i18n="cueSrcMac">Mac voice</button>
-          </div>
-        </div>
-        <p class="set-help" data-i18n="cueSourceHelp"></p>
-        <div class="set-row">
-          <span data-i18n="cueStyle">Style</span>
-          <div class="seg-ctl small" id="optCueStyle" role="radiogroup">
-            <button data-v="0" role="radio" data-i18n="cueStyleName">Name</button>
-            <button data-v="1" role="radio" data-i18n="cueStyleCount">Name, 2, 3, 4</button>
-          </div>
-        </div>
-        <div class="set-row">
-          <span data-i18n="anticipation">Lead time</span>
-          <div class="seg-ctl small" id="optCueBars" role="radiogroup">
-            <button data-v="1" role="radio" data-i18n="oneBar">1 bar</button>
-            <button data-v="2" role="radio" data-i18n="twoBars">2 bars</button>
-          </div>
-        </div>
-        <div class="set-row">
-          <span data-i18n="voiceLang">Voice</span>
-          <div class="seg-ctl small" id="optCueLang" role="radiogroup">
-            <button data-v="2" role="radio" data-i18n="english">English</button>
-            <button data-v="1" role="radio" data-i18n="spanish">Spanish</button>
-            <button data-v="0" role="radio" data-i18n="auto">Auto</button>
-          </div>
-        </div>
-        <p class="set-help" id="voiceInfo"></p>
-      </div>
-
-      <div class="set-group">
-        <p class="set-title" data-i18n="setClick">Click</p>
-        <label class="switch-row">
-          <span><strong data-i18n="clickOn">SetPilot click</strong><small data-i18n="clickOnHelp"></small></span>
-          <input type="checkbox" id="optClickOn" checked><i class="switch"></i>
-        </label>
-        <div class="set-row">
-          <span data-i18n="clickSound">Sound</span>
-          <div class="seg-ctl small" id="optClickSound" role="radiogroup">
-            <button data-v="0" role="radio" data-i18n="sBeep">Beep</button>
-            <button data-v="1" role="radio" data-i18n="sWood">Wood</button>
-            <button data-v="2" role="radio" data-i18n="sSoft">Soft</button>
-          </div>
-        </div>
-        <div class="set-row column">
-          <span data-i18n="subdivision">Subdivision</span>
-          <div class="seg-ctl" id="optClickSub" role="radiogroup">
-            <button data-v="1" role="radio" data-i18n="sub1">Quarter</button>
-            <button data-v="2" role="radio" data-i18n="sub2">Eighth</button>
-            <button data-v="3" role="radio" data-i18n="sub3">Triplet</button>
-            <button data-v="4" role="radio" data-i18n="sub4">16th</button>
-          </div>
-        </div>
-        <div class="set-row column">
-          <span data-i18n="accents">Beats</span>
-          <div class="beats" id="optAccents"></div>
-          <small class="set-help" data-i18n="accentsHelp"></small>
-        </div>
-        <div class="levels">
-          <label><span data-i18n="lvlMaster">Click level</span><input type="range" min="0" max="150" data-level="3"></label>
-          <label><span data-i18n="lvlAccent">Accent</span><input type="range" min="0" max="150" data-level="0"></label>
-          <label><span data-i18n="lvlBeat">Beat</span><input type="range" min="0" max="150" data-level="1"></label>
-          <label><span data-i18n="lvlSub">Subdivision</span><input type="range" min="0" max="150" data-level="2"></label>
-        </div>
-        <label class="switch-row">
-          <span><strong data-i18n="muteSongClick">Mute the songs' own click tracks</strong></span>
-          <input type="checkbox" id="optClickMute" checked><i class="switch"></i>
-        </label>
-      </div>
-
-      <div class="set-group">
-        <p class="set-title" data-i18n="setOutputs">Outputs per instrument</p>
-        <small class="set-help" data-i18n="outputsHelp"></small>
-        <div class="out-device" id="outDevice" hidden></div>
-        <div class="instr-list" id="optOutputs"></div>
-        <div class="out-btns">
-          <button class="text-btn" id="btnApplyOutputs" data-i18n="applyOutputs">Apply to all tracks now</button>
-          <button class="text-btn" id="btnRefreshOutputs" data-i18n="outRefresh">Look for outputs again</button>
-        </div>
-      </div>
-      <div class="set-group">
-        <p class="set-title" data-i18n="setSetup">Setup</p>
-        <ul class="setup" id="setupList"></ul>
-      </div>
-
-      <button class="text-btn" id="btnFullscreen" data-i18n="fullscreen">Full screen</button>
-      <button class="text-btn" id="btnRefresh" data-i18n="reload">Reload locators</button>
-      <p class="hint" id="addr"></p>
-    </div>
   </header>
+
+  <div class="settings" id="settings" role="dialog" aria-modal="true" aria-labelledby="setTitle" hidden>
+    <div class="set-shell">
+      <div class="set-head">
+        <h2 id="setTitle" data-i18n="settings">Settings</h2>
+        <button class="icon-btn" id="setClose" data-i18n-label="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <nav class="set-nav" id="setNav">
+        <button data-go="general" data-i18n="setGeneral">General</button>
+        <button data-go="cues" data-i18n="setCues">Voice cues</button>
+        <button data-go="click" data-i18n="setClick">Click</button>
+        <button data-go="pad" data-i18n="setPad">Pad</button>
+        <button data-go="outputs" data-i18n="setOutputsShort">Outputs</button>
+        <button data-go="setup" data-i18n="setSetup">Setup</button>
+      </nav>
+      <div class="set-body" id="setBody">
+    <section class="set-group" id="set-general" data-sec="general">
+      <p class="set-title" data-i18n="setGeneral">General</p>
+      <div class="set-row column">
+        <span><strong data-i18n="trDefault">When a song ends</strong></span>
+        <div class="tr-pick" id="optTrDefault" role="radiogroup"></div>
+        <small class="set-help" data-i18n="trDefaultHelp"></small>
+      </div>
+      <div class="set-row">
+        <span data-i18n="layout">Layout</span>
+        <div class="seg-ctl small" id="optLayout" role="radiogroup">
+          <button data-v="stage" role="radio" data-i18n="layoutStageShort">Stage</button>
+          <button data-v="console" role="radio" data-i18n="layoutConsoleShort">Console</button>
+        </div>
+      </div>
+      <div class="set-row">
+        <span data-i18n="language">Language</span>
+        <div class="seg-ctl small" id="optLang" role="radiogroup">
+          <button data-v="en" role="radio">English</button>
+          <button data-v="es" role="radio">Español</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="set-group" id="set-cues" data-sec="cues">
+      <p class="set-title" data-i18n="setCues">Voice cues</p>
+      <div class="seg-ctl" id="optCueMode" role="radiogroup">
+        <button data-v="2" role="radio" data-i18n="cueAll">SetPilot</button>
+        <button data-v="1" role="radio" data-i18n="cueFix">Fix the Guide</button>
+        <button data-v="0" role="radio" data-i18n="cueOff">Off</button>
+      </div>
+      <p class="set-help" id="cueModeHelp"></p>
+      <div class="set-row">
+        <span data-i18n="cueSource">Source</span>
+        <div class="seg-ctl small" id="optCueSource" role="radiogroup">
+          <button data-v="1" role="radio" data-i18n="cueSrcGuide">The song's guide</button>
+          <button data-v="0" role="radio" data-i18n="cueSrcMac">Mac voice</button>
+        </div>
+      </div>
+      <p class="set-help" data-i18n="cueSourceHelp"></p>
+      <div class="set-row">
+        <span data-i18n="cueStyle">Style</span>
+        <div class="seg-ctl small" id="optCueStyle" role="radiogroup">
+          <button data-v="0" role="radio" data-i18n="cueStyleName">Name</button>
+          <button data-v="1" role="radio" data-i18n="cueStyleCount">Name, 2, 3, 4</button>
+        </div>
+      </div>
+      <div class="set-row">
+        <span data-i18n="anticipation">Lead time</span>
+        <div class="seg-ctl small" id="optCueBars" role="radiogroup">
+          <button data-v="1" role="radio" data-i18n="oneBar">1 bar</button>
+          <button data-v="2" role="radio" data-i18n="twoBars">2 bars</button>
+        </div>
+      </div>
+      <div class="set-row">
+        <span data-i18n="voiceLang">Voice</span>
+        <div class="seg-ctl small" id="optCueLang" role="radiogroup">
+          <button data-v="2" role="radio" data-i18n="english">English</button>
+          <button data-v="1" role="radio" data-i18n="spanish">Spanish</button>
+          <button data-v="0" role="radio" data-i18n="auto">Auto</button>
+        </div>
+      </div>
+      <p class="set-help" id="voiceInfo"></p>
+    </section>
+
+    <section class="set-group" id="set-click" data-sec="click">
+      <p class="set-title" data-i18n="setClick">Click</p>
+      <label class="switch-row">
+        <span><strong data-i18n="clickOn">SetPilot click</strong><small data-i18n="clickOnHelp"></small></span>
+        <input type="checkbox" id="optClickOn" checked><i class="switch"></i>
+      </label>
+      <div class="set-row">
+        <span data-i18n="clickSound">Sound</span>
+        <div class="seg-ctl small" id="optClickSound" role="radiogroup">
+          <button data-v="0" role="radio" data-i18n="sBeep">Beep</button>
+          <button data-v="1" role="radio" data-i18n="sWood">Wood</button>
+          <button data-v="2" role="radio" data-i18n="sSoft">Soft</button>
+        </div>
+      </div>
+      <div class="set-row column">
+        <span data-i18n="subdivision">Subdivision</span>
+        <div class="seg-ctl" id="optClickSub" role="radiogroup">
+          <button data-v="1" role="radio" data-i18n="sub1">Quarter</button>
+          <button data-v="2" role="radio" data-i18n="sub2">Eighth</button>
+          <button data-v="3" role="radio" data-i18n="sub3">Triplet</button>
+          <button data-v="4" role="radio" data-i18n="sub4">16th</button>
+        </div>
+      </div>
+      <div class="set-row column">
+        <span data-i18n="accents">Beats</span>
+        <div class="beats" id="optAccents"></div>
+        <small class="set-help" data-i18n="accentsHelp"></small>
+      </div>
+      <div class="levels">
+        <label><span data-i18n="lvlMaster">Click level</span><input type="range" min="0" max="150" data-level="3"></label>
+        <label><span data-i18n="lvlAccent">Accent</span><input type="range" min="0" max="150" data-level="0"></label>
+        <label><span data-i18n="lvlBeat">Beat</span><input type="range" min="0" max="150" data-level="1"></label>
+        <label><span data-i18n="lvlSub">Subdivision</span><input type="range" min="0" max="150" data-level="2"></label>
+      </div>
+      <label class="switch-row">
+        <span><strong data-i18n="muteSongClick">Mute the songs' own click tracks</strong></span>
+        <input type="checkbox" id="optClickMute" checked><i class="switch"></i>
+      </label>
+    </section>
+
+    <section class="set-group" id="set-pad" data-sec="pad">
+      <p class="set-title" data-i18n="setPad">Pad</p>
+      <small class="set-help" data-i18n="padSetHelp"></small>
+      <div class="levels">
+        <label><span data-i18n="lvlPad">Pad level</span><input type="range" min="0" max="150" data-level="4"></label>
+      </div>
+    </section>
+
+    <section class="set-group" id="set-outputs" data-sec="outputs">
+      <p class="set-title" data-i18n="setOutputs">Outputs per instrument</p>
+      <small class="set-help" data-i18n="outputsHelp"></small>
+      <div class="out-device" id="outDevice" hidden></div>
+      <div class="instr-list" id="optOutputs"></div>
+      <div class="out-btns">
+        <button class="text-btn" id="btnApplyOutputs" data-i18n="applyOutputs">Apply to all tracks now</button>
+        <button class="text-btn" id="btnRefreshOutputs" data-i18n="outRefresh">Look for outputs again</button>
+      </div>
+    </section>
+    <section class="set-group" id="set-setup" data-sec="setup">
+      <p class="set-title" data-i18n="setSetup">Setup</p>
+      <ul class="setup" id="setupList"></ul>
+      <div class="set-more">
+        <button class="text-btn" id="btnFullscreen" data-i18n="fullscreen">Full screen</button>
+        <button class="text-btn" id="btnRefresh" data-i18n="reload">Reload locators</button>
+      </div>
+      <p class="hint" id="addr"></p>
+    </section>
+      </div>
+    </div>
+  </div>
 
   <aside class="setlist" id="setlist">
     <div class="setlist-head">

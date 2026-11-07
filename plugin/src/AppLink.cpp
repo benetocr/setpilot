@@ -175,6 +175,9 @@ void AppLink::handle(const juce::var& m) {
 		c.a = (double)m.getProperty("root", 0); c.b = (double)m.getProperty("q", 0);
 	} else if (t == "padclear") {
 		c.type = sp::Command::PadClear;
+	} else if (t == "padlevel") {
+		c.type = sp::Command::PadLevel;
+		c.a = (double)m.getProperty("v", 0.8);
 	} else if (t == "padload") {
 		// one recorded pad loop: exactly "len" samples of the file loop (encoders pad the end)
 		c.type = sp::Command::PadLoad;

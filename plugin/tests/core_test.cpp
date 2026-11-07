@@ -210,6 +210,14 @@ static void testRecordedPads() {
 	ev(-1, 4, 1);
 	r.go(1.5);
 	CHECK(std::fabs(r.core.padFreq(1) - 164.81) < 1.0 && r.core.padLevel() > 0.5f, "E has no loop: the synth plays it");
+	// the pad's level (Settings > Pad)
+	ev(-1, 9, 1);
+	r.go(2.0);
+	const double loud = rms(r.L, (long)r.L.size() - 24000, (long)r.L.size());
+	{ Command c; c.type = Command::PadLevel; c.a = 0.4; r.core.push(c); }
+	r.go(0.5);
+	const double soft = rms(r.L, (long)r.L.size() - 12000, (long)r.L.size());
+	CHECK(soft < loud * 0.6 && soft > loud * 0.4, "the pad level turns it down (half)");
 }
 
 int main() {

@@ -98,7 +98,7 @@ var mutedGuide = {}, mutedClick = {};
 var gateTrackId = 0, gateSeen = -99999, clickTrackId = 0, clickSeen = -99999, lastPing = -99999;
 
 // click settings (sent to SetPilot Click)
-var click = { on: 1, sound: 0, sub: 1, accents: [2, 1, 1, 1], acc: 100, beat: 75, subl: 45, gain: 80, muteSong: 1 };
+var click = { on: 1, sound: 0, sub: 1, accents: [2, 1, 1, 1], acc: 100, beat: 75, subl: 45, gain: 80, muteSong: 1, pad: 80 };
 
 // per song tempo and key: name -> { bpm: 0 (= original) | bpm, semis: 0 }
 var songOpts = {};
@@ -1822,6 +1822,7 @@ function tailhello() {
 	var was = tailPresent();
 	tailTrackId = lastNum(arguments);
 	tailSeen = clock;
+	if (!was) sendPadLevel();
 	if (!was) { loadedTail = ""; log("tail player on track " + tailTrackId); tailDirty = true; warnedTail = {}; scanTracks(); publishStruct(); }
 }
 
@@ -3052,8 +3053,10 @@ function applyClickMutes() {
 	muteTracks(clickIds, v, mutedClick);
 }
 
+function sendPadLevel() { messnamed("setpilot_tail", "padlevel", (click.pad == null ? 80 : click.pad) / 100); }
 function clickChanged() {
 	sendClick();
+	sendPadLevel();
 	applyClickMutes();
 	saveStore();
 	publishStruct();
@@ -3072,7 +3075,7 @@ function clickaccent(i, state) {
 }
 function clicklevel(which, v) {
 	v = Math.max(0, Math.min(150, parseInt(v, 10) || 0));
-	var k = ["acc", "beat", "subl", "gain"][parseInt(which, 10)];
+	var k = ["acc", "beat", "subl", "gain", "pad"][parseInt(which, 10)];
 	if (!k) return;
 	click[k] = v;
 	clickChanged();

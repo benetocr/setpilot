@@ -1400,3 +1400,49 @@ html[data-layout="console"] .app.is-empty .transport, html[data-layout="console"
 .out-btns { display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .pad-btn.on { background: var(--live); border-color: var(--live); color: #0d1a12; }
 html[data-layout="stage"] .pad-btn span { display: inline; }
+
+/* ============================================================= settings: a full screen that drops in */
+.settings { position: fixed; inset: 0; z-index: 80; display: block; background: var(--stage); overflow: hidden;
+  animation: set-drop .52s cubic-bezier(.2, 1.15, .32, 1) both; }
+.settings[hidden] { display: none; }
+.settings.closing { animation: set-lift .3s cubic-bezier(.5, 0, .75, 0) both; }
+@keyframes set-drop { from { transform: translateY(-100%); } to { transform: none; } }
+@keyframes set-lift { from { transform: none; } to { transform: translateY(-100%); } }
+.settings .set-group { animation: set-in .5s .12s var(--ease) both; }
+@keyframes set-in { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .settings, .settings.closing, .settings .set-group { animation-duration: .01s; animation-delay: 0s; }
+}
+.set-shell { height: 100%; display: grid; grid-template-columns: 240px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "head head" "nav body"; max-width: 1180px; margin: 0 auto; }
+.set-head { grid-area: head; display: flex; align-items: center; justify-content: space-between;
+  padding: calc(18px + env(safe-area-inset-top)) 28px 14px; border-bottom: 1px solid var(--edge); }
+.set-head h2 { margin: 0; font-size: 30px; font-weight: 780; font-stretch: 86%; letter-spacing: -.01em; }
+.set-nav { grid-area: nav; display: flex; flex-direction: column; gap: 4px; padding: 22px 14px 22px 22px; overflow-y: auto; }
+.set-nav button { text-align: left; border: 0; background: transparent; color: var(--dim); font: inherit; font-size: 16px; font-weight: 650;
+  padding: 12px 16px; border-radius: 12px; }
+.set-nav button:hover { background: var(--deck); color: var(--text); }
+.set-nav button.on { background: var(--deck); color: var(--text); box-shadow: inset 3px 0 0 var(--live); }
+.set-body { grid-area: body; overflow-y: auto; overscroll-behavior: contain; padding: 18px 28px calc(60px + env(safe-area-inset-bottom)); scroll-behavior: smooth;
+  display: grid; gap: 16px; align-content: start; }
+.settings .set-group { border: 0; padding: 20px 22px 22px; border-radius: 20px; background: var(--deck); box-shadow: inset 0 0 0 1px var(--edge); scroll-margin-top: 12px; max-width: 760px; }
+.settings .set-title { font-size: 20px; font-weight: 760; margin-bottom: 6px; }
+.settings .set-row { font-size: 15px; }
+.settings .levels label { grid-template-columns: 150px 1fr; font-size: 14px; }
+.settings .instr-list { max-height: none; }
+.settings .set-more { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.settings .set-more .text-btn { width: auto; background: var(--raise); padding: 11px 16px; }
+.settings .hint { margin: 12px 0 0; }
+@media (max-width: 760px) {
+  .set-shell { grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "nav" "body"; grid-template-rows: auto auto minmax(0, 1fr); }
+  .set-head { padding: calc(12px + env(safe-area-inset-top)) 16px 10px; }
+  .set-head h2 { font-size: 24px; }
+  .set-nav { flex-direction: row; overflow-x: auto; padding: 10px 12px; gap: 6px; scrollbar-width: none; border-bottom: 1px solid var(--edge); }
+  .set-nav::-webkit-scrollbar { display: none; }
+  .set-nav button { flex: none; padding: 9px 14px; font-size: 15px; background: var(--deck); }
+  .set-nav button.on { box-shadow: inset 0 -3px 0 var(--live); }
+  .set-body { padding: 12px 12px calc(40px + env(safe-area-inset-bottom)); gap: 12px; }
+  .settings .set-group { padding: 16px; border-radius: 16px; }
+  .settings .levels label { grid-template-columns: 110px 1fr; }
+  .settings .instr-row { grid-template-columns: 1fr; gap: 4px; }
+}
