@@ -3,7 +3,7 @@ const assert = require("assert");
 const { partName } = require("../core/cue_words.js");
 const cases = [
 	["Verse one.", "Verse 1"], [" Verse 2", "Verse 2"], ["Chorus!", "Chorus"], ["Pre-chorus.", "Pre-Chorus"], ["Bridge", "Bridge"],
-	["Coro", "Chorus"], ["Verso dos.", "Verse 2"], ["Puente.", "Bridge"], ["Pre coro", "Pre-Chorus"], ["Precoro.", "Pre-Chorus"], ["Final.", "Ending"],
+	["Coro", "Chorus"], ["Verso dos.", "Verse 2"], ["Puente.", "Bridge"], ["Pune. Pune.", "Bridge"], ["Pre coro", "Pre-Chorus"], ["Precoro.", "Pre-Chorus"], ["Final.", "Ending"],
 	["Interludio", "Interlude"], ["Instrumental.", "Instrumental"], ["Tag.", "Tag"], ["Intro", "Intro"], ["Introducción", "Intro"],
 	["Verse, one, two, three, four.", "Verse"], ["One, two, one, two, three, four.", "Count In"], ["Uno, dos, uno, dos, tres, cuatro.", "Count In"],
 	["1, 2, 1, 2, 3, 4", "Count In"], ["Turnaround", "Turnaround"], ["Ending.", "Ending"], ["Outro", "Outro"], ["Chorus 2", "Chorus 2"],

@@ -14,7 +14,7 @@
     [/\b(intro|introduccion|introduction)\b/, "Intro"],
     [/\b(verse|verses|verso|versos|estrofa|verse's)\b/, "Verse"],
     [/\b(chorus|choruses|coro|coros|chorale|core)\b/, "Chorus"],
-    [/\b(bridge|bridges|puente|puentes)\b/, "Bridge"],
+    [/\b(bridge|bridges|puente|puentes|pune|puent|fuente)\b/, "Bridge"],
     [/\b(interlude|interludio)\b/, "Interlude"],
     [/\b(instrumental)\b/, "Instrumental"],
     [/\b(refrain|refran|estribillo)\b/, "Refrain"],
