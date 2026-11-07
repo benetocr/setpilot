@@ -63,8 +63,12 @@ function makeSet(dir, title, bpm, beats) {
 			assert.ok(events.some(e => e.kind === "done"), "imported " + f);
 			await sleep(1200);
 		}
+		events.length = 0;
+		assert.ok((await post("/song", { action: "click", name: "Pad Time", bpm: 66, key: "E", bars: 0 })).ok);
+		await waitImport();
+		await sleep(1500);
 		let st = await get("/state");
-		assert.deepStrictEqual(st.struct.songs.map(s => s.name), ["Song A", "Song B"]);
+		assert.deepStrictEqual(st.struct.songs.map(s => s.name), ["Song A", "Song B", "Pad Time"]);
 		const bi = st.struct.songs.findIndex(s => s.name === "Song B");
 		await post("/cmd", { cmd: "keyset", args: [bi, 2] });
 		await sleep(1500);
@@ -72,7 +76,8 @@ function makeSet(dir, title, bpm, beats) {
 		assert.ok(sv.ok && sv.missing === 0, "saved: " + JSON.stringify(sv));
 		const list = (await get("/sets")).sets;
 		assert.strictEqual(list.length, 1);
-		assert.deepStrictEqual(list[0].songs.map(s => s.name), ["Song A", "Song B"]);
+		assert.deepStrictEqual(list[0].songs.map(s => s.name), ["Song A", "Song B", "Pad Time"]);
+		assert.ok(list[0].songs[2].click, "the click song is kept as one");
 		ok("a setlist is saved with where each song came from");
 		assert.strictEqual((await post("/sets/open", { id: "sunday" })).error, "not_empty", "only into an empty set");
 
@@ -90,10 +95,12 @@ function makeSet(dir, title, bpm, beats) {
 		assert.ok(fin && !(fin.skipped || []).length, "opened: " + JSON.stringify(events.filter(e => e.ev === "setload")));
 		await sleep(1500);
 		st = await get("/state");
-		assert.deepStrictEqual(st.struct.songs.map(s => s.name), ["Song A", "Song B"]);
+		assert.deepStrictEqual(st.struct.songs.map(s => s.name), ["Song A", "Song B", "Pad Time"]);
+		const pt = st.struct.songs.find(s => s.name === "Pad Time");
+		assert.ok(pt.clk && pt.clk.bars === 0 && pt.bpm === 66 && pt.key === "E", "the click song comes back: " + JSON.stringify(pt).slice(0, 200));
 		const sB = st.struct.songs.find(s => s.name === "Song B");
 		assert.strictEqual(sB.semis, 2, "Song B keeps its key change: " + JSON.stringify(sB).slice(0, 300));
-		ok("opening it in an empty set brings the songs back, in order, with their settings");
+		ok("opening it in an empty set brings the songs (and the click song) back, in order, with their settings");
 		console.log("\nall passing");
 	} catch (e) { bad++; console.log("FAIL " + e.message); }
 	await h.stop();

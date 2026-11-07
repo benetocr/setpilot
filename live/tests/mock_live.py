@@ -445,7 +445,12 @@ class Song(Observable):
 
     def advance(self, ms):
         if self.is_playing:
-            self.current_song_time = self.current_song_time + ms / 1000.0 * self.tempo / 60.0
+            # like Live: playing goes on past the end of the set, and wraps in the loop
+            t = self.current_song_time + ms / 1000.0 * self.tempo / 60.0
+            ls, ll = float(self.loop_start), float(self.loop_length)
+            if self.loop and ll > 0 and self.current_song_time < ls + ll <= t:
+                t -= ll
+            Observable.__setattr__(self, "current_song_time", t)
 
 
 def demo_song():

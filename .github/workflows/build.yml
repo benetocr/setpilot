@@ -25,6 +25,7 @@ jobs:
       - run: node dev/test_autoprep.js
       - run: node dev/test_sets.js
       - run: node dev/test_audio_devices.js
+      - run: node dev/test_songs.js
       - run: g++ -std=c++17 -O2 -I plugin/src plugin/tests/core_test.cpp -o core_test && ./core_test
 
   plugin-mac:

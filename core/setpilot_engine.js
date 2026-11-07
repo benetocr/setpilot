@@ -435,6 +435,8 @@ function publishStruct() {
 		songs[si].baseBpm = baseBpm(si);
 		songs[si].tr = o.tr || 0;
 		songs[si].auto = o.auto || null;
+		songs[si].clk = o.clk || null;
+		if (o.clk && songs[si].sections.length == 1 && songs[si].sections[0].implicit) songs[si].sections[0].name = "Click";
 		songs[si].arr = arrOf(si);
 		songs[si].trEff = trMode(si);
 		songs[si].med = o.med ? { id: o.med.id, key: o.med.key, parts: o.med.parts, seams: o.med.seams, spec: o.med.spec } : null;
@@ -700,6 +702,7 @@ function tick() {
 	guard("medtempo", medTempoTick)();
 	guard("listen", listenTick)();
 	guard("medpad", medPadTick)();
+	guard("clicksong", clkTick)();
 	if (medPlace) guard("medplace", runMedPlace)();
 	if (clock - lastTrackScan > 3000) { lastTrackScan = clock; scanTracks(); }
 	if (clock - lastPing > 3000) { lastPing = clock; ping(); }
@@ -1004,6 +1007,8 @@ function medleyApply(o) {
 	if (!o) return;
 	if (o.action == "build") { medBuild(o); return; }
 	if (o.action == "unbuild") { medUnbuild(o); return; }
+	if (o.action == "songdelete") { songDelete(o); return; }
+	if (o.action == "clicksong") { clickSong(o.song || {}); return; }
 	var mi = medIndex(o.id);
 	if (o.action == "delete") {
 		if (mi < 0) return;
@@ -1359,6 +1364,78 @@ function medUnbuild(o) {
 	log("medley delete: " + songs[s].name);
 }
 
+// A song out of the setlist and out of Live: its clips and locators go (the
+// space it took stays empty). A built medley goes the same way.
+function songDelete(o) {
+	if (job || playing) { log("song delete: stop first"); return; }
+	var s = songIndex(String(o.name || ""));
+	if (s < 0) return;
+	var nm = songs[s].name;
+	var rg = songRange(s), steps = [{ type: "rmclips", from: rg[0], to: rg[1] }], oc = readCues();
+	for (var c = 0; c < oc.length; c++) if (oc[c].time >= rg[0] - 0.001 && oc[c].time < rg[1] - 0.001) steps.push({ type: "uncue", time: oc[c].time });
+	steps.push({ type: "fin", back: Math.max(0, rg[0] - barLen() * 4), what: nm + " deleted" });
+	delete songOpts[nm];
+	if (armSong == s) armSong = -1;
+	if (lastEntered == s) lastEntered = -1;
+	needStore = true;
+	job = { steps: steps, i: 0, P: rg[0], dest: {}, title: nm, savedTempo: tempo, warp: {} };
+	log("song delete: " + nm);
+}
+
+// A click song: no audio, only SetPilot's click (and a pad in its key) at its
+// tempo. With a length it ends there; without one it keeps going until the
+// next song is called or Live stops.
+var CLK_ENDLESS_BARS = 4;
+function clickSong(o) {
+	if (job) { importMsg("error", "busy"); return; }
+	if (playing) { importMsg("error", "playing"); return; }
+	var bpm = Math.max(20, Math.min(300, Math.round((Number(o.bpm) || 120) * 100) / 100));
+	var key = KEY_RE.test(String(o.key || "")) ? String(o.key) : "";
+	var bars = Math.max(0, Math.min(999, parseInt(o.bars, 10) || 0));
+	var base = String(o.name || "Click").replace(/[#|]/g, " ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "") || "Click";
+	var name = base, n = 2;
+	while (songIndex(name) >= 0) name = base + " " + (n++);
+	var bl = barLen(), last = songEndBeats();
+	var P = last > 0 ? Math.ceil(last / bl - 1e-6) * bl + 4 * bl : 0;
+	var len = (bars || CLK_ENDLESS_BARS) * bl;
+	songOpts[name] = { bpm: 0, semis: 0, clk: { bars: bars, pad: o.pad === 0 || o.pad === false ? 0 : 1 } };
+	needStore = true;
+	// Live won't put a locator past the end of the set: a bar of silence on
+	// SetPilot Click at the song's end makes the room (and shows it in Live)
+	var steps = [], dest = {};
+	if (o.file) {
+		var ct = clickTrackId, ids = trackIds();
+		for (var i = 0; !ct && i < ids.length; i++) { trackApi.id = ids[i]; if (str(trackApi.get("name")) == "SetPilot Click") ct = ids[i]; }
+		if (ct) dest.click = ct; else steps.push({ type: "track", name: "SetPilot Click", key: "click" });
+		steps.push({ type: "tempo", bpm: bpm });
+		steps.push({ type: "clip", key: "click", file: String(o.file), pos: P + len - bl, startBeat: 0, length: bl, maxEnd: P + len,
+			markers: [[0, 0], [60 / bpm, 1]], mode: 0, name: "SetPilot Click" });
+		steps.push({ type: "tempoback" });
+	}
+	job = { steps: steps.concat([
+		{ type: "zoom", dir: 3 },
+		{ type: "cue", time: P, name: header({ title: name, bpm: bpm, key: key }) },
+		{ type: "cue", time: P + len, name: "STOP" },
+		{ type: "zoom", dir: 2 },
+		{ type: "done" }
+	]), i: 0, P: P, dest: dest, title: name, savedTempo: tempo, warp: {} };
+	importMsg("start", name, job.steps.length, Math.round(P / bl) + 1);
+	log("click song " + name + " at bar " + (Math.round(P / bl) + 1) + ": " + bpm + " BPM" + (key ? ", " + key : "") + (bars ? ", " + bars + " bars" : ", endless"));
+}
+function clkOf(s) { return s >= 0 && s < songs.length && songOpts[songs[s].name] ? songOpts[songs[s].name].clk || null : null; }
+
+// while a click song plays: the click on whatever the setting, the endless
+// one looping (once per entry, so a loop turned off stays off)
+var clkSong = -1, clkLooped = false;
+function clkTick() {
+	var cs = playing && clkOf(curSong) ? curSong : -1;
+	if (cs != clkSong) { clkSong = cs; clkLooped = false; sendClick(); }
+	if (cs < 0 || clkLooped) return;
+	var c = clkOf(cs);
+	if (!c.bars && !queue && !loopState && songs[cs].sections.length) setLoop(cs, 0, 0);
+	clkLooped = true;
+}
+
 // ---------- playing a built medley
 // the tempo at a point of the medley: its part's, ramping into the next part
 // over the last 4 bars when that seam is a ramp; a pad bridge already takes
@@ -1512,6 +1589,7 @@ function padfree(on) {
 	}
 	send();
 }
+var clkPad = false;
 function freePadTick() {
 	var k = keyRootNow() || (padFreeRoot >= 0 ? { root: padFreeRoot, minor: padFreeQ == 2 } : { root: 0, minor: false });
 	var q = k.minor ? 2 : 1;
@@ -1524,6 +1602,13 @@ function freePadTick() {
 function medPadTick() {
 	if (!tailPresent()) return;
 	if (padFree) { freePadTick(); return; }
+	var ck = playing ? clkOf(curSong) : null;
+	if (ck && ck.pad) {
+		if (!clkPad) { clkPad = true; messnamed("setpilot_tail", "padclear"); padFreeRoot = -1; padOn = false; padSent = ""; }
+		freePadTick();
+		return;
+	}
+	if (clkPad) { clkPad = false; messnamed("setpilot_tail", "pad", -1, padFreeRoot < 0 ? 0 : padFreeRoot, 0); padFreeRoot = -1; padSent = ""; }
 	var md = playing && curSong >= 0 ? medOf(curSong) : null;
 	if (!md) {
 		if (padOn) { messnamed("setpilot_tail", "padclear"); padOn = false; padSent = ""; }
@@ -3040,7 +3125,7 @@ function sendClick() {
 		if (acc[i] == 2) accMask += Math.pow(2, i);
 		if (acc[i] == 0) muteMask += Math.pow(2, i);
 	}
-	var P = ["on", click.on ? 1 : 0, "beats", sigNum, "sub", click.sub, "accmask", accMask, "mutemask", muteMask,
+	var P = ["on", click.on || clkSong >= 0 ? 1 : 0, "beats", sigNum, "sub", click.sub, "accmask", accMask, "mutemask", muteMask,
 		"lvlacc", click.acc / 100, "lvlbeat", click.beat / 100, "lvlsub", click.subl / 100,
 		"sound", click.sound, "gain", click.gain / 100,
 		// songs' click stems land on this track too: heard only when SetPilot's click doesn't replace them

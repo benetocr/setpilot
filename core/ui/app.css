@@ -1446,3 +1446,58 @@ html[data-layout="stage"] .pad-btn span { display: inline; }
   .settings .levels label { grid-template-columns: 110px 1fr; }
   .settings .instr-row { grid-template-columns: 1fr; gap: 4px; }
 }
+
+/* ---------------------------------------------------------------- deleting from the setlist */
+.s-del { display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); height: 34px; min-width: 34px; padding: 0 9px; border: 0; border-radius: 10px;
+  background: color-mix(in oklab, var(--danger) 14%, var(--deck)); color: var(--danger); align-items: center; justify-content: center; gap: 6px; font-weight: 700; font-size: 13px; }
+.s-del svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.s-del span { display: none; }
+.s-del.armed { background: var(--danger); color: #fff; }
+.s-del.armed span { display: inline; }
+.setlist.editing .s-del { display: inline-flex; }
+.setlist.editing .s-state, .setlist.editing .med-edit, .setlist.editing .s-prog { display: none; }
+.setlist.editing .song { cursor: default; }
+.setlist.editing .song .s-meta .m-dur { margin-right: 44px; }
+.setlist.editing .song:has(.s-del.armed) .s-meta .m-dur { margin-right: 108px; }
+@media (prefers-reduced-motion: no-preference) {
+  .setlist.editing .s-del { animation: del-in .22s cubic-bezier(.16, 1, .3, 1); }
+  @keyframes del-in { from { opacity: 0; transform: translateY(-50%) scale(.7); } }
+}
+.sl-edit-li { list-style: none; display: flex; }
+.sl-edit { display: inline-flex; align-items: center; gap: 7px; margin: 8px 0 0 auto; padding: 7px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--dim); font-weight: 650; font-size: 13px; }
+.sl-edit:hover { background: var(--deck); color: var(--text); }
+.sl-edit[aria-pressed="true"] { color: var(--live); background: color-mix(in oklab, var(--live) 12%, transparent); }
+.sl-edit svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+html[data-layout="console"] .sl-edit-li { flex: none; order: 99; }
+html[data-layout="console"] .sl-edit { flex-direction: column; justify-content: center; width: 72px; height: 72px; margin: 10px 0 10px 6px; padding: 6px; font-size: 12px; gap: 4px; background: transparent; box-shadow: inset 0 0 0 1px var(--edge); border-radius: 14px; }
+html[data-layout="console"] .s-del { top: 6px; right: 6px; transform: none; height: 30px; min-width: 30px; }
+html[data-layout="console"] .setlist.editing .song .s-meta .m-dur { margin-right: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  html[data-layout="console"] .setlist.editing .s-del { animation-name: del-in-c; }
+  @keyframes del-in-c { from { opacity: 0; transform: scale(.7); } }
+}
+@media (max-height: 520px) and (orientation: landscape) {
+  html[data-layout="console"] .sl-edit { width: 52px; height: 52px; margin: 6px 0 6px 4px; }
+  html[data-layout="console"] .sl-edit span { display: none; }
+}
+
+/* click songs */
+.clk-ic { width: 18px; height: 18px; flex: none; fill: none; stroke: var(--queued); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.song.is-click .s-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.song.is-click .s-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.add-click { display: flex; align-items: center; gap: 12px; width: 100%; margin: 10px 0 4px; padding: 13px 14px; border-radius: 14px; border: 1px solid var(--edge); background: var(--deck); color: var(--text); text-align: left; }
+.add-click:hover { background: var(--raise); }
+.add-click svg { width: 22px; height: 22px; flex: none; fill: none; stroke: var(--queued); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.add-click strong { display: block; font-size: 15px; }
+.add-click small { display: block; color: var(--dim); font-size: 12.5px; margin-top: 2px; }
+.clk-len { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.clk-len { flex-wrap: nowrap; }
+.clk-len .seg-ctl { flex: 1; }
+.clk-len input { width: 96px; height: 44px; border-radius: 12px; border: 1px solid var(--edge); background: var(--stage); color: var(--text); padding: 0 12px; font: inherit; font-size: 17px; }
+.clk-len input:focus { outline: 2px solid var(--loop); outline-offset: 1px; }
+.clk-len input:disabled { opacity: .4; }
+.add-done { display: flex; gap: 10px; margin-top: 16px; }
+.add-done[hidden] { display: none; }
+.add-status.ok { display: flex; gap: 10px; align-items: flex-start; font-weight: 600; }
+.add-status.ok::before { content: ""; flex: none; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; background: var(--live) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 12.5l4 4 8-9' fill='none' stroke='%23000' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 16px no-repeat; }
+.add-done .tk-act { flex: 1; }

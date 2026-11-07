@@ -126,7 +126,14 @@
 
   // ------------------------------------------------------------ setlist
 
+  var CLKIC = '<svg class="clk-ic" viewBox="0 0 24 24"><path d="M8 21h8l-3-17h-2zM12 14l5-6"/></svg>';
   var GRIP = '<svg viewBox="0 0 12 20"><circle cx="3" cy="4" r="1.6"/><circle cx="9" cy="4" r="1.6"/><circle cx="3" cy="10" r="1.6"/><circle cx="9" cy="10" r="1.6"/><circle cx="3" cy="16" r="1.6"/><circle cx="9" cy="16" r="1.6"/></svg>';
+
+  var DELX = '<svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg>';
+  function delBtn(key) {
+    return '<button class="s-del' + (slDel === key ? " armed" : "") + '" type="button" data-del="' + esc(key) + '" aria-label="' + esc(T("slDelete")) + '">' + DELX + '<span>' + esc(T("slDeleteSure")) + "</span></button>";
+  }
+  var slEditing = false, slDel = "";
 
   function renderSetlist() {
     var ord = order();
@@ -148,6 +155,7 @@
           '<span class="m-dur">' + fmtTime(mdur) + "</span></div>" +
           '<div class="s-songs">' + esc(medSongs(m).join(" + ")) + "</div></div>" +
           '<button class="med-edit" type="button" data-m="' + (i - MED) + '" aria-label="' + esc(T("medEdit")) + '"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></button>' +
+          delBtn("m:" + m.id) +
           '<span class="s-state"></span><i class="s-prog"></i></li>';
         if (p + 1 < ord.length) html += '<li class="trans gap" aria-hidden="true"></li>';
         continue;
@@ -157,16 +165,21 @@
       total += dur;
       var k = keyName(s.key, s.semis) || (s.semis ? semisLabel(s.semis) : "");
       var b = s.tempoSet || baseBpm(s);
-      html += '<li class="song" data-i="' + i + '" tabindex="0">' +
+      var endless = s.clk && !s.clk.bars;
+      html += '<li class="song' + (s.clk ? " is-click" : "") + (s.med ? " is-built" : "") + '" data-i="' + i + '" tabindex="0">' +
         '<span class="handle" aria-hidden="true">' + GRIP + "</span>" +
         '<span class="s-num">' + (p + 1) + "</span>" +
-        '<div class="s-body"><div class="s-title">' + esc(s.name) + "</div>" +
+        '<div class="s-body"><div class="s-title">' + (s.clk ? CLKIC : "") + '<span class="s-name">' + esc(s.name) + "</span></div>" +
         '<div class="s-meta"><span class="m-key' + (s.semis ? " mod" : "") + '">' + esc(k) + "</span>" +
         '<span class="m-bpm' + (s.tempoSet ? " mod" : "") + '">' + (b ? fmtBpm(b) + "<small>BPM</small>" : "") + "</span>" +
-        '<span class="m-dur">' + fmtTime(dur) + "</span></div></div>" +
+        '<span class="m-dur">' + (endless ? "∞" : fmtTime(dur)) + "</span></div></div>" +
+        delBtn("s:" + s.name) +
         '<span class="s-state"></span><i class="s-prog"></i></li>';
       if (p + 1 < ord.length) html += transChip(i);
     }
+    if (ord.length) html += '<li class="sl-edit-li"><button class="sl-edit" id="btnSlEdit" type="button" aria-pressed="' + slEditing + '">' +
+      (slEditing ? '<svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>' : DELX) + "<span>" + esc(T(slEditing ? "done" : "slEdit")) + "</span></button></li>";
+    $("setlist").classList.toggle("editing", slEditing && !!ord.length);
     html += '<li class="med-new-li"><button class="med-new" id="btnMedNew" type="button"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="7" height="12" rx="2"/><rect x="14" y="6" width="7" height="12" rx="2"/><path d="M10 12h4"/></svg><span>' + esc(T("medNew")) + "</span></button></li>";
     $("songs").innerHTML = html;
     var m = Math.round(total / 60);
@@ -534,6 +547,10 @@
   var lastSongTap = { i: -1, at: 0 };
   $("songs").addEventListener("click", function (e) {
     if (e.target.closest(".handle")) return;
+    if (e.target.closest("#btnSlEdit")) { slEditing = !slEditing; slDel = ""; renderSetlist(); return; }
+    var del = e.target.closest(".s-del");
+    if (del) { askDelete(del.dataset.del); return; }
+    if (slEditing && e.target.closest(".song")) return;
     var me = e.target.closest(".med-edit");
     if (me) { openWizard(+me.dataset.m); return; }
     if (e.target.closest("#btnMedNew")) { openWizard(-1); return; }
@@ -548,6 +565,32 @@
     lastSongTap = { i: i, at: now };
     closeSetlist();
   });
+
+  // Deleting from the setlist: a first tap asks, a second one deletes. A song
+  // (and a built medley) leaves Live too: its clips and locators.
+  var slDelTimer = 0;
+  function askDelete(key) {
+    if (pos && pos.playing) { showToast(T("slStopFirst"), true); return; }
+    if (slDel !== key) {
+      slDel = key;
+      renderSetlist();
+      clearTimeout(slDelTimer);
+      slDelTimer = setTimeout(function () { if (slDel === key) { slDel = ""; renderSetlist(); } }, 3500);
+      return;
+    }
+    slDel = "";
+    clearTimeout(slDelTimer);
+    var row = document.querySelector('.s-del[data-del="' + key.replace(/["\\]/g, "\\$&") + '"]');
+    var nm = row && row.closest(".song") ? row.closest(".song").querySelector(".s-name").textContent : key.slice(2);
+    var req = key.indexOf("m:") === 0
+      ? fetch("/medley", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "delete", id: key.slice(2) }) })
+      : fetch("/song", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "delete", name: key.slice(2) }) });
+    req.then(function (r) { return r.json(); }).then(function (r) {
+      if (!r.ok) showToast(r.error === "playing" ? T("slStopFirst") : T("slDeleteFail"), true);
+      else showToast(T("slDeleted", { name: nm }));
+    }).catch(function () { showToast(T("slDeleteFail"), true); });
+    renderSetlist();
+  }
 
   // ------------------------------------------------------------ song view
 
@@ -2215,6 +2258,8 @@
   function showAddPane(name) {
     $("addPick").hidden = name !== "pick";
     $("addForm").hidden = name !== "form";
+    $("addClick").hidden = name !== "click";
+    if (name !== "progress") $("addDoneBtns").hidden = true;
     $("addProgress").hidden = name !== "progress";
   }
   function openAdd() {
@@ -2355,20 +2400,66 @@
         showAddPane("progress");
       });
   });
+  // a click song: the click and a pad, nothing else
+  var clkForm = { endless: true };
+  function openClick() {
+    $("clkName").value = T("clkDefaultName");
+    $("clkNote").textContent = pos && pos.playing ? T("addStopFirst") : "";
+    setSeg("clkMode", clkForm.endless ? 0 : 1);
+    $("clkBarsN").disabled = clkForm.endless;
+    showAddPane("click");
+    setTimeout(function () { $("clkBpm").focus(); $("clkBpm").select(); }, 30);
+  }
+  $("btnAddClick").addEventListener("click", openClick);
+  $("clkBack").addEventListener("click", function () { showAddPane("pick"); });
+  $("clkMode").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    clkForm.endless = b.dataset.v === "0";
+    setSeg("clkMode", clkForm.endless ? 0 : 1);
+    $("clkBarsN").disabled = clkForm.endless;
+    if (!clkForm.endless) $("clkBarsN").focus();
+  });
+  function clkKeyOk(k) { return !k || /^[A-G](#|b)?m?$/.test(k); }
+  $("clkGo").addEventListener("click", function () {
+    if (pos && pos.playing) { $("clkNote").textContent = T("addStopFirst"); return; }
+    var bpm = +$("clkBpm").value, key = $("clkKey").value.trim();
+    key = key ? key.charAt(0).toUpperCase() + key.slice(1) : "";
+    if (!(bpm >= 20 && bpm <= 300)) { $("clkNote").textContent = T("clkBadBpm"); $("clkBpm").focus(); return; }
+    if (!clkKeyOk(key)) { $("clkNote").textContent = T("clkBadKey"); $("clkKey").focus(); return; }
+    var bars = clkForm.endless ? 0 : Math.max(1, Math.min(999, parseInt($("clkBarsN").value, 10) || 16));
+    var body = { action: "click", name: $("clkName").value.trim() || T("clkDefaultName"), bpm: bpm, key: key, bars: bars, pad: $("clkPadOn").checked };
+    fetch("/song", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (!r.ok) { $("clkNote").textContent = T("addFailed", { why: whyText(r.error) }); return; }
+        add.busy = true;
+        $("addStatus").textContent = T("addWorking", { title: body.name });
+        $("addBar").style.width = "4%";
+        showAddPane("progress");
+      })
+      .catch(function () { $("clkNote").textContent = T("addFailed", { why: whyText("") }); });
+  });
+  $("addFinish").addEventListener("click", function () { $("addSheet").hidden = true; });
+  $("addAnother").addEventListener("click", function () { openAdd(); });
+
   function whyText(code) {
     return T({ busy: "whyBusy", playing: "whyPlaying", parse: "whyParse", not_found: "whyNotFound", no_audio: "whyNoAudio", no_als: "whyNoAls" }[code] || "whyParse");
   }
   function onImport(m) {
     if (wiz.open && wiz.building) { wzOnBuild(m); return; }
-    if (m.kind === "start") { add.busy = true; add.title = m.a; $("addSheet").hidden = false; showAddPane("progress"); $("addStatus").textContent = T("addWorking", { title: m.a }); }
+    if (m.kind === "start") { add.busy = true; add.title = m.a; $("addSheet").hidden = false; showAddPane("progress"); $("addStatus").classList.remove("ok"); $("addStatus").textContent = T("addWorking", { title: m.a }); }
     else if (m.kind === "progress") { $("addBar").style.width = Math.round(100 * (+m.a) / (+m.b || 1)) + "%"; }
     else if (m.kind === "done") {
       add.busy = false;
       $("addBar").style.width = "100%";
       var ok = +m.b || 0, tot = +m.c || 0;
       $("addStatus").textContent = tot ? (ok === tot ? T("addChecked", { title: m.a, total: tot }) : T("addCheckedBad", { title: m.a, bad: tot - ok, total: tot })) : T("addDone", { title: m.a });
+      $("addDoneBtns").hidden = false;
+      $("addStatus").classList.add("ok");
+      setTimeout(function () { if (!$("addSheet").hidden) $("addFinish").focus(); }, 30);
     }
-    else if (m.kind === "error") { add.busy = false; $("addSheet").hidden = false; showAddPane("progress"); $("addBar").style.width = "0"; $("addStatus").textContent = T("addFailed", { why: whyText(m.a) }); }
+    else if (m.kind === "error") { add.busy = false; $("addSheet").hidden = false; showAddPane("progress"); $("addBar").style.width = "0"; $("addStatus").textContent = T("addFailed", { why: whyText(m.a) }); $("addDoneBtns").hidden = false; $("addStatus").classList.remove("ok"); }
   }
 
   // ------------------------------------------------------------ notices

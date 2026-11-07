@@ -456,6 +456,10 @@
           <small data-i18n="dropSub">The .als file or the song's folder</small>
         </button>
         <input type="file" id="dropFile" accept=".als" hidden>
+        <button class="add-click" id="btnAddClick" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 21h8l-3-17h-2zM12 14l5-6"/></svg>
+          <span><strong data-i18n="clkTitle">Click song</strong><small data-i18n="clkSub">Only the click and a pad, at the tempo and key you choose</small></span>
+        </button>
         <p class="set-help" id="dropNote"></p>
         <p class="set-help" data-i18n="addHelp"></p>
         <ul class="sessions" id="sessions"></ul>
@@ -486,9 +490,40 @@
           <button class="tk-act" id="addGo" data-i18n="addGo">Add to the set</button>
         </div>
       </div>
+      <div id="addClick" hidden>
+        <label class="field"><span data-i18n="addTitleField">Song name</span><input id="clkName" type="text" maxlength="60"></label>
+        <div class="field-row">
+          <label class="field"><span data-i18n="addBpm">BPM</span><input id="clkBpm" type="number" step="0.5" min="20" max="300" value="120"></label>
+          <label class="field"><span data-i18n="addKey">Key</span><input id="clkKey" type="text" maxlength="3" placeholder="C"></label>
+        </div>
+        <div class="set-row column">
+          <span data-i18n="clkLength">Length</span>
+          <div class="clk-len">
+            <div class="seg-ctl" id="clkMode" role="radiogroup">
+              <button data-v="0" role="radio" data-i18n="clkEndless">Keep going</button>
+              <button data-v="1" role="radio" data-i18n="clkBars">Bars</button>
+            </div>
+            <input id="clkBarsN" type="number" min="1" max="999" value="16" aria-label="Bars">
+          </div>
+          <small class="set-help" data-i18n="clkLengthHelp"></small>
+        </div>
+        <label class="switch-row">
+          <span><strong data-i18n="clkPad">Pad</strong><small data-i18n="clkPadHelp"></small></span>
+          <input type="checkbox" id="clkPadOn" checked><i class="switch"></i>
+        </label>
+        <p class="set-help" id="clkNote"></p>
+        <div class="tk-actions">
+          <button class="tk-act ghost" id="clkBack" data-i18n="addBack">Back</button>
+          <button class="tk-act" id="clkGo" data-i18n="addGo">Add to the set</button>
+        </div>
+      </div>
       <div id="addProgress" hidden>
         <p class="add-status" id="addStatus"></p>
         <div class="bar"><i id="addBar"></i></div>
+        <div class="add-done" id="addDoneBtns" hidden>
+          <button class="tk-act ghost" id="addAnother" data-i18n="addAnother">Add another</button>
+          <button class="tk-act" id="addFinish" data-i18n="addFinish">Done</button>
+        </div>
       </div>
     </div>
   </div>

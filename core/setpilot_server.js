@@ -100,12 +100,35 @@ function start(engine) {
 		dataDir: DATA_DIR, roots: importRoots, findByName,
 		importFile: o => importFile(o),
 		medley: o => { if (engine.medley) engine.medley(o); },
+		clickSong: song => clickSong(song),
 		restore: json => { if (engine.restore) engine.restore(json); },
 		getStore: () => (engine.getStore ? engine.getStore() : null),
 		getStruct: () => struct,
 		broadcast: (e, d) => broadcast(e, d),
 		log: (...m) => engine.log(...m)
 	});
+
+	// a click song's bar of silence (Live needs something there to put locators)
+	function silenceFor(bpm) {
+		const rate = 11025, secs = 16 * 60 / bpm + 0.25, n = Math.ceil(rate * secs);
+		const file = path.join(DATA_DIR, "click", "silence-" + String(Math.round(bpm * 100)) + ".wav");
+		try {
+			if (!fs.existsSync(file)) {
+				fs.mkdirSync(path.dirname(file), { recursive: true });
+				const b = Buffer.alloc(44 + n * 2);
+				b.write("RIFF", 0); b.writeUInt32LE(36 + n * 2, 4); b.write("WAVE", 8); b.write("fmt ", 12);
+				b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22); b.writeUInt32LE(rate, 24);
+				b.writeUInt32LE(rate * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write("data", 36); b.writeUInt32LE(n * 2, 40);
+				fs.writeFileSync(file, b);
+			}
+			return file;
+		} catch (e) { engine.log("click song: no silence file: " + e.message); return ""; }
+	}
+	function clickSong(song) {
+		const bpm = Math.max(20, Math.min(300, Number(song.bpm) || 120));
+		const spec = { name: String(song.name || "Click").slice(0, 60), bpm, key: String(song.key || ""), bars: parseInt(song.bars, 10) || 0, pad: song.pad === false || song.pad === 0 ? 0 : 1, file: silenceFor(bpm) };
+		if (engine.medley) engine.medley({ action: "clicksong", song: spec });
+	}
 
 	function setNotice(args) {
 		broadcast("notice", { kind: String(args[0]), a: args[1] == null ? "" : String(args[1]), b: args[2] == null ? "" : args[2], c: args[3] == null ? "" : args[3], at: Date.now() });
@@ -282,6 +305,28 @@ function start(engine) {
 						out = { ok: true };
 					} else out = { ok: false, error: "bad_medley" };
 				} catch (e) { out = { ok: false, error: "bad_request" }; }
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify(out));
+			});
+			return;
+		}
+		// a song out of the setlist (and Live), or a new click song
+		if (req.method === "POST" && url.pathname === "/song") {
+			let body = "";
+			req.on("data", c => { body += c; if (body.length > 2e4) req.destroy(); });
+			req.on("end", () => {
+				let out = { ok: false, error: "bad_request" };
+				try {
+					const o = JSON.parse(body || "{}");
+					const playing = !!(pos && pos.playing);
+					if (o.action === "delete" && o.name) {
+						if (playing) out = { ok: false, error: "playing" };
+						else { engine.medley({ action: "songdelete", name: String(o.name) }); out = { ok: true }; }
+					} else if (o.action === "click") {
+						if (playing) out = { ok: false, error: "playing" };
+						else { clickSong(o); out = { ok: true }; }
+					}
+				} catch (e) { }
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify(out));
 			});

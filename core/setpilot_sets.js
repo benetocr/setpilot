@@ -12,7 +12,7 @@ const path = require("path");
 const slug = t => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "setlist";
 
 function makeSets(o) {
-	// o: { dataDir, importFile(opts), medley(body), restore(json), getStore(), getStruct(),
+	// o: { dataDir, importFile(opts), medley(body), clickSong(spec), restore(json), getStore(), getStruct(),
 	//      broadcast(event, data), findByName(roots, name, size, mtime), roots, log }
 	const SETS_DIR = path.join(o.dataDir, "sets");
 	const SOURCES = path.join(o.dataDir, "sources.json");
@@ -43,7 +43,7 @@ function makeSets(o) {
 		return files.map(f => {
 			const s = readJson(path.join(SETS_DIR, f), null);
 			if (!s) return null;
-			return { id: f.replace(/\.json$/, ""), name: s.name, savedAt: s.savedAt, songs: (s.order || []).map(n => ({ name: n, medley: !!(s.songs[n] && s.songs[n].medley), missing: !!(s.songs[n] && s.songs[n].missing) })) };
+			return { id: f.replace(/\.json$/, ""), name: s.name, savedAt: s.savedAt, songs: (s.order || []).map(n => ({ name: n, medley: !!(s.songs[n] && s.songs[n].medley), click: !!(s.songs[n] && s.songs[n].click), missing: !!(s.songs[n] && s.songs[n].missing) })) };
 		}).filter(Boolean).sort((a, b) => (b.savedAt || "").localeCompare(a.savedAt || ""));
 	}
 
@@ -62,7 +62,8 @@ function makeSets(o) {
 		const missingNames = [];
 		for (const n of order) {
 			const sg = struct.songs.find(s => s.name === n);
-			if (sg && sg.med && built[n]) songs[n] = { medley: built[n] };
+			if (sg && sg.clk) songs[n] = { click: { bpm: sg.bpm || 120, key: sg.key || "", bars: sg.clk.bars || 0, pad: sg.clk.pad === 0 ? 0 : 1 } };
+			else if (sg && sg.med && built[n]) songs[n] = { medley: built[n] };
 			else if (sources[n]) songs[n] = { source: sources[n] };
 			else { songs[n] = { missing: true }; missing++; missingNames.push(n); }
 		}
@@ -115,15 +116,23 @@ function makeSets(o) {
 	}
 
 	async function run(s) {
-		const plain = s.order.filter(n => s.songs[n] && s.songs[n].source);
+		// songs and click songs in setlist order, then the medleys made of them
+		const plain = s.order.filter(n => s.songs[n] && (s.songs[n].source || s.songs[n].click));
 		const meds = s.order.filter(n => s.songs[n] && s.songs[n].medley);
 		const skipped = s.order.filter(n => !s.songs[n] || s.songs[n].missing);
 		const n = plain.length + meds.length;
 		let i = 0;
 		log("opening setlist", s.name, "-", plain.length, "songs,", meds.length, "medleys");
 		for (const title of plain) {
-			const src = s.songs[title].source;
 			progress({ name: s.name, i: ++i, n, title, stage: "song" });
+			if (s.songs[title].click) {
+				o.clickSong(Object.assign({ name: title }, s.songs[title].click));
+				const kc = await waitDone(60 * 1000);
+				if (kc !== "done") { skipped.push(title); log("setlist: click song", kc, title); }
+				await sleep(800);
+				continue;
+			}
+			const src = s.songs[title].source;
 			const file = findFile(src, title);
 			if (!file) { skipped.push(title); log("setlist: not found", title); continue; }
 			const r = o.importFile({ path: file, title, instr: src.instr || undefined, gap: src.gap, key: src.key || undefined, bpm: src.bpm || undefined });
