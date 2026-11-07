@@ -63,7 +63,7 @@ function makeSets(o) {
 		const missingNames = [];
 		for (const n of order) {
 			const sg = struct.songs.find(s => s.name === n);
-			if (sg && sg.clk) songs[n] = { click: { bpm: sg.bpm || 120, key: sg.key || "", bars: sg.clk.bars || 0, pad: sg.clk.pad === 0 ? 0 : 1 } };
+			if (sg && sg.clk) songs[n] = { click: { bpm: sg.bpm || 120, key: sg.key || "", bars: sg.clk.bars || 0, pad: sg.clk.pad === 0 ? 0 : 1, meter: sg.meter || "4/4", groups: sg.clk.groups || [], pat: sg.clk.pat || null, sub: sg.clk.sub || 1 } };
 			else if (sg && sg.med && built[n]) songs[n] = { medley: built[n] };
 			else if (sources[n]) songs[n] = { source: sources[n] };
 			else { songs[n] = { missing: true }; missing++; missingNames.push(n); }

@@ -2286,7 +2286,11 @@
     Array.prototype.forEach.call(document.querySelectorAll("[data-level]"), function (r) {
       if (document.activeElement !== r) r.value = levels[+r.dataset.level] != null ? levels[+r.dataset.level] : 100;
     });
-    renderAccents(c.accents || [2, 1, 1, 1]);
+    var cn = (struct && struct.clickNow) || { meter: "4/4", pat: [4, 2, 2, 2], groups: [1, 1, 1, 1] };
+    $("optAccents").innerHTML = window.SPMeter.beatsHtml(cn.pat, cn.groups, esc);
+    $("optMeterNow").textContent = cn.meter;
+    var den = window.SPMeter.parse(cn.meter).d, sn = window.SPMeter.subNames(den, T);
+    Array.prototype.forEach.call($("optClickSub").querySelectorAll("button"), function (b, i) { b.textContent = sn[i]; });
     renderTrDefault();
     renderSetup();
   }
@@ -2359,16 +2363,7 @@
     fetch("/outputs/refresh", { method: "POST" }).catch(function () { }).then(function () { setTimeout(function () { b.disabled = false; }, 800); });
   });
 
-  function renderAccents(acc) {
-    var n = pos ? pos.sigNum : acc.length;
-    var html = "";
-    for (var i = 0; i < n; i++) {
-      var v = acc[i] != null ? acc[i] : (i === 0 ? 2 : 1);
-      var cls = v === 2 ? "acc" : v === 0 ? "off" : "";
-      html += '<button class="beat ' + cls + '" data-b="' + i + '" data-v="' + v + '">' + (i + 1) + "</button>";
-    }
-    $("optAccents").innerHTML = html;
-  }
+
 
   function renderSetup() {
     var comp = (struct && struct.companions) || {};
@@ -2414,11 +2409,12 @@
   $("optAccents").addEventListener("click", function (e) {
     var b = e.target.closest(".beat");
     if (!b) return;
-    var next = { 2: 1, 1: 0, 0: 2 }[+b.dataset.v];
+    var next = window.SPMeter.nextLevel(+b.dataset.v);
     b.dataset.v = next;
-    b.className = "beat " + (next === 2 ? "acc" : next === 0 ? "off" : "");
-    send("clickaccent", +b.dataset.b, next);
+    b.className = "beat lv" + next;
+    send("clickaccent", +b.dataset.u, next);
   });
+  $("optClickReset").addEventListener("click", function () { send("clickreset"); });
   Array.prototype.forEach.call(document.querySelectorAll("[data-level]"), function (r) {
     // heard while it moves (a few times a second), and once more where it stops
     var last = 0;
@@ -2544,6 +2540,7 @@
     $("addPick").hidden = name !== "pick";
     $("addForm").hidden = name !== "form";
     $("addClick").hidden = name !== "click";
+    if (name !== "click") clkStopPreview();
     if (name !== "progress") $("addDoneBtns").hidden = true;
     $("addProgress").hidden = name !== "progress";
   }
@@ -2565,7 +2562,7 @@
     }).catch(function () { $("sessions").innerHTML = "<li class='set-help'>" + esc(T("addNone")) + "</li>"; });
   }
   $("btnAddSong").addEventListener("click", openAdd);
-  $("addClose").addEventListener("click", function () { $("addSheet").hidden = true; });
+  $("addClose").addEventListener("click", function () { clkStopPreview(); $("addSheet").hidden = true; });
   $("addSheet").addEventListener("click", function (e) { if (e.target === $("addSheet")) $("addSheet").hidden = true; });
   $("sessions").addEventListener("click", function (e) {
     var li = e.target.closest(".session");
@@ -2712,17 +2709,87 @@
       });
   });
   // a click song: the click and a pad, nothing else
-  var clkForm = { endless: true };
+  var clkForm = { endless: true, meter: "4/4", groups: null, every: true, sub: 1, pat: null };
+  var MT = window.SPMeter;
+  function clkSpec() { return { meter: clkForm.meter, bpm: +$("clkBpm").value || 120, sub: clkForm.sub, pat: clkForm.pat }; }
+  // the time signature, its groups and how it clicks: the bar below shows it, Listen plays it
+  function clkMeterSet(m, keepPat) {
+    var p = MT.parse(m);
+    clkForm.meter = p.n + "/" + p.d;
+    var gl = MT.groupings(p.n, p.d);
+    if (!gl.length || !clkForm.groups || clkForm.groups.reduce(function (a, b) { return a + b; }, 0) !== p.n) clkForm.groups = MT.groupsFor(p.n, p.d);
+    if (!keepPat) clkForm.pat = MT.defaultPattern(p.n, p.d, clkForm.groups, clkForm.every);
+    var preset = $("clkMeter").querySelector('[data-m="' + clkForm.meter + '"]');
+    Array.prototype.forEach.call($("clkMeter").querySelectorAll("button"), function (b) { b.classList.toggle("on", b === preset || (!preset && b.dataset.m === "other")); });
+    $("clkMeterOther").hidden = !!preset && !clkForm.other;
+    $("clkGroupRow").hidden = !gl.length;
+    $("clkGroups").innerHTML = gl.map(function (g) { var k = g.join("+"); return '<button type="button" data-g="' + k + '"' + (k === clkForm.groups.join("+") ? ' class="on"' : "") + ">" + k + "</button>"; }).join("");
+    var grouped = p.d >= 8 && p.n > 3;
+    $("clkEveryRow").hidden = !grouped;
+    setSeg("clkEvery", clkForm.every ? 1 : 0);
+    var sn = MT.subNames(p.d, T);
+    Array.prototype.forEach.call($("clkSub").querySelectorAll("button"), function (b, i) { b.textContent = sn[i]; });
+    setSeg("clkSub", clkForm.sub);
+    $("clkBeats").innerHTML = MT.beatsHtml(clkForm.pat, clkForm.groups, esc);
+    MT.update(clkSpec());
+  }
   function openClick() {
     $("clkName").value = T("clkDefaultName");
     $("clkNote").textContent = pos && pos.playing ? T("addStopFirst") : "";
     setSeg("clkMode", clkForm.endless ? 0 : 1);
     $("clkBarsN").disabled = clkForm.endless;
+    clkForm.other = false;
+    clkMeterSet(clkForm.meter, !!clkForm.pat);
     showAddPane("click");
     setTimeout(function () { $("clkBpm").focus(); $("clkBpm").select(); }, 30);
   }
+  $("clkMeter").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    if (b.dataset.m === "other") { clkForm.other = true; $("clkMeterOther").hidden = false; clkMeterSet(+$("clkNum").value + "/" + $("clkDen").value); $("clkNum").focus(); return; }
+    clkForm.other = false;
+    clkMeterSet(b.dataset.m);
+  });
+  ["clkNum", "clkDen"].forEach(function (id) {
+    $(id).addEventListener("input", function () { var n = parseInt($("clkNum").value, 10); if (n >= 1 && n <= 32) clkMeterSet(n + "/" + $("clkDen").value); });
+  });
+  $("clkGroups").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    clkForm.groups = b.dataset.g.split("+").map(Number);
+    clkMeterSet(clkForm.meter);
+  });
+  $("clkEvery").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    clkForm.every = b.dataset.v === "1";
+    clkMeterSet(clkForm.meter);
+  });
+  $("clkSub").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    clkForm.sub = +b.dataset.v;
+    setSeg("clkSub", clkForm.sub);
+    MT.update(clkSpec());
+  });
+  $("clkBeats").addEventListener("click", function (e) {
+    var b = e.target.closest(".beat");
+    if (!b) return;
+    var u = +b.dataset.u, v = MT.nextLevel(clkForm.pat[u]);
+    clkForm.pat[u] = v;
+    b.dataset.v = v; b.className = "beat lv" + v;
+    MT.update(clkSpec());
+  });
+  $("clkBpm").addEventListener("input", function () { MT.update(clkSpec()); });
+  $("clkListen").addEventListener("click", function () {
+    var on = !MT.playing();
+    if (on) MT.preview(clkSpec()); else MT.stop();
+    $("clkListen").classList.toggle("on", on);
+    $("clkListen").querySelector("span").textContent = T(on ? "clkStop" : "clkListen");
+  });
+  function clkStopPreview() { MT.stop(); $("clkListen").classList.remove("on"); $("clkListen").querySelector("span").textContent = T("clkListen"); }
   $("btnAddClick").addEventListener("click", openClick);
-  $("clkBack").addEventListener("click", function () { showAddPane("pick"); });
+  $("clkBack").addEventListener("click", function () { clkStopPreview(); showAddPane("pick"); });
   $("clkMode").addEventListener("click", function (e) {
     var b = e.target.closest("button");
     if (!b) return;
@@ -2739,7 +2806,9 @@
     if (!(bpm >= 20 && bpm <= 300)) { $("clkNote").textContent = T("clkBadBpm"); $("clkBpm").focus(); return; }
     if (!clkKeyOk(key)) { $("clkNote").textContent = T("clkBadKey"); $("clkKey").focus(); return; }
     var bars = clkForm.endless ? 0 : Math.max(1, Math.min(999, parseInt($("clkBarsN").value, 10) || 16));
-    var body = { action: "click", name: $("clkName").value.trim() || T("clkDefaultName"), bpm: bpm, key: key, bars: bars, pad: $("clkPadOn").checked };
+    clkStopPreview();
+    var body = { action: "click", name: $("clkName").value.trim() || T("clkDefaultName"), bpm: bpm, key: key, bars: bars, pad: $("clkPadOn").checked,
+      meter: clkForm.meter, groups: clkForm.groups, pat: clkForm.pat, sub: clkForm.sub, every: clkForm.every };
     fetch("/song", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
       .then(function (r) { return r.json(); })
       .then(function (r) {

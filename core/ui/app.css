@@ -1716,3 +1716,33 @@ html[data-layout="console"] .act-auto { display: none; }
 .sw-zoom .sw-fit { width: auto; padding: 0 12px; font-size: 13px; font-weight: 650; }
 .sw-said { display: block; font-weight: 500; font-size: 12px; color: var(--dim); margin-top: 2px; }
 @media (max-width: 760px) { .sw-zoom input[type=range] { width: 90px; } }
+
+/* ---------------------------------------------------------------- time signatures and the click's bar */
+.beats { align-items: flex-end; }
+.mt-group { display: flex; gap: 6px; align-items: flex-end; }
+.mt-group.mt-after { margin-left: 4px; padding-left: 10px; border-left: 2px solid var(--edge); }
+.beat { position: relative; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 6px; overflow: hidden; }
+.beat::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; background: color-mix(in oklab, var(--live) 35%, transparent); height: 0; transition: height .15s; }
+.beat > * , .beat { z-index: 0; }
+.beat.lv4 { background: var(--live); color: #062615; border-color: var(--live); }
+.beat.lv3::before { height: 70%; background: color-mix(in oklab, var(--live) 55%, transparent); }
+.beat.lv3 { border-color: color-mix(in oklab, var(--live) 70%, var(--edge)); }
+.beat.lv2::before { height: 38%; }
+.beat.lv1 { color: var(--dim); font-size: 13px; }
+.beat.lv1::before { height: 14%; }
+.beat.lv0 { color: var(--faint); background: transparent; border-style: dashed; text-decoration: line-through; }
+.mt-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.mt-chips button { min-width: 52px; height: 38px; padding: 0 10px; border: 0; border-radius: 10px; background: var(--deck); color: var(--text); font: inherit; font-weight: 700; font-size: 14.5px; box-shadow: inset 0 0 0 1px var(--edge); }
+.mt-chips button.on { background: var(--loop); color: var(--stage); box-shadow: none; }
+.mt-other { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.mt-other[hidden] { display: none; }
+.mt-other input { width: 70px; height: 38px; border-radius: 10px; border: 1px solid var(--edge); background: var(--stage); color: var(--text); padding: 0 10px; font: inherit; font-size: 16px; }
+.mt-other .sel { width: 80px; height: 38px; }
+.mt-bar { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.mt-listen { display: inline-flex; align-items: center; gap: 6px; height: 40px; }
+.mt-listen svg { width: 15px; height: 15px; fill: currentColor; }
+.mt-listen.on { background: var(--live); color: var(--stage); }
+.mt-tip { font-weight: 500; color: var(--faint); font-size: 12px; }
+.mt-now { margin: 0 6px; padding: 1px 8px; border-radius: 999px; background: var(--deck); font-size: 12.5px; }
+.link-btn { border: 0; background: none; color: var(--loop); font: inherit; font-size: 12.5px; font-weight: 650; padding: 0; cursor: pointer; }
+#addClick { max-height: min(70vh, 680px); overflow-y: auto; padding-right: 4px; }

@@ -392,13 +392,17 @@ test("click settings reach SetPilot Click", () => {
 	const t = setup();
 	t.run(100);
 	t.cmd("clicksub", 2);
-	t.cmd("clickaccent", 2, 2);   // accent beat 3
+	t.cmd("clickaccent", 2, 4);   // accent beat 3 (levels: 4 accent, 3 lighter, 2 beat, 1 soft, 0 off)
 	t.cmd("clickaccent", 3, 0);   // silence beat 4
 	t.cmd("clicklevel", 3, 120);
 	assert.strictEqual(t.song.clickParams.sub, 2);
 	assert.strictEqual(t.song.clickParams.accmask, 1 + 4);
 	assert.strictEqual(t.song.clickParams.mutemask, 8);
 	assert.strictEqual(t.song.clickParams.gain, 1.2);
+	t.cmd("clickaccent", 1, 3);
+	t.cmd("clickaccent", 2, 1);
+	assert.strictEqual(t.song.clickParams.midmask, 2);
+	assert.strictEqual(t.song.clickParams.softmask, 4);
 	t.cmd("clickon", 0);
 	assert.strictEqual(t.song.tracks.find(x => x.name === "Click").mute, 0, "song click back when ours is off");
 });
@@ -1289,6 +1293,12 @@ test("a song in 6/8 gets Live's time signature while it plays; the next one goes
 	t.cmd("playsong", 0);
 	t.run(300);
 	assert.deepStrictEqual([t.song.props.signature_numerator, t.song.props.signature_denominator], [6, 8]);
+	// the click in 6/8: eighths, beat one accented, beat 4 a lighter accent, the rest soft, from the song's start
+	assert.strictEqual(t.song.clickParams.beats, 6);
+	assert.strictEqual(t.song.clickParams.accmask, 1);
+	assert.strictEqual(t.song.clickParams.midmask, 8);
+	assert.strictEqual(t.song.clickParams.softmask, 2 + 4 + 16 + 32);
+	assert.strictEqual(t.song.clickParams.origin, 0);
 	t.cmd("stop");
 	t.run(200);
 	t.cmd("playsong", 1);

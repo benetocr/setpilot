@@ -36,7 +36,7 @@ const COMMANDS = {
 	nextsong: 0, prevsong: 0, nextsec: 0, prevsec: 0, refresh: 0,
 	selectsong: 2, playsong: 1, section: 3, loop: 2, repeat: 2,
 	autostop: 1, setorder: -1, cuemode: 1, cuebars: 1, cuelang: 1,
-	clickon: 1, clicksound: 1, clicksub: 1, clickmute: 1, clickaccent: 2, clicklevel: 2,
+	clickon: 1, clicksound: 1, clicksub: 1, clickmute: 1, clickaccent: 2, clickreset: 0, clicklevel: 2,
 	temposet: 2, keyset: 2, clearfrom: 1, transition: 2, transdefault: 1, warpinfo: 1, rewarpsong: 1, mixvol: 2, mixmute: 2, mixsolo: 2, mixeron: 0,
 	precount: 1, cuestyle: 1, arrset: -1, arrgo: 3, selectmed: 2, medgo: 3, playmed: 1, medlisten: 2, padfree: -1, clipinfo: 1, cuesource: 1, warpcheck: 1, fadeout: 1, fadein: 1, autoset: 5, autoclear: 3, movesec: 3, wave: 1, routeopts: 0, setoutput: 2, applyoutputs: 0, settrackinstr: 2
 };
@@ -127,7 +127,11 @@ function start(engine) {
 	}
 	function clickSong(song) {
 		const bpm = Math.max(20, Math.min(300, Number(song.bpm) || 120));
-		const spec = { name: String(song.name || "Click").slice(0, 60), bpm, key: String(song.key || ""), bars: parseInt(song.bars, 10) || 0, pad: song.pad === false || song.pad === 0 ? 0 : 1, file: silenceFor(bpm) };
+		const spec = { name: String(song.name || "Click").slice(0, 60), bpm, key: String(song.key || ""), bars: parseInt(song.bars, 10) || 0, pad: song.pad === false || song.pad === 0 ? 0 : 1, file: silenceFor(bpm),
+			meter: /^\d+\/(1|2|4|8|16)$/.test(song.meter || "") ? song.meter : "4/4",
+			groups: Array.isArray(song.groups) ? song.groups.slice(0, 32).map(Number) : [],
+			pat: Array.isArray(song.pat) ? song.pat.slice(0, 32).map(Number) : null,
+			every: song.every !== false, sub: Number(song.sub) || 1 };
 		if (engine.medley) engine.medley({ action: "clicksong", song: spec });
 	}
 

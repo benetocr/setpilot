@@ -47,7 +47,7 @@ const post = (p, body) => new Promise((res, rej) => { const d = JSON.stringify(b
 		assert.ok(c, "in the set: " + all.map(x => x.name).join(", "));
 		assert.strictEqual(c.bpm, 70);
 		assert.strictEqual(c.key, "D");
-		assert.deepStrictEqual(c.clk, { bars: 0, pad: 1 });
+		assert.deepStrictEqual([c.clk.bars, c.clk.pad, c.clk.pat.join("")], [0, 1, "4222"]);
 		assert.deepStrictEqual(c.sections.map(x => x.name), ["Click"]);
 		assert.strictEqual(c.end - c.start, 16, "a 4-bar loop: " + (c.end - c.start));
 		const room = await dump(c.start, c.end + 1);
@@ -74,6 +74,19 @@ const post = (p, body) => new Promise((res, rej) => { const d = JSON.stringify(b
 		const c2 = all.find(x => x.name === "Worship Click 2");
 		assert.ok(c2 && c2.end - c2.start === 32 && c2.clk.bars === 8 && c2.clk.pad === 0 && c2.key === "", "8 bars, no pad, no key: " + JSON.stringify(all.map(x => [x.name, x.start, x.end, x.clk, x.key])));
 		ok("with a length: 8 bars and then it ends");
+
+		// a click song in 7/8, grouped 2+2+3: its own time signature, groups and click, on its own bar lines
+		r = await post("/song", { action: "click", name: "Odd", bpm: 140, meter: "7/8", groups: [2, 2, 3], bars: 4, pad: false });
+		last = await waitImport();
+		assert.ok(last && last.kind === "done", JSON.stringify(last));
+		await sleep(1500);
+		const odd = (await songsNow()).find(x => x.name === "Odd");
+		assert.strictEqual(odd.meter, "7/8");
+		assert.deepStrictEqual(odd.clk.pat, [4, 1, 3, 1, 3, 1, 1]);
+		assert.deepStrictEqual(odd.clk.groups, [2, 2, 3]);
+		assert.ok(Math.abs(odd.start / 3.5 - Math.round(odd.start / 3.5)) < 1e-6, "starts on a 7/8 bar line: " + odd.start);
+		assert.strictEqual(odd.end - odd.start, 14, "4 bars of 3.5 beats");
+		ok("a click song in 7/8 (2+2+3): its accents, on its own bar lines, 4 bars long");
 
 		// automation through the dashboard's route
 		r = await post("/auto", { song: "Cielo Abierto", scope: "sec", i: 3, tempo: { bpm: 132, ramp: 2 }, key: { semis: 1 }, mix: { Drums: 1 } });

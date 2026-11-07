@@ -10,6 +10,7 @@ static int failures = 0;
 struct Run {
 	Core core;
 	double sr = 48000, bpm = 120, ppq = 0;
+	int sigNum = 4, sigDen = 4;
 	int block = 512;
 	bool playing = true;
 	std::vector<float> L, R, inL, inR;
@@ -19,7 +20,7 @@ struct Run {
 		int total = (int)(seconds * sr);
 		std::vector<float> l(block), r(block), il(block, inputLevel), ir(block, inputLevel);
 		for (int done = 0; done < total; done += block) {
-			Transport t; t.playing = playing; t.ppq = ppq; t.bpm = bpm;
+			Transport t; t.playing = playing; t.ppq = ppq; t.bpm = bpm; t.sigNum = sigNum; t.sigDen = sigDen;
 			const float* in[2] = { il.data(), ir.data() };
 			float* out[2] = { l.data(), r.data() };
 			core.process(in, out, 2, block, t);
@@ -77,6 +78,22 @@ static void testClickSubdivision() {
 	r.go(1.0);
 	long want = r.beatSample(0.5), got = r.onset(want - 50, 1e-7f);
 	CHECK(got >= want && got - want <= 2, "eighth note at half a beat");
+}
+
+// 6/8 from a song that starts on beat 1: eighths, beat one strongest, beat 4 next, the rest soft
+static void testClickSixEight() {
+	Run r(Role::Click);
+	r.sigNum = 6; r.sigDen = 8;
+	Command c; c.type = Command::ClickSet; c.click.beats = 6; c.click.accMask = 1; c.click.midMask = 1u << 3; c.click.softMask = 0x36;
+	c.click.origin = 1.0; c.click.lvlAcc = 1; c.click.lvlBeat = 0.7f; c.click.lvlSub = 0.35f;
+	r.core.push(c);
+	r.go(3.1);
+	auto peakNear = [&](double beat) { float p = 0; long s = r.beatSample(beat); for (long i = s; i < s + 2000; ++i) p = std::max(p, std::fabs(r.L[i])); return p; };
+	long want = r.beatSample(1.5), got = r.onset(want - 50, 1e-7f);
+	CHECK(got >= want && got - want <= 2, "6/8: a click on every eighth");
+	CHECK(peakNear(1.0) > peakNear(2.5) * 1.1f, "6/8: beat one strongest");
+	CHECK(peakNear(2.5) > peakNear(1.5) * 1.5f, "6/8: beat 4 stronger than the eighths around it");
+	CHECK(peakNear(4.0) > peakNear(2.5) * 1.1f, "6/8: the next bar starts 3 beats later, on the accent");
 }
 
 static void testClickSilentWhenStopped() {
@@ -222,7 +239,7 @@ static void testRecordedPads() {
 
 int main() {
 	testRecordedPads();
-	testClickOnTheGrid(); testClickNotBetweenBeats(); testClickAccentAndMute(); testClickSubdivision(); testClickSilentWhenStopped();
+	testClickOnTheGrid(); testClickNotBetweenBeats(); testClickAccentAndMute(); testClickSubdivision(); testClickSixEight(); testClickSilentWhenStopped();
 	testCueStartsOnItsBeat(); testCueDisarmAndPlayNow();
 	testGateClosesOnItsBeat(); testGateNow();
 	testTailCrossfade(); testTailRate();

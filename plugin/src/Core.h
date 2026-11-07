@@ -47,6 +47,9 @@ struct ClickParams {
 	int sub = 1;            // 1 quarter, 2 eighths, 3 triplets, 4 sixteenths
 	uint32_t accMask = 1;   // beats with an accent
 	uint32_t muteMask = 0;  // silent beats
+	uint32_t midMask = 0;   // beats with a lighter accent (beat 4 of a 6/8 bar, the start of each group in 7/8)
+	uint32_t softMask = 0;  // beats played soft (the eighths inside a 6/8 group)
+	double origin = 0;      // where the song's bars start, in beats (a 6/8 song doesn't sit on Live's 4/4 grid)
 	float lvlAcc = 1.0f, lvlBeat = 0.8f, lvlSub = 0.5f;
 	int sound = 0;          // 0 beep, 1 wood, 2 rim
 	float gain = 1.0f;
@@ -190,16 +193,20 @@ private:
 			const int sub = std::max(1, std::min(4, click.sub));
 			const int beats = std::max(1, click.beats);
 			const double step = 4.0 / tr.sigDen / sub;   // one subdivision, in quarter-note beats
-			for (double g = std::ceil(tr.ppq / step - 1e-9) * step; ; g += step) {
+			const double o = click.origin;
+			for (double g = o + std::ceil((tr.ppq - o) / step - 1e-9) * step; ; g += step) {
 				int s = crossing(g, tr.ppq, bps, n);
 				if (s < 0) break;
-				long long k = std::llround(g / step);
-				int beatInBar = (int)(((k / sub) % beats + beats) % beats);
+				long long k = std::llround((g - o) / step);
+				long long u = k >= 0 ? k / sub : -((-k + sub - 1) / sub);
+				int beatInBar = (int)((u % beats + beats) % beats);
 				float lvl;
 				int kind;
+				if (click.muteMask >> beatInBar & 1u) continue;
 				if (k % sub != 0) { lvl = click.lvlSub; kind = 2; }
-				else if (click.muteMask >> beatInBar & 1u) continue;
 				else if (click.accMask >> beatInBar & 1u) { lvl = click.lvlAcc; kind = 0; }
+				else if (click.midMask >> beatInBar & 1u) { lvl = (click.lvlAcc + click.lvlBeat) * 0.5f; kind = 3; }
+				else if (click.softMask >> beatInBar & 1u) { lvl = click.lvlSub; kind = 2; }
 				else { lvl = click.lvlBeat; kind = 1; }
 				renderClickVoice(out, numCh, done, s);
 				uint32_t nz = clickVoice.noise;
@@ -213,7 +220,7 @@ private:
 		ClickVoice& v = clickVoice;
 		if (!v.active) return;
 		const int len = (int)(0.045 * sampleRate);
-		const double freq = v.kind == 0 ? 1600.0 : v.kind == 1 ? 1100.0 : 800.0;
+		const double freq = v.kind == 0 ? 1600.0 : v.kind == 3 ? 1350.0 : v.kind == 1 ? 1100.0 : 800.0;
 		for (int i = from; i < to; ++i) {
 			if (v.pos >= len) { v.active = false; break; }
 			const double t = v.pos / sampleRate;

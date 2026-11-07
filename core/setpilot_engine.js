@@ -478,6 +478,7 @@ function publishStruct() {
 		cueLoaded: loadedCues(),
 		settings: { cueMode: cueMode, cueBars: cueBars, cueLang: cueLang, precount: precountBars, cueStyle: cueStyle, cueSource: cueSource },
 		click: click,
+		clickNow: { meter: meterKey(), pat: patternNow(), groups: groupsFor(sigNum, sigDen), own: !!(clkOf(clickSongNow()) && clkOf(clickSongNow()).pat) },
 		companions: { click: clickPresent() ? 1 : 0, gate: gatePresent() ? 1 : 0, tail: tailPresent() ? 1 : 0 },
 		guide: { tracks: guideNames, clicks: clickNames }
 	};
@@ -1427,10 +1428,17 @@ function clickSong(o) {
 	var base = String(o.name || "Click").replace(/[#|]/g, " ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "") || "Click";
 	var name = base, n = 2;
 	while (songIndex(name) >= 0) name = base + " " + (n++);
-	var bl = barLen(), last = songEndBeats();
-	var P = last > 0 ? Math.ceil(last / bl - 1e-6) * bl + 4 * bl : 0;
+	// its time signature, how the bar is grouped and clicked, and the subdivision
+	var mt = String(o.meter || "4/4").match(/^(\d+)\/(1|2|4|8|16)$/), mn = mt ? Math.max(1, Math.min(32, +mt[1])) : 4, md = mt ? +mt[2] : 4;
+	var meter = mn + "/" + md;
+	var groups = groupsFor(mn, md, (o.groups || []).map(Number));
+	var pat = o.pat && o.pat.length == mn ? o.pat.map(function (v) { return Math.max(0, Math.min(4, v | 0)); }) : defaultPattern(mn, md, groups, o.every !== false);
+	var sub = [1, 2, 3, 4].indexOf(+o.sub) >= 0 ? +o.sub : 1;
+	var bl = mn * 4 / md, last = songEndBeats();
+	// on one of its own bar lines counted from the set's start
+	var P = last > 0 ? Math.ceil((last + 4 * bl) / bl - 1e-6) * bl : 0;
 	var len = (bars || CLK_ENDLESS_BARS) * bl;
-	songOpts[name] = { bpm: 0, semis: 0, clk: { bars: bars, pad: o.pad === 0 || o.pad === false ? 0 : 1 } };
+	songOpts[name] = { bpm: 0, semis: 0, clk: { bars: bars, pad: o.pad === 0 || o.pad === false ? 0 : 1, pat: pat, sub: sub, groups: groups } };
 	needStore = true;
 	// Live won't put a locator past the end of the set: a bar of silence on
 	// SetPilot Click at the song's end makes the room (and shows it in Live)
@@ -1446,13 +1454,13 @@ function clickSong(o) {
 	}
 	job = { steps: steps.concat([
 		{ type: "zoom", dir: 3 },
-		{ type: "cue", time: P, name: header({ title: name, bpm: bpm, key: key }) },
+		{ type: "cue", time: P, name: header({ title: name, bpm: bpm, key: key, meter: meter }) },
 		{ type: "cue", time: P + len, name: "STOP" },
 		{ type: "zoom", dir: 2 },
 		{ type: "done" }
 	]), i: 0, P: P, dest: dest, title: name, savedTempo: tempo, warp: {} };
-	importMsg("start", name, job.steps.length, Math.round(P / bl) + 1);
-	log("click song " + name + " at bar " + (Math.round(P / bl) + 1) + ": " + bpm + " BPM" + (key ? ", " + key : "") + (bars ? ", " + bars + " bars" : ", endless"));
+	importMsg("start", name, job.steps.length, Math.round(P / barLen()) + 1);
+	log("click song " + name + " at beat " + P + ": " + bpm + " BPM in " + meter + " (" + groups.join("+") + ")" + (key ? ", " + key : "") + (bars ? ", " + bars + " bars" : ", endless"));
 }
 function clkOf(s) { return s >= 0 && s < songs.length && songOpts[songs[s].name] ? songOpts[songs[s].name].clk || null : null; }
 
@@ -3359,29 +3367,77 @@ function clicktick() {
 
 // ------------------------------------------------------------------ click
 
-function accentsFor(n) {
-	var a = click.accents || [];
-	if (a.length == n) return a;
-	// each bar length keeps its own accents (a 6/8 song doesn't undo the 4/4 ones)
-	click.accentsBy = click.accentsBy || {};
-	if (a.length) click.accentsBy[a.length] = a;
-	var out = click.accentsBy[n];
-	if (!out) { out = []; for (var i = 0; i < n; i++) out.push(i == 0 ? 2 : 1); }
-	click.accents = out;
+// ---------------------------------------------------------------- the click, in any time signature
+// A bar is a row of units (the time signature's bottom note: quarters in 4/4,
+// eighths in 6/8). Units come in groups: one per unit in 4/4 or 3/4, threes in
+// 6/8, 9/8 and 12/8, twos and threes in 5/8 or 7/8. Each unit has a level:
+// 4 accent, 3 lighter accent, 2 beat, 1 soft, 0 off.
+var LV_ACC = 4, LV_MID = 3, LV_BEAT = 2, LV_SOFT = 1, LV_OFF = 0;
+function groupsFor(n, d, want) {
+	n = Math.max(1, Math.min(32, n | 0));
+	if (want && want.length) { var sum = 0; for (var i = 0; i < want.length; i++) sum += want[i]; if (sum == n) return want.slice(); }
+	var g = [], k;
+	if (d < 8) { for (k = 0; k < n; k++) g.push(1); return g; }        // x/4, x/2: every unit is a beat
+	if (n <= 3) return [n];
+	if (n % 3 == 0) { for (k = 0; k < n / 3; k++) g.push(3); return g; }   // 6/8, 9/8, 12/8
+	if (n == 5) return [3, 2];
+	if (n == 7) return [2, 2, 3];
+	for (k = n; k > 3; k -= 2) g.push(2);                                // 11/8: 2+2+2+2+3 ...
+	g.push(k);
+	return g;
+}
+function defaultPattern(n, d, groups, every) {
+	var out = [], gs = groupsFor(n, d, groups);
+	for (var gi = 0; gi < gs.length; gi++) for (var u = 0; u < gs[gi]; u++) {
+		if (u == 0) out.push(gi == 0 ? LV_ACC : (gs.length > 1 && gs[gi] > 1 ? LV_MID : LV_BEAT));
+		else out.push(every === false ? LV_OFF : LV_SOFT);
+	}
 	return out;
 }
+function meterKey() { return sigNum + "/" + sigDen; }
+// the pattern for the time signature Live is in (yours if you changed it)
+function patternFor(n, d) {
+	click.pats = click.pats || {};
+	var key = n + "/" + d, p = click.pats[key];
+	// the accents of earlier versions (2 accent, 1 beat, 0 off) are the 4/4 ones
+	if (!p && key == "4/4" && click.accents && click.accents.length == 4 && !click.patsFromOld) {
+		p = click.accents.map(function (v) { return v == 2 ? LV_ACC : v == 0 ? LV_OFF : LV_BEAT; });
+		click.patsFromOld = 1;
+	}
+	if (!p || p.length != n) p = defaultPattern(n, d);
+	click.pats[key] = p;
+	return p;
+}
+// the song the click is for: the one playing, or the one ready to start
+function clickSongNow() { return playing ? curSong : (armSong >= 0 ? armSong : curSong); }
+function patternNow() {
+	var s = clickSongNow(), ck = clkOf(s);
+	if (ck && ck.pat && ck.pat.length == sigNum) return ck.pat;
+	return patternFor(sigNum, sigDen);
+}
+function accentsFor(n) { return patternFor(n, sigDen); }
 
 function sendClick() {
-	var acc = accentsFor(sigNum), accMask = 0, muteMask = 0;
-	for (var i = 0; i < acc.length; i++) {
-		if (acc[i] == 2) accMask += Math.pow(2, i);
-		if (acc[i] == 0) muteMask += Math.pow(2, i);
+	var pat = patternNow(), m = { acc: 0, mid: 0, soft: 0, mute: 0 };
+	for (var i = 0; i < pat.length; i++) {
+		var bit = Math.pow(2, i);
+		if (pat[i] == LV_ACC) m.acc += bit;
+		else if (pat[i] == LV_MID) m.mid += bit;
+		else if (pat[i] == LV_SOFT) m.soft += bit;
+		else if (pat[i] == LV_OFF) m.mute += bit;
 	}
-	var P = ["on", click.on || clkSong >= 0 ? 1 : 0, "beats", sigNum, "sub", click.sub, "accmask", accMask, "mutemask", muteMask,
+	var s = clickSongNow(), ck = clkOf(s);
+	var sub = ck && ck.sub ? ck.sub : click.sub;
+	// the song's own bar lines (a 6/8 song may not sit on Live's grid from the set's start)
+	var origin = s >= 0 && songs[s] ? songs[s].start : 0;
+	var P = ["on", click.on || clkSong >= 0 ? 1 : 0, "beats", sigNum, "sub", sub, "accmask", m.acc, "mutemask", m.mute, "midmask", m.mid, "softmask", m.soft, "origin", Math.round(origin * 1000) / 1000,
 		"lvlacc", click.acc / 100, "lvlbeat", click.beat / 100, "lvlsub", click.subl / 100,
 		"sound", click.sound, "gain", click.gain / 100,
 		// songs' click stems land on this track too: heard only when SetPilot's click doesn't replace them
 		"thru", click.on && click.muteSong ? 0 : 1];
+	var sig = P.join(",");
+	if (sig == click.lastSent && clock - (click.sentAt || 0) < 5000) return;
+	click.lastSent = sig; click.sentAt = clock;
 	for (var k = 0; k < P.length; k += 2) messnamed("setpilot_click", "param", P[k], P[k + 1]);
 }
 
@@ -3404,12 +3460,15 @@ function clicksound(v) { click.sound = Math.max(0, Math.min(2, parseInt(v, 10) |
 function clicksub(v) { v = parseInt(v, 10); if ([1, 2, 3, 4].indexOf(v) >= 0) { click.sub = v; clickChanged(); } }
 function clickmute(v) { click.muteSong = v ? 1 : 0; clickChanged(); }
 function clickaccent(i, state) {
-	var a = accentsFor(sigNum);
+	var a = patternFor(sigNum, sigDen);
 	i = parseInt(i, 10); state = parseInt(state, 10);
-	if (i < 0 || i >= a.length || [0, 1, 2].indexOf(state) < 0) return;
+	if (i < 0 || i >= a.length || !(state >= 0 && state <= 4)) return;
 	a[i] = state;
+	click.lastSent = "";
 	clickChanged();
 }
+// back to how the time signature is usually clicked
+function clickreset() { click.pats = click.pats || {}; delete click.pats[meterKey()]; click.lastSent = ""; clickChanged(); }
 function clicklevel(which, v) {
 	v = Math.max(0, Math.min(150, parseInt(v, 10) || 0));
 	var k = ["acc", "beat", "subl", "gain", "pad"][parseInt(which, 10)];
@@ -3455,6 +3514,7 @@ function applyMeter(s) {
 function applyTempo(s) {
 	if (s < 0 || s >= songs.length) return;
 	guard("meter", applyMeter)(s);
+	guard("click", sendClick)();
 	var o = opt(s), sg = songs[s];
 	var target = medOf(s) ? medTempoAt(s, (t >= sg.start && t < sg.end) ? t : sg.start) : (medBpmFor(s) || o.bpm || sg.bpm);
 	if (target) {
@@ -3607,6 +3667,12 @@ function importMsg(kind, a, b, c) {
 }
 
 // end of the real content: last clip or last locator
+// beats in one bar of a time signature like "6/8" (0 if there isn't one)
+function meterBeats(m) {
+	var x = String(m || "").match(/^(\d+)\/(\d+)$/);
+	return x && +x[1] > 0 && +x[2] > 0 ? +x[1] * 4 / +x[2] : 0;
+}
+
 function songEndBeats() {
 	var last = 0;
 	var ids = trackIds();
@@ -3635,7 +3701,10 @@ function importplan() {
 	var bl = barLen();
 	var last = songEndBeats();
 	var gap = Math.max(0, parseInt(plan.gap, 10) || 16);
-	var P = last > 0 ? Math.ceil(last / bl - 1e-6) * bl + gap * bl : 0;
+	// the song starts on one of its own bar lines counted from the set's start
+	// (Live has one time signature: a 6/8 song's bars must line up when Live is in 6/8)
+	var pbl = meterBeats(plan.meter) || bl;
+	var P = last > 0 ? Math.ceil((last + gap * pbl) / pbl - 1e-6) * pbl : 0;
 
 	// destination tracks by normalized name (never the SetPilot cue/click tracks)
 	var dest = {}, ids = trackIds(), spClick = 0;

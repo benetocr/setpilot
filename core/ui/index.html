@@ -153,9 +153,9 @@
         </div>
       </div>
       <div class="set-row column">
-        <span data-i18n="accents">Beats</span>
+        <span><span data-i18n="accents">Beats</span> <b class="mt-now" id="optMeterNow"></b> <button type="button" class="link-btn" id="optClickReset" data-i18n="clickReset">Back to normal</button></span>
         <div class="beats" id="optAccents"></div>
-        <small class="set-help" data-i18n="accentsHelp"></small>
+        <small class="set-help" data-i18n="accentsHelp2">Tap a beat: accent, lighter accent, beat, soft, off. Each time signature keeps its own.</small>
       </div>
       <div class="levels">
         <label><span data-i18n="lvlMaster">Click level</span><input type="range" min="0" max="150" data-level="3"></label>
@@ -504,6 +504,41 @@
           <label class="field"><span data-i18n="addKey">Key</span><input id="clkKey" type="text" maxlength="3" placeholder="C"></label>
         </div>
         <div class="set-row column">
+          <span data-i18n="clkMeter">Time signature</span>
+          <div class="mt-chips" id="clkMeter">
+            <button type="button" data-m="4/4">4/4</button><button type="button" data-m="3/4">3/4</button><button type="button" data-m="6/8">6/8</button>
+            <button type="button" data-m="2/4">2/4</button><button type="button" data-m="12/8">12/8</button><button type="button" data-m="2/2">2/2</button>
+            <button type="button" data-m="5/4">5/4</button><button type="button" data-m="7/8">7/8</button><button type="button" data-m="9/8">9/8</button>
+            <button type="button" data-m="other" data-i18n="clkMeterOther">Other</button>
+          </div>
+          <div class="mt-other" id="clkMeterOther" hidden>
+            <input id="clkNum" type="number" min="1" max="32" value="5" aria-label="Beats in a bar"><b>/</b>
+            <select class="sel" id="clkDen" aria-label="Note value"><option value="2">2</option><option value="4" selected>4</option><option value="8">8</option><option value="16">16</option></select>
+          </div>
+        </div>
+        <div class="set-row column" id="clkGroupRow" hidden>
+          <span data-i18n="clkGroups">Groups</span>
+          <div class="mt-chips" id="clkGroups"></div>
+        </div>
+        <div class="set-row column" id="clkEveryRow" hidden>
+          <span data-i18n="clkClickOn">The click plays</span>
+          <div class="seg-ctl" id="clkEvery" role="radiogroup">
+            <button data-v="1" role="radio" data-i18n="clkEveryUnit">Every eighth</button>
+            <button data-v="0" role="radio" data-i18n="clkEveryBeat">Only the main beats</button>
+          </div>
+        </div>
+        <div class="set-row column">
+          <span data-i18n="subdivision">Subdivision</span>
+          <div class="seg-ctl" id="clkSub" role="radiogroup">
+            <button data-v="1" role="radio"></button><button data-v="2" role="radio"></button><button data-v="3" role="radio"></button><button data-v="4" role="radio"></button>
+          </div>
+        </div>
+        <div class="set-row column">
+          <span><span data-i18n="clkBar">The bar</span> <small class="mt-tip" data-i18n="clkBarTip">Tap a beat to change how it sounds</small></span>
+          <div class="mt-bar"><div class="beats" id="clkBeats"></div>
+            <button type="button" class="chip-btn mt-listen" id="clkListen"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><span data-i18n="clkListen">Listen</span></button></div>
+        </div>
+        <div class="set-row column">
           <span data-i18n="clkLength">Length</span>
           <div class="clk-len">
             <div class="seg-ctl" id="clkMode" role="radiogroup">
@@ -620,6 +655,7 @@
   </div>
 </div>
 <script src="i18n.js"></script>
+<script src="meter.js"></script>
 <script src="stems_dsp.js"></script>
 <script src="stems.js"></script>
 <script src="app.js"></script>

@@ -139,6 +139,9 @@ void AppLink::handle(const juce::var& m) {
 		k.sub = (int)p.getProperty("sub", 1);
 		k.accMask = (juce::uint32)(int)p.getProperty("accmask", 1);
 		k.muteMask = (juce::uint32)(int)p.getProperty("mutemask", 0);
+		k.midMask = (juce::uint32)(int)p.getProperty("midmask", 0);
+		k.softMask = (juce::uint32)(int)p.getProperty("softmask", 0);
+		k.origin = (double)p.getProperty("origin", 0.0);
 		k.lvlAcc = (float)(double)p.getProperty("lvlacc", 1.0);
 		k.lvlBeat = (float)(double)p.getProperty("lvlbeat", 0.8);
 		k.lvlSub = (float)(double)p.getProperty("lvlsub", 0.5);
