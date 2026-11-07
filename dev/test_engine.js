@@ -11,7 +11,7 @@ function test(name, fn) {
 }
 
 function setup(opts = {}) {
-	const song = new FakeSong(DEMO_CUES);
+	const song = new FakeSong(opts.cues || DEMO_CUES);
 	if (opts.tail) song.tailDevice = 8;
 	let last = null, struct = null, eng = null;
 	const tailPlans = [], notices = [];
@@ -1279,6 +1279,21 @@ test("automation by section follows duplicates; on a block it stays with that bl
 	assert.deepStrictEqual(Object.keys(sg.blk), ["2"]);
 	auto(t, { scope: "blk", i: 2, key: "none", mix: { Drums: null } });
 	assert.strictEqual(t.eng.dicts.setpilot_struct.songs[0].blk, null, "cleared");
+});
+
+
+test("a song in 6/8 gets Live's time signature while it plays; the next one goes back to 4/4", () => {
+	const cues = DEMO_CUES.map(c => [c[0] === "# Grande y Fiel | 72 | G" ? "# Grande y Fiel | 72 | G | 6/8" : c[0], c[1]]);
+	const t = setup({ cues });
+	t.run(200);
+	t.cmd("playsong", 0);
+	t.run(300);
+	assert.deepStrictEqual([t.song.props.signature_numerator, t.song.props.signature_denominator], [6, 8]);
+	t.cmd("stop");
+	t.run(200);
+	t.cmd("playsong", 1);
+	t.run(300);
+	assert.deepStrictEqual([t.song.props.signature_numerator, t.song.props.signature_denominator], [4, 4]);
 });
 
 console.log(failures ? `\n${failures} failing` : "\nall passing");

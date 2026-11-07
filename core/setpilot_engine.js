@@ -251,8 +251,8 @@ function initImpl() {
 	observers = [];
 	observe("is_playing", function (v) { playing = num(v); });
 	observe("tempo", function (v) { tempo = num(v); });
-	observe("signature_numerator", function (v) { sigNum = num(v) || 4; dirty = true; });
-	observe("signature_denominator", function (v) { sigDen = num(v) || 4; dirty = true; });
+	observe("signature_numerator", function (v) { var n = num(v) || 4; if (n != sigNum) { sigNum = n; dirty = true; guard("click", sendClick)(); } });
+	observe("signature_denominator", function (v) { var d = num(v) || 4; if (d != sigDen) { sigDen = d; dirty = true; guard("click", sendClick)(); } });
 	observe("loop", function (v) {
 		liveLoop = num(v);
 		if (!liveLoop) loopState = null;
@@ -3362,8 +3362,11 @@ function clicktick() {
 function accentsFor(n) {
 	var a = click.accents || [];
 	if (a.length == n) return a;
-	var out = [];
-	for (var i = 0; i < n; i++) out.push(i < a.length ? a[i] : (i == 0 ? 2 : 1));
+	// each bar length keeps its own accents (a 6/8 song doesn't undo the 4/4 ones)
+	click.accentsBy = click.accentsBy || {};
+	if (a.length) click.accentsBy[a.length] = a;
+	var out = click.accentsBy[n];
+	if (!out) { out = []; for (var i = 0; i < n; i++) out.push(i == 0 ? 2 : 1); }
 	click.accents = out;
 	return out;
 }
@@ -3430,8 +3433,28 @@ function baseBpm(s) {
 // Called when a song starts or is prepared. SetPilot owns the tempo of every
 // song that has a BPM (from the locator or chosen in the dashboard); other
 // songs go back to the set's own tempo automation.
+// Live has one time signature for the whole set: each song that says its own
+// (a header like "# Song | 72 | G | 6/8") gets it while it plays, and the
+// songs after it go back to 4/4.
+var meterSet = false;
+function applyMeter(s) {
+	if (s < 0 || s >= songs.length || medOf(s)) return;
+	var m = String(songs[s].meter || "").match(/^(\d+)\/(\d+)$/), n, d;
+	if (m) { n = +m[1]; d = +m[2]; meterSet = true; }
+	else if (meterSet) { n = 4; d = 4; meterSet = false; }
+	else return;
+	if (n == sigNum && d == sigDen) return;
+	setProp("signature_numerator", n);
+	setProp("signature_denominator", d);
+	sigNum = n; sigDen = d;
+	structSig = ""; dirty = true;
+	sendClick();
+	log("time signature " + n + "/" + d + " for " + songs[s].name);
+}
+
 function applyTempo(s) {
 	if (s < 0 || s >= songs.length) return;
+	guard("meter", applyMeter)(s);
 	var o = opt(s), sg = songs[s];
 	var target = medOf(s) ? medTempoAt(s, (t >= sg.start && t < sg.end) ? t : sg.start) : (medBpmFor(s) || o.bpm || sg.bpm);
 	if (target) {
