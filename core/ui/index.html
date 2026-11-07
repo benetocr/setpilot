@@ -536,12 +536,16 @@
         <h3 id="autoTitle" data-i18n="automation">Automation</h3>
         <button class="icon-btn" id="autoClose" data-i18n-label="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </div>
-      <div class="seg-ctl auto-scope" id="autoScope" role="radiogroup">
-        <button data-v="sec" role="radio" data-i18n="autoBySection">By section</button>
-        <button data-v="blk" role="radio" data-i18n="autoByArr">On this arrangement</button>
+      <div class="au-bar">
+        <label class="au-copies">
+          <input type="checkbox" id="autoCopies" checked><i class="switch"></i>
+          <span><strong data-i18n="autoCopies">Repeat on copies</strong><small id="autoCopiesHelp"></small></span>
+        </label>
+        <button class="chip-btn" id="autoClearAll" type="button" data-i18n="autoClearAll">Clear all</button>
       </div>
-      <p class="auto-note" id="autoNote"></p>
-      <ol class="auto-list" id="autoList"></ol>
+      <p class="auto-hint" data-i18n="autoHint">Tap a box to change it. Tempo and key keep going until the next change.</p>
+      <div class="au-scroll" id="autoGridWrap"><div class="au-grid" id="autoGrid"></div></div>
+      <div class="au-pop" id="autoPop" hidden></div>
     </div>
   </div>
 

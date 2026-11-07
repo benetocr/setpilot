@@ -1751,171 +1751,273 @@
   $("dockAutoDone").addEventListener("click", function () { sm.sel = -1; updateAutoMode(); render(); });
 
   // ------------------------------------------------------------ automation
-  // Tempo, key and channels along a song: on a section (every time it plays,
-  // copies included) or on one block of the arrangement (that block only).
-  var au = { scope: "sec", open: -1, song: -1 };
+  // One grid for the whole song: a column per part of the arrangement, a row
+  // for tempo, one for key and one per channel. Tempo and key carry on to the
+  // right until the next change, so one tap covers the rest of the song.
+  // With "Repeat on copies" on, a change goes on the section (every copy of
+  // it plays it); off, it stays on that one part.
+  var au = { song: -1, copies: true, pop: null, paint: null };
+  try { au.copies = localStorage.getItem("sp.autoCopies") !== "0"; } catch (e) { }
   function auSong() { return songs()[au.song]; }
   function auPlay(s) {
-    var a = s.arr && s.arr.length ? s.arr : null, l = [];
-    if (a) return a.slice();
-    for (var j = 0; j < s.sections.length; j++) l.push(j);
-    return l;
+    if (s.arr && s.arr.length) return s.arr.slice();
+    return s.sections.map(function (_, j) { return j; });
   }
+  function auTracks() { return mixer && mixer.tracks ? mixer.tracks.filter(function (x) { return !x.kind; }) : null; }
   function openAuto() {
     var s = songs()[shownIdx];
     if (!s || s.med) return;
     au.song = shownIdx;
-    au.open = -1;
+    au.pop = null;
     $("autoSheet").hidden = false;
+    $("autoCopies").checked = au.copies;
     send("mixeron");
     clearInterval(au.ping);
     au.ping = setInterval(function () { if ($("autoSheet").hidden) clearInterval(au.ping); else send("mixeron"); }, 5000);
     renderAuto();
   }
-  function closeAuto() { $("autoSheet").hidden = true; au.open = -1; }
+  function closeAuto() { $("autoSheet").hidden = true; closePop(); }
   function postAuto(body) {
     var s = auSong();
     if (!s) return;
     body.song = s.name;
-    body.scope = au.scope;
-    fetch("/auto", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(function () {});
+    return fetch("/auto", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(function () {});
   }
-  function auEntry(s, i) {
-    // what is set on this row: { t, k, mix: { name: 0|1 } }
-    if (au.scope === "blk") {
-      var b = s.blk && s.blk[i];
-      return { t: b && b.t, k: b && b.k, mix: (b && b.mix) || {} };
-    }
-    var e = s.ev && s.ev[i], m = {}, a = s.auto && s.auto[i];
-    if (a) for (var n in a) if (a[n] && a[n].m != null) m[n] = a[n].m;
-    return { t: e && e.t, k: e && e.k, mix: m };
+  // what is set on block k: where each change lives ("blk" on the part, "sec" on its section)
+  function auCell(s, L, k) {
+    var j = L[k], be = s.blk && s.blk[k], se = s.ev && s.ev[j], c = { j: j, k: k };
+    if (be && be.t) { c.t = be.t; c.tAt = "blk"; } else if (se && se.t) { c.t = se.t; c.tAt = "sec"; }
+    if (be && be.k) { c.key = be.k; c.kAt = "blk"; } else if (se && se.k) { c.key = se.k; c.kAt = "sec"; }
+    return c;
   }
-  function auTracks() {
-    return mixer && mixer.tracks ? mixer.tracks.filter(function (x) { return !x.kind; }) : null;
+  function auBase(s) { return s.tempoSet || s.bpm || (pos && pos.tempo) || 120; }
+  // tempo and key in force on every block, left to right
+  function auRun(s, L) {
+    var base = auBase(s), bpm = base, semis = s.semis || 0, out = [];
+    L.forEach(function (j, k) {
+      var c = auCell(s, L, k);
+      if (c.t) bpm = c.t.bpm || base;
+      if (c.key) semis = c.key.orig ? (s.semis || 0) : c.key.semis;
+      c.bpm = bpm; c.semis = semis;
+      out.push(c);
+    });
+    return out;
   }
-  function auChips(s, e, inherited) {
-    var c = [], cls = inherited ? " inh" : "";
-    if (e.t) c.push('<span class="au-chip t' + cls + '">' + (e.t.bpm ? fmtBpm(e.t.bpm) + " BPM" : esc(T("autoSongTempo"))) + (e.t.ramp ? " · " + esc(T("autoRampN", { n: e.t.ramp })) : "") + "</span>");
-    if (e.k) c.push('<span class="au-chip k' + cls + '">' + esc(e.k.orig ? T("autoSongKey") : (keyName(s.key, e.k.semis) || semisLabel(e.k.semis))) + "</span>");
-    var tr = auTracks() || [];
-    for (var n in e.mix) {
-      var t = tr.filter(function (x) { return normName(x.name) === n; })[0];
-      c.push('<span class="au-chip ' + (e.mix[n] ? "off" : "on") + cls + '">' + esc((t ? t.name : n) + " " + T(e.mix[n] ? "autoOff" : "autoOn")) + "</span>");
-    }
-    return c.join("");
+  function auMixOff(s, k, j, name) {
+    var n = normName(name), b = s.blk && s.blk[k] && s.blk[k].mix && s.blk[k].mix[n];
+    if (b && b.m != null) return { off: !!b.m, at: "blk" };
+    var a = s.auto && s.auto[j] && s.auto[j][n];
+    if (a && a.m != null) return { off: !!a.m, at: "sec" };
+    return { off: false, at: "" };
   }
+  function auKeyLabel(s, semis) { return keyName(s.key, semis) || (semis ? semisLabel(semis) : T("autoSongKey")); }
   function renderAuto() {
     var s = auSong();
     if (!s || $("autoSheet").hidden) return;
     $("autoTitle").textContent = T("autoTitle", { song: s.name });
-    setSeg("autoScope", au.scope);
-    var note = $("autoNote");
-    note.textContent = T(au.scope === "blk" ? "autoNoteBlk" : "autoNoteSec");
-    note.classList.toggle("warn", au.scope === "blk");
-    var rows = [], L = auPlay(s);
-    if (au.scope === "sec") s.sections.forEach(function (sec, j) { rows.push({ i: j, name: sec.name, bars: sec, inh: null }); });
-    else L.forEach(function (j, k) { var sec = s.sections[j]; rows.push({ i: k, name: sec.name, bars: sec, inh: auEntrySec(s, j), num: k + 1 }); });
-    var html = rows.map(function (r) {
-      var e = auEntry(s, r.i), open = au.open === r.i;
-      var chips = auChips(s, e, false) + (r.inh ? auChips(s, r.inh, true) : "");
-      return '<li class="au-row' + (open ? " open" : "") + '" data-i="' + r.i + '">' +
-        '<button class="au-head" type="button" aria-expanded="' + open + '"><span class="au-n">' + (r.num || r.i + 1) + '</span><span class="au-name">' + esc(r.name) + "</span>" +
-        '<span class="au-chips">' + (chips || '<span class="au-none">' + esc(T("autoNothing")) + "</span>") + "</span></button>" +
-        (open ? auEditor(s, e) : "") + "</li>";
-    }).join("");
-    var list = $("autoList"), y = list.scrollTop;
-    list.innerHTML = html;
-    list.scrollTop = y;
-  }
-  function auEntrySec(s, j) {
-    var e = s.ev && s.ev[j], m = {}, a = s.auto && s.auto[j];
-    if (a) for (var n in a) if (a[n] && a[n].m != null) m[n] = a[n].m;
-    return { t: e && e.t, k: e && e.k, mix: m };
-  }
-  function seg3(act, cur, opts) {
-    return '<div class="seg-ctl au-seg" data-act="' + act + '">' + opts.map(function (o) {
-      return '<button type="button" role="radio" data-v="' + o[0] + '" aria-checked="' + (String(cur) === String(o[0])) + '">' + esc(o[1]) + "</button>";
-    }).join("") + "</div>";
-  }
-  function auEditor(s, e) {
-    var tMode = !e.t ? "none" : e.t.bpm ? "set" : "song";
-    var kMode = !e.k ? "none" : e.k.orig ? "song" : "set";
-    var base = s.tempoSet || s.bpm || (pos && pos.tempo) || 120;
-    var h = '<div class="au-ed">';
-    h += '<div class="au-sec"><span class="au-lab">' + esc(T("tempo")) + "</span>" +
-      seg3("tmode", tMode, [["none", T("autoNoChange")], ["set", T("autoChange")], ["song", T("autoSongTempo")]]);
-    if (tMode !== "none") {
-      h += '<div class="au-line">' + (tMode === "set" ? '<label class="au-num"><input type="number" data-act="bpm" min="20" max="300" step="0.5" value="' + (e.t.bpm || base) + '"><small>BPM</small></label>' : "") +
-        seg3("ramp", e.t.ramp ? "ramp" : "jump", [["jump", T("autoAtOnce")], ["ramp", T("autoRamp")]]) +
-        (e.t.ramp ? '<select class="sel au-bars" data-act="rampbars">' + [1, 2, 4, 8].map(function (n) { return '<option value="' + n + '"' + (n === e.t.ramp ? " selected" : "") + ">" + esc(T("autoRampN", { n: n })) + "</option>"; }).join("") + "</select>" : "") + "</div>";
-      if (e.t.ramp) h += '<small class="set-help">' + esc(T("autoRampHelp", { n: e.t.ramp })) + "</small>";
-    }
+    $("autoCopiesHelp").textContent = T(au.copies ? "autoCopiesOn" : "autoCopiesOff");
+    var L = auPlay(s), run = auRun(s, L), tr = auTracks();
+    var here = pos && pos.song === au.song ? (pos.arrK >= 0 ? pos.arrK : L.indexOf(pos.sec)) : -1;
+    var cols = L.length;
+    var h = '<div class="au-g" style="--n:' + cols + '">';
+    // header: the parts
+    h += '<div class="au-lab au-top"></div>';
+    L.forEach(function (j, k) {
+      var sec = s.sections[j], bars = Math.max(1, Math.round((sec.end - sec.start) / barLen()));
+      h += '<div class="au-part' + (k === here ? " here" : "") + '" style="--c:' + SEC_HEX[family(sec.name)] + '"><b>' + esc(sec.name) + "</b><small>" + esc(T(bars === 1 ? "aeBar" : "aeBars", { n: bars })) + "</small></div>";
+    });
+    // tempo
+    h += '<div class="au-lab"><b>' + esc(T("tempo")) + "</b><small>BPM</small></div>";
+    run.forEach(function (c, k) {
+      var set = !!c.t, ramp = set && c.t.ramp;
+      h += '<button type="button" class="au-cell au-t' + (set ? " set" : "") + (k === here ? " here" : "") + (set && c.tAt === "sec" ? " linked" : "") + '" data-row="t" data-k="' + k + '">' +
+        (k > 0 && set ? '<span class="au-seam' + (ramp ? " ramp" : "") + '" data-seam="' + k + '" title="' + esc(T(ramp ? "autoRampN" : "autoAtOnce", { n: ramp })) + '">' + (ramp ? '<svg viewBox="0 0 24 24"><path d="M3 18 21 6"/></svg><i>' + ramp + "</i>" : '<svg viewBox="0 0 24 24"><path d="M3 18h9V6h9"/></svg>') + "</span>" : "") +
+        "<b>" + fmtBpm(c.bpm) + "</b>" + (set ? '<small>' + esc(c.t.bpm ? "" : T("autoSongShort")) + "</small>" : "") + "</button>";
+    });
+    // key
+    h += '<div class="au-lab"><b>' + esc(T("addKey")) + "</b></div>";
+    run.forEach(function (c, k) {
+      var set = !!c.key;
+      h += '<button type="button" class="au-cell au-k' + (set ? " set" : "") + (k === here ? " here" : "") + (set && c.kAt === "sec" ? " linked" : "") + '" data-row="k" data-k="' + k + '"><b>' + esc(auKeyLabel(s, c.semis)) + "</b>" +
+        (c.semis !== (s.semis || 0) ? "<small>" + semisLabel(c.semis - (s.semis || 0)) + "</small>" : "") + "</button>";
+    });
+    // channels
+    h += '<div class="au-sep"><span>' + esc(T("autoChannels")) + "</span><small>" + esc(T("autoChannelsHint")) + "</small></div>";
+    if (!tr) h += '<div class="au-sep au-wait">' + esc(T("addLoading")) + "</div>";
+    else tr.forEach(function (x, ti) {
+      h += '<div class="au-lab au-ch"><span>' + esc(x.name) + "</span></div>";
+      L.forEach(function (j, k) {
+        var st = auMixOff(s, k, j, x.name);
+        h += '<button type="button" class="au-cell au-m' + (st.off ? " off" : "") + (k === here ? " here" : "") + (st.at === "sec" ? " linked" : "") + '" data-row="m" data-t="' + ti + '" data-k="' + k + '" aria-pressed="' + !st.off + '" aria-label="' + esc(x.name + " " + T(st.off ? "autoOff" : "autoOn")) + '"><i></i></button>';
+      });
+    });
     h += "</div>";
-    h += '<div class="au-sec"><span class="au-lab">' + esc(T("addKey")) + "</span>" +
-      seg3("kmode", kMode, [["none", T("autoNoChange")], ["set", T("autoChange")], ["song", T("autoSongKey")]]);
-    if (kMode === "set") {
-      var p = parseKey(s.key);
-      if (p) {
-        h += '<div class="au-keys">';
-        for (var d = -5; d <= 6; d++) {
-          var on = e.k.semis === d;
-          h += '<button type="button" class="au-key' + (on ? " on" : "") + (d === (s.semis || 0) ? " home" : "") + '" data-act="key" data-v="' + d + '"><b>' + esc(keyName(s.key, d)) + "</b><small>" + semisLabel(d) + "</small></button>";
-        }
-        h += "</div>";
-      } else {
-        h += '<div class="au-line">' + [-2, -1, 1, 2, 3].map(function (d) { return '<button type="button" class="au-key' + (e.k.semis === d ? " on" : "") + '" data-act="key" data-v="' + d + '"><b>' + semisLabel(d) + "</b></button>"; }).join("") + "</div>";
+    var wrap = $("autoGridWrap"), x0 = wrap.scrollLeft, y0 = wrap.scrollTop;
+    $("autoGrid").innerHTML = h;
+    wrap.scrollLeft = x0; wrap.scrollTop = y0;
+    if (au.pop) renderPop();
+  }
+
+  // ---- the box that opens on a tempo or key cell
+  function closePop() { au.pop = null; $("autoPop").hidden = true; }
+  function openPop(row, k, cell) {
+    au.pop = { row: row, k: k };
+    renderPop();
+    var card = $("autoSheet").querySelector(".auto-card").getBoundingClientRect(), r = cell.getBoundingClientRect(), pop = $("autoPop");
+    var w = pop.offsetWidth, hgt = pop.offsetHeight;
+    var left = Math.max(8, Math.min(card.width - w - 8, r.left - card.left + r.width / 2 - w / 2));
+    var top = r.bottom - card.top + 8;
+    if (top + hgt > card.height - 8) top = Math.max(8, r.top - card.top - hgt - 8);
+    pop.style.left = left + "px";
+    pop.style.top = top + "px";
+  }
+  function popTarget(s, L, k, what) {
+    // a change is edited where it lives; a new one goes where "Repeat on copies" says
+    var c = auCell(s, L, k), at = what === "t" ? c.tAt : c.kAt;
+    return at || (au.copies ? "sec" : "blk");
+  }
+  function sendCell(what, k, val) {
+    var s = auSong(), L = auPlay(s), at = popTarget(s, L, k, what);
+    var body = { scope: at, i: at === "sec" ? L[k] : k };
+    body[what === "t" ? "tempo" : "key"] = val;
+    return postAuto(body);
+  }
+  function renderPop() {
+    var s = auSong(), p = au.pop;
+    if (!s || !p) return;
+    var L = auPlay(s), run = auRun(s, L), c = run[p.k], sec = s.sections[L[p.k]], h = "";
+    var at = popTarget(s, L, p.k, p.row), where = at === "sec" ? T("autoWhereSec", { name: sec.name }) : T("autoWherePart", { n: p.k + 1, name: sec.name });
+    if (p.row === "t") {
+      var cur = c.t ? (c.t.bpm || auBase(s)) : c.bpm;
+      h += '<div class="pop-head"><b>' + esc(T("autoTempoFrom", { name: sec.name })) + "</b><small>" + esc(where) + "</small></div>";
+      h += '<div class="pop-step">' + [-5, -1].map(function (d) { return '<button type="button" data-d="' + d + '">' + (d > 0 ? "+" : "−") + Math.abs(d) + "</button>"; }).join("") +
+        '<label class="pop-val"><input type="number" id="popBpm" min="20" max="300" step="0.5" value="' + cur + '"><small>BPM</small></label>' +
+        [1, 5].map(function (d) { return '<button type="button" data-d="' + d + '">+' + d + "</button>"; }).join("") + "</div>";
+      if (c.t && p.k > 0) {
+        var r = c.t.ramp || 0;
+        h += '<div class="pop-lab">' + esc(T("autoHow")) + '</div><div class="seg-ctl pop-ramp">' + [0, 1, 2, 4, 8].map(function (n) {
+          return '<button type="button" role="radio" data-ramp="' + n + '" aria-checked="' + (n === r) + '">' + esc(n ? T("autoRampN", { n: n }) : T("autoAtOnce")) + "</button>";
+        }).join("") + "</div>";
+        h += '<small class="pop-help">' + esc(r ? T("autoRampHelp", { n: r }) : T("autoJumpHelp")) + "</small>";
       }
+      h += '<div class="pop-acts">' + (c.t ? '<button type="button" class="chip-btn" data-x="clear">' + esc(T("autoRemove")) + "</button>" : "") +
+        '<button type="button" class="chip-btn" data-x="song">' + esc(T("autoBackSongTempo", { bpm: fmtBpm(auBase(s)) })) + "</button></div>";
+    } else {
+      h += '<div class="pop-head"><b>' + esc(T("autoKeyFrom", { name: sec.name })) + "</b><small>" + esc(where) + "</small></div>";
+      var pk = parseKey(s.key);
+      h += '<div class="pop-keys">';
+      for (var d = -5; d <= 6; d++) {
+        var on = !!c.key && !c.key.orig && c.key.semis === d;
+        h += '<button type="button" class="au-key' + (on ? " on" : "") + (d === (s.semis || 0) ? " home" : "") + '" data-semis="' + d + '"><b>' + esc(pk ? keyName(s.key, d) : semisLabel(d)) + "</b><small>" + semisLabel(d - (s.semis || 0)) + "</small></button>";
+      }
+      h += "</div>";
+      h += '<div class="pop-acts">' + (c.key ? '<button type="button" class="chip-btn" data-x="clear">' + esc(T("autoRemove")) + "</button>" : "") +
+        '<button type="button" class="chip-btn" data-x="song">' + esc(T("autoBackSongKey", { key: auKeyLabel(s, s.semis || 0) })) + "</button></div>";
     }
-    h += "</div>";
-    var tr = auTracks();
-    h += '<div class="au-sec"><span class="au-lab">' + esc(T("autoChannels")) + "</span>";
-    if (!tr) h += '<small class="set-help">' + esc(T("addLoading")) + "</small>";
-    else h += '<div class="au-tracks">' + tr.map(function (x) {
-      var n = normName(x.name), v = e.mix[n] == null ? "" : e.mix[n] ? "off" : "on";
-      return '<div class="au-track" data-name="' + esc(x.name) + '"><span>' + esc(x.name) + "</span>" + seg3("mix", v, [["", "–"], ["on", T("autoOn")], ["off", T("autoOff")]]) + "</div>";
-    }).join("") + "</div>";
-    h += "</div>";
-    h += '<div class="au-foot"><button type="button" class="chip-btn" data-act="clear">' + esc(T("autoClear")) + "</button></div>";
-    return h + "</div>";
+    $("autoPop").innerHTML = h;
+    $("autoPop").hidden = false;
   }
-  $("autoScope").addEventListener("click", function (e) {
-    var b = e.target.closest("button");
+  $("autoPop").addEventListener("click", function (e) {
+    var p = au.pop, s = auSong();
+    if (!p || !s) return;
+    var L = auPlay(s), c = auRun(s, L)[p.k], b = e.target.closest("button");
     if (!b) return;
-    au.scope = b.dataset.v;
-    au.open = -1;
+    var ramp = c.t ? c.t.ramp || 0 : 0;
+    if (b.dataset.d) {
+      var v = Math.max(20, Math.min(300, (+$("popBpm").value || c.bpm) + (+b.dataset.d)));
+      $("popBpm").value = v;
+      clearTimeout(au.popT);
+      au.popT = setTimeout(function () { sendCell("t", p.k, { bpm: v, ramp: ramp }); }, 250);
+    } else if (b.dataset.ramp != null) sendCell("t", p.k, { bpm: c.t ? c.t.bpm : 0, ramp: +b.dataset.ramp });
+    else if (b.dataset.semis != null) sendCell("k", p.k, { semis: +b.dataset.semis });
+    else if (b.dataset.x === "clear") { sendCell(p.row, p.k, "none"); closePop(); }
+    else if (b.dataset.x === "song") { sendCell(p.row, p.k, p.row === "t" ? { bpm: 0, ramp: ramp } : { orig: 1 }); }
+  });
+  $("autoPop").addEventListener("change", function (e) {
+    if (e.target.id !== "popBpm" || !au.pop) return;
+    var v = +e.target.value, s = auSong(), c = auRun(s, auPlay(s))[au.pop.k];
+    if (v >= 20 && v <= 300) sendCell("t", au.pop.k, { bpm: v, ramp: c.t ? c.t.ramp || 0 : 0 });
+  });
+
+  // ---- channels: tap a box to turn that channel off or on there; drag across to paint
+  function setMix(k, ti, off) {
+    var s = auSong(), L = auPlay(s), tr = auTracks();
+    if (!s || !tr || !tr[ti]) return;
+    var name = tr[ti].name, j = L[k], st = auMixOff(s, k, j, name), at = au.copies ? "sec" : "blk", m = {};
+    if (st.at === "blk") at = "blk";
+    // the other place may already say something: an explicit value only when needed
+    var other = at === "blk" ? auMixOff({ auto: s.auto }, k, j, name) : { off: false };
+    m[name] = off ? 1 : (other.off ? 0 : null);
+    var body = { scope: at, i: at === "sec" ? j : k, mix: m };
+    // optimistic: show it right away
+    if (at === "sec") { s.auto = s.auto || {}; s.auto[j] = s.auto[j] || {}; s.auto[j][normName(name)] = { m: m[name] }; }
+    else { s.blk = s.blk || {}; s.blk[k] = s.blk[k] || {}; s.blk[k].mix = s.blk[k].mix || {}; s.blk[k].mix[normName(name)] = { m: m[name] }; }
+    postAuto(body);
+  }
+  $("autoGrid").addEventListener("pointerdown", function (e) {
+    var cell = e.target.closest(".au-m");
+    if (!cell) return;
+    e.preventDefault();
+    var off = !cell.classList.contains("off");
+    au.paint = { off: off, done: {} };
+    paintCell(cell);
+  });
+  function paintCell(cell) {
+    var key = cell.dataset.t + ":" + cell.dataset.k;
+    if (!au.paint || au.paint.done[key] || cell.classList.contains("off") === au.paint.off) return;
+    au.paint.done[key] = 1;
+    cell.classList.toggle("off", au.paint.off);
+    setMix(+cell.dataset.k, +cell.dataset.t, au.paint.off);
+  }
+  $("autoGrid").addEventListener("pointermove", function (e) {
+    if (!au.paint) return;
+    var el = document.elementFromPoint(e.clientX, e.clientY), cell = el && el.closest(".au-m");
+    if (cell) paintCell(cell);
+  });
+  window.addEventListener("pointerup", function () { if (au.paint) { au.paint = null; setTimeout(renderAuto, 300); } });
+  $("autoGrid").addEventListener("click", function (e) {
+    var seam = e.target.closest(".au-seam");
+    var s = auSong();
+    if (!s) return;
+    if (seam) {
+      // the seam before a tempo change: at once, or gradual over 1, 2, 4, 8 bars
+      e.stopPropagation();
+      var k = +seam.dataset.seam, c = auRun(s, auPlay(s))[k], steps = [0, 1, 2, 4, 8];
+      var nx = steps[(steps.indexOf(c.t.ramp || 0) + 1) % steps.length];
+      sendCell("t", k, { bpm: c.t.bpm, ramp: nx });
+      return;
+    }
+    var cell = e.target.closest(".au-t, .au-k");
+    if (!cell) return;
+    var row = cell.dataset.row, kk = +cell.dataset.k;
+    if (au.pop && au.pop.row === row && au.pop.k === kk) { closePop(); return; }
+    openPop(row, kk, cell);
+  });
+  $("autoCopies").addEventListener("change", function () {
+    au.copies = this.checked;
+    try { localStorage.setItem("sp.autoCopies", au.copies ? "1" : "0"); } catch (e) { }
+    closePop();
     renderAuto();
   });
+  $("autoClearAll").addEventListener("click", function () {
+    var s = auSong();
+    if (!s) return;
+    if (!au.clearArmed) { au.clearArmed = true; this.textContent = T("autoClearSure"); var me = this; setTimeout(function () { au.clearArmed = false; me.textContent = T("autoClearAll"); }, 3000); return; }
+    au.clearArmed = false;
+    this.textContent = T("autoClearAll");
+    var L = auPlay(s), tr = auTracks() || [], mx = {};
+    tr.forEach(function (x) { mx[x.name] = null; });
+    s.sections.forEach(function (_, j) { postAuto({ scope: "sec", i: j, tempo: "none", key: "none", mix: mx }); });
+    L.forEach(function (_, k) { postAuto({ scope: "blk", i: k, tempo: "none", key: "none", mix: mx }); });
+    closePop();
+  });
   $("autoClose").addEventListener("click", closeAuto);
-  $("autoSheet").addEventListener("click", function (e) { if (e.target === $("autoSheet")) closeAuto(); });
+  $("autoSheet").addEventListener("click", function (e) {
+    if (e.target === $("autoSheet")) { closeAuto(); return; }
+    if (au.pop && !e.target.closest("#autoPop") && !e.target.closest(".au-t, .au-k")) closePop();
+  });
   $("actAuto").addEventListener("click", openAuto);
   $("smAuto").addEventListener("click", openAuto);
-  $("autoList").addEventListener("click", function (e) {
-    var row = e.target.closest(".au-row");
-    if (!row) return;
-    var i = +row.dataset.i, s = auSong();
-    if (e.target.closest(".au-head")) { au.open = au.open === i ? -1 : i; renderAuto(); return; }
-    var b = e.target.closest("button");
-    if (!b || !s) return;
-    var grp = b.closest("[data-act]"), act = b.dataset.act || (grp && grp.dataset.act), v = b.dataset.v, cur = auEntry(s, i);
-    var base = s.tempoSet || s.bpm || (pos && pos.tempo) || 120;
-    if (act === "tmode") postAuto({ i: i, tempo: v === "none" ? "none" : { bpm: v === "set" ? (cur.t && cur.t.bpm) || base : 0, ramp: cur.t ? cur.t.ramp || 0 : 0 } });
-    else if (act === "ramp") postAuto({ i: i, tempo: { bpm: cur.t ? cur.t.bpm : 0, ramp: v === "ramp" ? (cur.t && cur.t.ramp) || 2 : 0 } });
-    else if (act === "kmode") postAuto({ i: i, key: v === "none" ? "none" : v === "song" ? { orig: 1 } : { semis: (cur.k && !cur.k.orig ? cur.k.semis : (s.semis || 0) + 1) } });
-    else if (act === "key") postAuto({ i: i, key: { semis: +v } });
-    else if (act === "mix") { var m = {}; m[b.closest(".au-track").dataset.name] = v === "" ? null : v === "off" ? 1 : 0; postAuto({ i: i, mix: m }); }
-    else if (act === "clear") {
-      var mx = {};
-      (auTracks() || []).forEach(function (x) { mx[x.name] = null; });
-      postAuto({ i: i, tempo: "none", key: "none", mix: mx });
-    }
-  });
-  $("autoList").addEventListener("change", function (e) {
-    var row = e.target.closest(".au-row"), s = auSong();
-    if (!row || !s) return;
-    var i = +row.dataset.i, cur = auEntry(s, i), act = e.target.dataset.act;
-    if (act === "bpm") { var b = +e.target.value; if (b >= 20 && b <= 300) postAuto({ i: i, tempo: { bpm: b, ramp: cur.t ? cur.t.ramp || 0 : 0 } }); }
-    else if (act === "rampbars") postAuto({ i: i, tempo: { bpm: cur.t ? cur.t.bpm : 0, ramp: +e.target.value } });
-  });
   function hasAutoAny(s) {
     if (!s) return false;
     var x;
@@ -3098,7 +3200,7 @@
       render();
       if (wiz.open && !wiz.building) wzRender();
       updateSettings();
-      if (!$("autoSheet").hidden) { if (!auSong() || auSong().med) closeAuto(); else renderAuto(); }
+      if (!$("autoSheet").hidden && !au.paint) { if (!auSong() || auSong().med) closeAuto(); else renderAuto(); }
       $("actAutoDot").hidden = !hasAutoAny(songs()[shownIdx]);
     });
     es.addEventListener("cue", function (e) { cue = JSON.parse(e.data); updateCue(); });
