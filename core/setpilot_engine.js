@@ -731,6 +731,7 @@ function tick() {
 	else if (playing && curSong >= 0 && !pre) guard("arrangement", runArr)();
 	if (playing) runTransport();
 	guard("medtempo", medTempoTick)();
+	guard("medmeter", medMeterTick)();
 	guard("listen", listenTick)();
 	guard("medpad", medPadTick)();
 	guard("clicksong", clkTick)();
@@ -1183,9 +1184,13 @@ function medBuild(o) {
 	var last = old >= 0 ? setEndExcept(oldA, oldB) : songEndBeats();
 	var P = last > 0 ? Math.ceil(last / bl - 1e-6) * bl + 4 * bl : 0;
 
+	// each part keeps its song's time signature; a count before a part is in the part's
+	var meterOfSong = function (name) { var i = songIndex(name); return i >= 0 && songs[i].meter && meterBeats(songs[i].meter) ? songs[i].meter : "4/4"; };
+	var firstMeter = meterOfSong(m.parts[0].song), fbl = meterBeats(firstMeter);
+	P = last > 0 ? Math.ceil((last + 4 * fbl) / fbl - 1e-6) * fbl : 0;
 	// two bars of count-off before the first part, like a song from MultiTracks: the
 	// header takes the song's start and the first section gets its own locator
-	var lead = 2 * bl;
+	var lead = 2 * fbl;
 	var Q = P + lead, cues = [], parts = [], seams = [], dupN = 0, missing = [], unwarped = {};
 	for (var k = 0; k < m.parts.length; k++) {
 		var pt = m.parts[k], s = songIndex(pt.song);
@@ -1195,6 +1200,7 @@ function medBuild(o) {
 		if (!secs.length) continue;
 		var semis = Math.max(-12, Math.min(12, parseInt(pt.semis, 10) || 0));
 		var bpm = Number(pt.bpm) || sg.bpm || tempo;
+		var pmeter = meterOfSong(sg.name), pbl = meterBeats(pmeter);
 		var seamIn = k > 0 ? (m.seams && m.seams[k - 1] ? String(m.seams[k - 1].type) : "cut") : "";
 		var partStart = Q;
 		// runs of sections that follow each other in the song are copied as one piece
@@ -1222,7 +1228,7 @@ function medBuild(o) {
 				var x0 = Math.max(run.a, cl.st), x1 = Math.min(run.b, cl.et);
 				var pos = Q + (x0 - run.a), sm = cl.sm + (x0 - cl.st) * cl.f, em = cl.sm + (x1 - cl.st) * cl.f;
 				// the voices of a part that anticipates come in half a bar early
-				if (seamIn == "ant" && u == 0 && cl.vox && Math.abs(x0 - run.a) < 0.01 && x0 - cl.st >= bl / 2) { pos -= bl / 2; sm -= bl / 2 * cl.f; }
+				if (seamIn == "ant" && u == 0 && cl.vox && Math.abs(x0 - run.a) < 0.01 && x0 - cl.st >= pbl / 2) { pos -= pbl / 2; sm -= pbl / 2 * cl.f; }
 				if (!cl.warped) unwarped[sg.name] = 1;
 				steps.push({ type: "dup", track: cl.track, clip: cl.clip, pos: pos, sm: sm, em: em, f: cl.f, pitch: cl.pitched ? semis : 0, name: cl.name });
 				dupN++;
@@ -1233,22 +1239,24 @@ function medBuild(o) {
 			}
 			Q += run.b - run.a;
 		}
-		parts.push({ song: sg.name, a: partStart - P, b: Q - P, bpm: bpm, semis: semis, key: m.key || "", pkey: pt.key || m.key || "" });
-		// the bridge after this part: pad bars, with the click going on
+		parts.push({ song: sg.name, a: partStart - P, b: Q - P, bpm: bpm, semis: semis, key: m.key || "", pkey: pt.key || m.key || "", meter: pmeter });
+		// the bridge after this part: bars in the NEXT part's time signature (its count), the click going on
 		var nextSeam = k + 1 < m.parts.length && m.seams && m.seams[k] ? String(m.seams[k].type) : "";
 		var nb = SEAM_BARS[nextSeam] || 0;
-		if (nextSeam) seams.push({ type: nextSeam, at: Q - P, len: nb * bl, from: parts.length - 1 });
+		var nmeter = k + 1 < m.parts.length ? meterOfSong(m.parts[k + 1].song) : pmeter, nbl = meterBeats(nmeter);
+		if (nextSeam) seams.push({ type: nextSeam, at: Q - P, len: nb * nbl, from: parts.length - 1, meter: nmeter });
 		if (nb) {
-			var lastRun = runs[runs.length - 1], ck = clipsUnder(Math.max(lastRun.a, lastRun.b - nb * bl), lastRun.b);
+			// the song's own click bars fit only when the time signature stays the same; otherwise SetPilot counts
+			var lastRun = runs[runs.length - 1], ck = nmeter == pmeter ? clipsUnder(Math.max(lastRun.a, lastRun.b - nb * nbl), lastRun.b) : [];
 			for (var z = 0; z < ck.length; z++) {
 				if (!ck[z].click) continue;
-				var y0 = Math.max(lastRun.b - nb * bl, ck[z].st), y1 = Math.min(lastRun.b, ck[z].et);
-				steps.push({ type: "dup", track: ck[z].track, clip: ck[z].clip, pos: Q + (y0 - (lastRun.b - nb * bl)), sm: ck[z].sm + (y0 - ck[z].st) * ck[z].f, em: ck[z].sm + (y1 - ck[z].st) * ck[z].f, f: ck[z].f, pitch: 0, name: ck[z].name });
+				var y0 = Math.max(lastRun.b - nb * nbl, ck[z].st), y1 = Math.min(lastRun.b, ck[z].et);
+				steps.push({ type: "dup", track: ck[z].track, clip: ck[z].clip, pos: Q + (y0 - (lastRun.b - nb * nbl)), sm: ck[z].sm + (y0 - ck[z].st) * ck[z].f, em: ck[z].sm + (y1 - ck[z].st) * ck[z].f, f: ck[z].f, pitch: 0, name: ck[z].name });
 				dupN++;
 			}
 			// what goes into Live (locators, spoken cues) is always English
 			cues.push({ time: Q, name: "Transition" });
-			Q += nb * bl;
+			Q += nb * nbl;
 		}
 	}
 	if (!parts.length) { importMsg("error", "plan"); return; }
@@ -1257,11 +1265,12 @@ function medBuild(o) {
 	var keyName = String(m.key || "");
 	steps.push({ type: "verify" });
 	steps.push({ type: "zoom", dir: 3 });
-	var hdr = "# " + name + " | " + (Math.round(parts[0].bpm * 100) / 100) + (keyName ? " | " + keyName : "");
+	var hdr = "# " + name + " | " + (Math.round(parts[0].bpm * 100) / 100) + (keyName ? " | " + keyName : "") + (firstMeter != "4/4" ? " | " + firstMeter : "");
 	steps.push({ type: "cue", time: P, name: hdr });
 	for (var cc = 0; cc < cues.length; cc++) if (cues[cc].time > P + 0.001) steps.push({ type: "cue", time: cues[cc].time, name: cues[cc].name });
 	// the first section's name lives on the header's spot: the song map shows it as its first section
-	var stopAt = Math.ceil((Q - 0.001) / bl) * bl;
+	// the end of the last part (its sections end on its own bar lines)
+	var stopAt = Q;
 	steps.push({ type: "cue", time: stopAt, name: "STOP" });
 	steps.push({ type: "zoom", dir: 2 });
 	steps.push({ type: "meddone" });
@@ -1499,6 +1508,21 @@ function medTempoAt(s, time) {
 	return o.bpm && base ? v * o.bpm / base : v;
 }
 
+// the time signature at a point of a medley: its part's; in the bridge before a
+// part (its count) already the next part's. The click counts from where that
+// part's bars start (the bridge's start, or the part's).
+function medMeterAt(s, time) {
+	var md = medOf(s);
+	if (!md || !md.parts || !md.parts.length) return null;
+	var S = songs[s].start, rel = time - S, p = md.parts, k = 0;
+	for (var i = 0; i < p.length; i++) if (rel >= p[i].a - 0.001) k = i;
+	var seamAfter = null, seamBefore = null;
+	(md.seams || []).forEach(function (sm) { if (sm.from == k) seamAfter = sm; if (sm.from == k - 1) seamBefore = sm; });
+	if (seamAfter && rel >= seamAfter.at - 0.001 && p[k + 1]) return { meter: p[k + 1].meter || "4/4", origin: S + seamAfter.at, k: k + 1, seam: seamAfter.len > 0, change: (p[k + 1].meter || "4/4") != (p[k].meter || "4/4") };
+	var org = seamBefore && seamBefore.len > 0 ? S + seamBefore.at : S + (k == 0 ? 0 : p[k].a);
+	return { meter: p[k].meter || "4/4", origin: org, k: k };
+}
+
 // the wizard's "listen": two bars before a join to two bars after it, then stop
 var listenStop = 0, listenAt = 0;
 function medlisten(s, k) {
@@ -1548,6 +1572,24 @@ function medAnnounce(s, time) {
 		if (Math.abs(rel - p[k - 1].b) < 0.01 && p[k].song != p[k - 1].song) return cleanCue(p[k].song);
 	}
 	return "";
+}
+
+// a medley crossing into a part (or its count) in another time signature: Live
+// changes a hair before the bar line, so the first click is already the new one
+var medMeterKey = "", medCountForce = false;
+function medMeterTick() {
+	if (!playing || curSong < 0 || !medOf(curSong)) { medMeterKey = ""; if (medCountForce) { medCountForce = false; guard("click", sendClick)(); } return; }
+	var mm = medMeterAt(curSong, t + 0.1 * tempo / 120);
+	if (!mm) return;
+	// a count into another time signature is SetPilot's to play: the songs' own click bars don't fit
+	var force = !!(mm.seam && mm.change);
+	var key = mm.meter + "@" + mm.origin + (force ? "!" : "");
+	if (key == medMeterKey) return;
+	medMeterKey = key;
+	medCountForce = force;
+	applyMeter(curSong, t + 0.1 * tempo / 120);
+	click.lastSent = "";
+	sendClick();
 }
 
 var medTempoLast = 0;
@@ -3429,8 +3471,9 @@ function sendClick() {
 	var s = clickSongNow(), ck = clkOf(s);
 	var sub = ck && ck.sub ? ck.sub : click.sub;
 	// the song's own bar lines (a 6/8 song may not sit on Live's grid from the set's start)
-	var origin = s >= 0 && songs[s] ? songs[s].start : 0;
-	var P = ["on", click.on || clkSong >= 0 ? 1 : 0, "beats", sigNum, "sub", sub, "accmask", m.acc, "mutemask", m.mute, "midmask", m.mid, "softmask", m.soft, "origin", Math.round(origin * 1000) / 1000,
+	var mo = s >= 0 && songs[s] && medOf(s) ? medMeterAt(s, playing ? t + 0.1 * tempo / 120 : songs[s].start) : null;
+	var origin = mo ? mo.origin : s >= 0 && songs[s] ? songs[s].start : 0;
+	var P = ["on", click.on || clkSong >= 0 || (playing && medCountForce) ? 1 : 0, "beats", sigNum, "sub", sub, "accmask", m.acc, "mutemask", m.mute, "midmask", m.mid, "softmask", m.soft, "origin", Math.round(origin * 1000) / 1000,
 		"lvlacc", click.acc / 100, "lvlbeat", click.beat / 100, "lvlsub", click.subl / 100,
 		"sound", click.sound, "gain", click.gain / 100,
 		// songs' click stems land on this track too: heard only when SetPilot's click doesn't replace them
@@ -3496,9 +3539,11 @@ function baseBpm(s) {
 // (a header like "# Song | 72 | G | 6/8") gets it while it plays, and the
 // songs after it go back to 4/4.
 var meterSet = false;
-function applyMeter(s) {
-	if (s < 0 || s >= songs.length || medOf(s)) return;
-	var m = String(songs[s].meter || "").match(/^(\d+)\/(\d+)$/), n, d;
+function applyMeter(s, at) {
+	if (s < 0 || s >= songs.length) return;
+	var mm = medOf(s) ? medMeterAt(s, at != null ? at : (t >= songs[s].start && t < songs[s].end ? t : songs[s].start)) : null;
+	var m = String(mm ? mm.meter : songs[s].meter || "").match(/^(\d+)\/(\d+)$/), n, d;
+	if (mm && m && m[1] == "4" && m[2] == "4" && !meterSet) return;
 	if (m) { n = +m[1]; d = +m[2]; meterSet = true; }
 	else if (meterSet) { n = 4; d = 4; meterSet = false; }
 	else return;

@@ -29,6 +29,7 @@ jobs:
       - run: node dev/test_stems_dsp.js
       - run: node dev/test_stems.js
       - run: node dev/test_cue_words.js
+      - run: node dev/test_medley_meter.js
       - run: g++ -std=c++17 -O2 -I plugin/src plugin/tests/core_test.cpp -o core_test && ./core_test
 
   plugin-mac:

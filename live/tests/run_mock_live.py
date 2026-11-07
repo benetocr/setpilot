@@ -22,7 +22,7 @@ from SetPilot.surface import SetPilotSurface  # noqa: E402
 
 CUES = [("# Grande y Fiel | 72 | G", 0), ("Intro", 0), ("Verso 1", 16), ("Coro", 48), ("Verso 2", 80),
         ("Coro", 112), ("Puente", 144), ("Coro", 176), ("Final", 208), ("STOP", 232),
-        ("# Cielo Abierto | 128 | D", 256), ("Intro", 256), ("Verso", 272), ("Pre Coro", 304), ("Coro", 320),
+        ("# Cielo Abierto | 128 | D" + (" | 6/8" if os.environ.get("SP_MOCK_68") else ""), 256), ("Intro", 256), ("Verso", 272), ("Pre Coro", 304), ("Coro", 320),
         ("Instrumental", 352), ("Puente", 368), ("Coro", 400), ("Tag", 432), ("Final", 448), ("STOP", 464)]
 
 

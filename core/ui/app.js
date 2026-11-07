@@ -1266,8 +1266,10 @@
     var p = parseKey(sg.key), fix = wiz.keyFix[name];
     var root = p ? p.root : (fix != null ? fix : null), minor = p ? !!p.minor : false;
     var team = p ? (sg.semis || 0) : 0;
-    var bl = barLen();
-    return { si: si, sg: sg, name: name, root: root, minor: minor, team: team,
+    // its bars are its own time signature's (a 6/8 song counts 3 beats a bar)
+    var meter = /^\d+\/\d+$/.test(sg.meter || "") ? sg.meter : "4/4", mp = meter.split("/");
+    var bl = (+mp[0]) * 4 / (+mp[1]);
+    return { si: si, sg: sg, name: name, root: root, minor: minor, team: team, meter: meter,
       home: root == null ? null : ((root + team + (minor ? 3 : 0)) % 12 + 12) % 12,
       keyText: root == null ? "" : KEYS[((root + team) % 12 + 12) % 12] + (minor ? "m" : ""),
       bpm: Math.round(effBpm(sg) * 10) / 10,
@@ -1340,6 +1342,8 @@
   }
 
   function wzSeamAuto(a, b) {
+    // into another time signature: a count in the new one, so the band can settle in
+    if (a.info.meter !== b.info.meter) return "count";
     var dt = Math.abs(b.tempo / a.tempo - 1);
     if (dt > 0.15) return "count";
     if (a.center !== b.center) return "pivot";
@@ -1554,12 +1558,15 @@
   }
 
   function wzStep3(M) {
-    var lane = "", keyRow = "", tRow = "", bl = barLen();
+    var lane = "", keyRow = "", tRow = "", mRow = "", bl = barLen();
+    var anyMeter = M.parts.some(function (p) { return p.info.meter !== "4/4"; });
     M.parts.forEach(function (p, k) {
       var on = wiz.sel.kind === "part" && wiz.sel.i === k;
       var kc = k > 0 && M.parts[k - 1].center !== p.center, tc = k > 0 && Math.abs(M.parts[k - 1].tempo - p.tempo) > 0.4;
       keyRow += '<span class="wz-ln' + (kc ? " chg" : "") + '" style="flex-grow:' + p.bars + '">' + esc(p.keyText) + (p.semis && p.info.root != null ? " <small>(" + wzSigned(p.d) + ")</small>" : "") + "</span>";
       tRow += '<span class="wz-ln t' + (tc ? " chg" : "") + '" style="flex-grow:' + p.bars + '">' + fmtBpm(p.tempo) + " BPM</span>";
+      var mc = k > 0 && M.parts[k - 1].info.meter !== p.info.meter;
+      mRow += '<span class="wz-ln m' + (mc ? " chg" : "") + '" style="flex-grow:' + p.bars + '">' + esc(p.info.meter) + "</span>";
       lane += '<div class="wz-part' + (on ? " on" : "") + '" style="flex-grow:' + p.bars + ";--sc:" + p.color + '"><button type="button" class="wz-pn" data-act="sel" data-arg="part|' + k + '" aria-pressed="' + on + '"><i class="wz-dot"></i>' + esc(p.info.name) + '</button><span class="wz-blocks">' +
         p.idx.map(function (j, n) {
           var x = p.info.secs[j], g = p.gidx[n], bon = wiz.sel.kind === "block" && wiz.sel.i === g;
@@ -1568,7 +1575,7 @@
       if (k < M.seams.length) {
         var sm = M.seams[k], son = wiz.sel.kind === "seam" && wiz.sel.i === k;
         var gap = '<span class="wz-gap"></span>';
-        keyRow += gap; tRow += gap;
+        keyRow += gap; tRow += gap; mRow += gap;
         lane += '<span class="wz-seamw"><button type="button" class="wz-seam ' + sm.type + (son ? " on" : "") + '" data-act="sel" data-arg="seam|' + k + '" aria-pressed="' + son + '" aria-label="' + esc(T("medSeam_" + sm.type)) + '"><svg viewBox="0 0 24 24">' + WZ_SEAM_IC[sm.type] + "</svg><b>" + esc(T("medSeamS_" + sm.type)) + "</b>" + (WZ_SEAM_BARS[sm.type] ? "<small>" + esc(T("barsCount", { n: WZ_SEAM_BARS[sm.type] })) + "</small>" : "") + "</button></span>";
       }
     });
@@ -1592,13 +1599,15 @@
       var S = M.seams[wiz.sel.i], A = M.parts[S.i], B = M.parts[S.i + 1], why = [];
       if (A.center !== B.center) why.push(T("medWhyKey", { a: A.keyText, b: B.keyText }));
       if (Math.abs(A.tempo - B.tempo) > 0.4) why.push(T("medWhyTempo", { a: fmtBpm(A.tempo), b: fmtBpm(B.tempo), p: Math.round(Math.abs(B.tempo / A.tempo - 1) * 100) }));
+      if (A.info.meter !== B.info.meter) why.push(T("medWhyMeter", { a: A.info.meter, b: B.info.meter }));
       var canListen = wiz.built && wiz.builtKey === wzSig();
       insp = '<section class="wz-panel wz-insp"><div class="wz-ia"><h2>' + esc(A.info.name + " → " + B.info.name) + '</h2><p class="wz-advice">' + esc(why.length ? T("medWhy", { what: why.join(T("medAnd")), s: T("medSeam_" + S.auto) }) : T("medWhySame")) + '</p><div class="wz-opts" role="radiogroup">' +
         WZ_SEAMS.map(function (t) { var on = S.type === t; return '<button type="button" role="radio" class="wz-opt' + (on ? " on" : "") + '" data-act="seamtype" data-arg="' + S.i + "|" + t + '" aria-checked="' + on + '"><b>' + esc(T("medSeam_" + t)) + (t === S.auto ? " · " + esc(T("medSuggested")) : "") + "</b><small>" + esc(T("medSeamD_" + t)) + "</small></button>"; }).join("") +
-        '</div></div><div class="wz-ib2"><h2>' + esc(T("medListen")) + '</h2><p class="wz-sub">' + esc(canListen ? T("medListenSub", { key: KEYS[M.K] }) : T("medListenBuild")) + '</p><button type="button" class="wz-play" data-act="listen" data-arg="' + S.i + '"' + (canListen ? "" : " disabled") + '><svg viewBox="0 0 24 24"><path d="M7 5v14l12-7z"/></svg>' + esc(T("medListenBtn")) + "</button></div></section>";
+        "</div>" + (A.info.meter !== B.info.meter ? '<p class="wz-sub wz-meternote">' + esc(WZ_SEAM_BARS[S.type] ? T("medMeterCount", { n: WZ_SEAM_BARS[S.type], m: B.info.meter, song: B.info.name }) : T("medMeterCut", { m: B.info.meter, song: B.info.name, n: WZ_SEAM_BARS.count })) + "</p>" : "") +
+        '</div><div class="wz-ib2"><h2>' + esc(T("medListen")) + '</h2><p class="wz-sub">' + esc(canListen ? T("medListenSub", { key: KEYS[M.K] }) : T("medListenBuild")) + '</p><button type="button" class="wz-play" data-act="listen" data-arg="' + S.i + '"' + (canListen ? "" : " disabled") + '><svg viewBox="0 0 24 24"><path d="M7 5v14l12-7z"/></svg>' + esc(T("medListenBtn")) + "</button></div></section>";
     }
     return '<div class="wz-s3"><div class="wz-head3"><div><h2>' + esc(T("medRouteTitle")) + '</h2><p class="wz-sub">' + esc(T("medRouteSub")) + '</p></div><p class="wz-sum"><b>' + KEYS[M.K] + "</b> " + esc(T("medKey").toLowerCase()) + " · <b>" + esc(M.mode === "one" ? M.T + " BPM" : T("medTempoOwnShort")) + "</b> · <b>" + M.seams.length + "</b> " + esc(T(M.seams.length === 1 ? "medJoin1" : "medJoins")) + "</p></div>" +
-      '<div class="wz-map"><div class="wz-mapin"><div class="wz-lrow"><span class="wz-lk">' + esc(T("medKey")) + "</span>" + keyRow + '</div><div class="wz-lrow"><span class="wz-lk">' + esc(T("tempo")) + "</span>" + tRow + '</div><div class="wz-lrow lane"><span class="wz-lk"></span>' + lane + "</div></div></div>" + insp + "</div>";
+      '<div class="wz-map"><div class="wz-mapin"><div class="wz-lrow"><span class="wz-lk">' + esc(T("medKey")) + "</span>" + keyRow + '</div><div class="wz-lrow"><span class="wz-lk">' + esc(T("tempo")) + "</span>" + tRow + "</div>" + (anyMeter ? '<div class="wz-lrow"><span class="wz-lk">' + esc(T("clkMeter")) + "</span>" + mRow + "</div>" : "") + '<div class="wz-lrow lane"><span class="wz-lk"></span>' + lane + "</div></div></div>" + insp + "</div>";
   }
 
   // ---------- actions

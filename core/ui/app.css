@@ -1073,6 +1073,9 @@ html[data-layout="console"] .med-edit { right: 22px; bottom: 4px; }
 .wz-ln { flex-basis: 0; min-width: 0; height: 26px; display: flex; align-items: center; gap: 4px; padding: 0 8px; border-top: 3px solid var(--loop); color: var(--loop); font-size: 13.5px; font-weight: 720; white-space: nowrap; overflow: hidden; }
 .wz-ln small { font-weight: 600; opacity: .8; }
 .wz-ln.t { border-top-color: #c9a7ff; color: #c9a7ff; }
+.wz-ln.m { border-top-color: #8bd45f; color: #8bd45f; }
+.wz-ln.m.chg { border-top-color: var(--queued); color: var(--queued); }
+.wz-meternote { color: var(--queued); }
 .wz-ln.chg { border-top-color: var(--queued); color: var(--queued); }
 .wz-gap { flex: 0 0 96px; }
 .wz-part { flex-basis: 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 9px; border-radius: 14px; border: 2px solid var(--edge); background: var(--deck); text-align: left; color: var(--text); }
