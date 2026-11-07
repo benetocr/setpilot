@@ -28,7 +28,8 @@
     if (!files.length) { app.toast(T("swNoAudio"), true); return; }
     stopPlay();
     W = { step: 1, files: files, folder: folder || "", tracks: [], title: "", key: "", bpm: 0, meter: "4/4", down: 0, dur: 0,
-      heard: {}, busy: true, parts: [], zoom: 0, t: 0, sel: -1, scroll: 0 };
+      heard: {}, busy: true, parts: [], zoom: 0, t: 0, sel: -1, scroll: 0, tlH: 0 };
+    try { W.tlH = +localStorage.getItem("sp.swTlH") || 0; } catch (e) { }
     $("addSheet").hidden = true;
     $("stemWiz").hidden = false;
     render();
@@ -156,6 +157,66 @@
     W.busy = false;
     W.status = "";
     render();
+    hearGuide();
+  }
+
+  // ---------------------------------------------------------------- the guide's words
+  // Each cue the guide speaks goes to SetPilot (whisper, on this computer): its
+  // words name the part that comes right after it, on the next bar line.
+  function pcm16(x, a, z) {
+    var i0 = Math.max(0, Math.floor(a * SR)), i1 = Math.min(x.length, Math.ceil(z * SR));
+    var n = Math.max(0, Math.floor((i1 - i0) * 16000 / SR)), out = new Int16Array(n), r = SR / 16000;
+    for (var k = 0; k < n; k++) {
+      var p = i0 + k * r, j = Math.floor(p), f = p - j, v = x[j] * (1 - f) + (j + 1 < x.length ? x[j + 1] : 0) * f;
+      out[k] = Math.max(-32767, Math.min(32767, Math.round(v * 32767)));
+    }
+    var bin = "", u = new Uint8Array(out.buffer);
+    for (var q = 0; q < u.length; q += 0x8000) bin += String.fromCharCode.apply(null, u.subarray(q, q + 0x8000));
+    return btoa(bin);
+  }
+  function hearGuide() {
+    if (!W || !W.cues || !W.guideX) return;
+    var w = W, cues = W.cues.slice(0, 80), x = W.guideX;
+    w.hearing = true;
+    renderStatus();
+    var body = { cues: cues.map(function (c, i) { return { id: i, pcm: pcm16(x, c.a - 0.08, Math.min(c.z + 0.1, c.a + 8)) }; }) };
+    fetch("/stems/hear", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (W !== w) return;
+        w.hearing = false;
+        if (r && r.ok) applyHeard(cues, r.cues);
+        render();
+      })
+      .catch(function () { if (W === w) { w.hearing = false; renderStatus(); } });
+  }
+  function applyHeard(cues, heard) {
+    var named = 0, parts = [], firstCount = -1;
+    heard.forEach(function (h, i) {
+      var c = cues[i];
+      if (!c) return;
+      if (h.count) {
+        // the count in: the part after it starts on the next bar; a count later on announces nothing new
+        if (firstCount < 0 && i === 0) { firstCount = c.bar; parts.push({ bar: c.bar + 1, name: "Part", auto: true, heard: false }); }
+        return;
+      }
+      if (h.name) named++;
+      parts.push({ bar: c.bar + 1, name: h.name || "Part", auto: !h.name, heard: !!h.name, said: h.text || "" });
+    });
+    if (named < 2) return;      // it didn't make the words out: keep what it had
+    // the count in, from the song's first bar to the first part
+    if (firstCount >= 0 || !parts.length || parts[0].bar > 1) {
+      if (!parts.some(function (p) { return p.bar === 1; })) parts.unshift({ bar: 1, name: "Count In", auto: false, heard: firstCount >= 0 });
+    }
+    parts.sort(function (a, b) { return a.bar - b.bar; });
+    parts = parts.filter(function (p, i) { return i === 0 || p.bar !== parts[i - 1].bar; });
+    // the part right after the count in, if the guide didn't name it
+    if (parts[1] && !parts[1].heard && parts[0].name === "Count In") { parts[1].name = "Intro"; parts[1].auto = false; }
+    if (W.edited) {
+      // the musician already changed things: only names for the parts still unnamed at those bars
+      W.parts.forEach(function (p) { if (p.auto) { var h = parts.filter(function (q) { return q.bar === p.bar && q.heard; })[0]; if (h) { p.name = h.name; p.auto = false; p.heard = true; } } });
+    } else W.parts = parts;
+    W.heardCount = named;
   }
   function musicEnv() {
     var env = null;
@@ -185,9 +246,10 @@
     var A = D.barActivity(music.map(function (t) { return t.env; }), FPS, W.down, bs, nb);
     W.activity = A;
     var bounds = null, guide = W.tracks.filter(function (t) { return t.role === "guide" && t.env && t.include; })[0];
+    W.cues = null;
     if (guide) {
-      var g = D.guideBounds(guide.env, FPS, W.down, bs, nb);
-      if (g.length >= 3) { bounds = g; W.from = "guide"; }
+      var cues = D.guideCues(guide.env, FPS, W.down, bs, nb), g = cues.map(function (c) { return c.bar; });
+      if (g.length >= 3) { bounds = g; W.from = "guide"; W.cues = cues; }
     }
     if (!bounds) { bounds = D.noveltyBounds(A); W.from = "music"; }
     // the first bar where music plays: before it, the count in
@@ -210,6 +272,7 @@
   }
   function numberVerses() {
     // "Verse" parts get their number in order
+    if (W.parts.some(function (p) { return p.heard; })) return;     // the guide said the numbers
     var vs = W.parts.filter(function (p) { return /^Verse( \d+)?$/.test(p.name); });
     vs.forEach(function (p, i) { p.name = vs.length > 1 ? "Verse " + (i + 1) : "Verse"; });
   }
@@ -241,7 +304,8 @@
       else if (h.from === "music") bits.push(T("swHeardMusic", { at: fmtTime(h.down) }));
       if (h.key) bits.push(T("swHeardKey", { key: h.key }));
       if (h.from === "click" && h.steady === false) bits.push(T("swTempoMoves"));
-      el.innerHTML = bits.length ? '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></svg><span>' + esc(bits.join(" ")) + "</span>" : "";
+      el.innerHTML = (bits.length ? '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></svg><span>' + esc(bits.join(" ")) + "</span>" : "") +
+        (W.hearing ? '<span class="sw-spin"></span><span>' + esc(T("swHearing")) + "</span>" : "");
       el.className = "sw-status";
     }
   }
@@ -296,7 +360,7 @@
 
   // ---------------------------------------------------------------- the parts step
   function partsStep() {
-    var hint = W.from === "guide" ? T("swPartsFromGuide", { n: W.parts.length }) : T("swPartsFromMusic", { n: W.parts.length });
+    var hint = W.heardCount ? T("swPartsHeard", { n: W.heardCount }) : W.from === "guide" ? T("swPartsFromGuide", { n: W.parts.length }) : T("swPartsFromMusic", { n: W.parts.length });
     if (W.parts.some(function (p) { return p.name === "Part"; })) hint += " " + T("swPartsUnnamed");
     var hasClick = W.bufs && W.bufs.click, hasGuide = W.bufs && W.bufs.guide;
     return '<div class="sw-parts">' +
@@ -308,10 +372,13 @@
       (hasClick ? '<button type="button" class="chip-btn' + (W.hearClick !== false ? " on" : "") + '" data-tog="click">' + esc(T("swHearClick")) + "</button>" : '<button type="button" class="chip-btn' + (W.hearMetro !== false ? " on" : "") + '" data-tog="metro">' + esc(T("swHearMetro")) + "</button>") +
       (hasGuide ? '<button type="button" class="chip-btn' + (W.hearGuide !== false ? " on" : "") + '" data-tog="guide">' + esc(T("swHearGuide")) + "</button>" : "") +
       "</div>" +
-      '<div class="sw-zoom"><button type="button" data-zoom="-1" aria-label="Zoom out">−</button><button type="button" data-zoom="1" aria-label="Zoom in">+</button></div>' +
+      '<div class="sw-zoom"><button type="button" data-zoom="-1" aria-label="Zoom out">−</button>' +
+      '<input type="range" id="swZoom" min="0" max="1000" value="' + zoomSlider() + '" aria-label="Zoom">' +
+      '<button type="button" data-zoom="1" aria-label="Zoom in">+</button><button type="button" class="sw-fit" data-zoom="fit">' + esc(T("swFit")) + "</button></div>" +
       "</div>" +
       '<p class="sw-hint">' + esc(hint) + "</p>" +
-      '<div class="sw-tl" id="swTl"><canvas id="swCanvas"></canvas></div>' +
+      '<div class="sw-tlwrap" id="swTlWrap"' + (W.tlH ? ' style="flex:none;height:' + W.tlH + 'px"' : "") + '><div class="sw-tl" id="swTl"><div class="sw-space" id="swSpace"><canvas id="swCanvas"></canvas></div></div></div>' +
+      '<div class="sw-grip" id="swGrip" title="' + esc(T("swResize")) + '"><i></i></div>' +
       '<div class="sw-grid">' +
       '<span>' + esc(T("swGrid", { bpm: fmtBpm(W.bpm), meter: W.meter })) + "</span>" +
       '<span class="sw-nudge"><small>' + esc(T("swBeatOne")) + '</small><button type="button" data-nudge="-beat">' + esc(T("swBeatEarlier")) + '</button><button type="button" data-nudge="-ms">−10 ms</button><button type="button" data-nudge="ms">+10 ms</button><button type="button" data-nudge="beat">' + esc(T("swBeatLater")) + "</button></span>" +
@@ -326,102 +393,126 @@
     }).join("");
   }
 
-  // the timeline
-  var RULER = 22, LANE = 40, WAVE = 58, ROW = 13, GAP = 2;
+  // the timeline: drawn for what is on screen (so it can zoom in very close),
+  // as tall as the room it has
+  var RULER = 22, LANE = 40, GAP = 2;
   var cv = null;
+  function fitZoom() { var tl = $("swTl"); return Math.max(1, (tl ? tl.clientWidth - 2 : 900)) / Math.max(1, W.dur); }
+  var ZMAX = 400;
+  function zoomSlider() { var f = fitZoom(); return Math.round(1000 * Math.log((W.zoom || f) / f) / Math.log(ZMAX / f)); }
   function setupCanvas() {
-    var tl = $("swTl"), c = $("swCanvas");
+    var tl = $("swTl"), c = $("swCanvas"), sp = $("swSpace");
     if (!tl || !c) return;
     var rows = W.tracks.filter(function (t) { return t.include && t.env; });
-    var h = RULER + LANE + 6 + WAVE + 6 + rows.length * (ROW + GAP) + 6;
-    var fit = Math.max(200, tl.clientWidth - 2) / Math.max(1, W.dur);
+    var fit = fitZoom();
     if (!W.zoom) W.zoom = fit;
-    W.zoom = Math.max(fit, Math.min(80, W.zoom));
-    var w = Math.max(tl.clientWidth - 2, Math.ceil(W.dur * W.zoom));
+    W.zoom = Math.max(fit, Math.min(ZMAX, W.zoom));
+    var vw = tl.clientWidth, vh = Math.max(180, tl.clientHeight);
+    // the rows share the height: the song's waveform and one row per track
+    var wave = Math.max(44, Math.min(160, Math.round(vh * 0.24)));
+    var row = Math.max(7, Math.min(34, Math.floor((vh - RULER - LANE - 12 - wave - 8) / Math.max(1, rows.length)) - GAP));
+    var total = Math.max(vw, Math.ceil(W.dur * W.zoom));
+    sp.style.width = total + "px";
     var dpr = window.devicePixelRatio || 1;
-    c.style.width = w + "px"; c.style.height = h + "px";
-    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
-    cv = { c: c, g: c.getContext("2d"), w: w, h: h, dpr: dpr, rows: rows };
-    if (!W.peaks || W.peaks.n !== w) W.peaks = peaksFor(w);
+    c.style.width = vw + "px"; c.style.height = vh + "px";
+    c.width = Math.round(vw * dpr); c.height = Math.round(vh * dpr);
+    cv = { c: c, g: c.getContext("2d"), w: vw, h: vh, dpr: dpr, rows: rows, wave: wave, row: row };
+    if (!W.mixEnv) W.mixEnv = mixEnvelope();
+    var z = $("swZoom");
+    if (z) z.value = zoomSlider();
   }
-  function peaksFor(w) {
-    var env = null;
+  function mixEnvelope() {
+    var env = null, mx = 0;
     W.tracks.forEach(function (t) {
       if (!t.env || !t.include || t.role === "click") return;
       if (!env) env = new Float32Array(t.env.length);
       for (var i = 0; i < Math.min(env.length, t.env.length); i++) env[i] += t.env[i];
     });
-    var out = new Float32Array(w), mx = 0;
-    if (env) {
-      var per = env.length / w;
-      for (var x = 0; x < w; x++) { var m = 0; for (var k = Math.floor(x * per); k < Math.floor((x + 1) * per); k++) if (env[k] > m) m = env[k]; out[x] = m; if (m > mx) mx = m; }
-      for (x = 0; x < w; x++) out[x] = mx ? Math.sqrt(out[x] / mx) : 0;
-    }
-    return { n: w, v: out };
+    if (!env) return new Float32Array(1);
+    for (var i = 0; i < env.length; i++) if (env[i] > mx) mx = env[i];
+    for (i = 0; i < env.length; i++) env[i] = mx ? Math.sqrt(env[i] / mx) : 0;
+    W.tracks.forEach(function (t) { if (t.env && t.envMax == null) { var m = 0; for (var k = 0; k < t.env.length; k++) if (t.env[k] > m) m = t.env[k]; t.envMax = m; } });
+    return env;
   }
-  function X(t) { return t * W.zoom; }
+  function off() { var tl = $("swTl"); return tl ? tl.scrollLeft : 0; }
+  function X(t) { return t * W.zoom - off(); }
+  function tAtClient(clientX) { var tl = $("swTl"), r = tl.getBoundingClientRect(); return (clientX - r.left + tl.scrollLeft) / W.zoom; }
+  // the loudest point of an envelope between two times
+  function peakIn(env, t0, t1) {
+    var a = Math.max(0, Math.floor(t0 * FPS)), z = Math.min(env.length, Math.max(a + 1, Math.ceil(t1 * FPS))), m = 0;
+    for (var k = a; k < z; k++) if (env[k] > m) m = env[k];
+    return m;
+  }
   function draw() {
     if (!cv || !W) return;
-    var g = cv.g, w = cv.w, h = cv.h, bs = barSec(), nb = nBars();
+    var g = cv.g, w = cv.w, h = cv.h, bs = barSec(), nb = nBars(), o = off(), tps = 1 / W.zoom;
     g.setTransform(cv.dpr, 0, 0, cv.dpr, 0, 0);
     g.clearRect(0, 0, w, h);
     var css = getComputedStyle(document.documentElement);
     var faint = css.getPropertyValue("--faint").trim() || "#667", edge = css.getPropertyValue("--edge").trim() || "#334", text = css.getPropertyValue("--text").trim() || "#fff", live = css.getPropertyValue("--live").trim() || "#4ade80";
-    // bars
-    var pxBar = bs * W.zoom, every = pxBar >= 28 ? 1 : pxBar >= 14 ? 2 : pxBar >= 7 ? 4 : 8;
+    var t0 = o / W.zoom, t1 = (o + w) / W.zoom;
+    // bars, and beats when there is room
+    var pxBar = bs * W.zoom, every = pxBar >= 28 ? 1 : pxBar >= 14 ? 2 : pxBar >= 7 ? 4 : 8, beats = +W.meter.split("/")[0];
     g.font = "600 10.5px system-ui, sans-serif";
     g.textBaseline = "middle";
-    for (var b = 1; b <= nb + 1; b++) {
-      var x = Math.round(X(timeOfBar(b))) + 0.5;
-      if (x < 0 || x > w) continue;
-      var major = (b - 1) % every === 0;
+    var b0 = Math.max(1, Math.floor((t0 - W.down) / bs)), b1 = Math.min(nb + 1, Math.ceil((t1 - W.down) / bs) + 1);
+    for (var b = b0; b <= b1; b++) {
+      var x = Math.round(X(timeOfBar(b))) + 0.5, major = (b - 1) % every === 0;
       g.fillStyle = major ? edge : "rgba(128,128,128,.12)";
       g.fillRect(x, RULER, 1, h - RULER);
       if (major) { g.fillStyle = faint; g.fillText(String(b), x + 3, RULER / 2); }
+      if (pxBar >= 80) {
+        g.fillStyle = "rgba(128,128,128,.10)";
+        for (var q = 1; q < beats; q++) g.fillRect(Math.round(X(timeOfBar(b) + q * bs / beats)), RULER, 1, h - RULER);
+      }
     }
-    // count in (before beat one)
-    if (W.down > 0.05) { g.fillStyle = "rgba(128,128,128,.10)"; g.fillRect(0, RULER, X(W.down), h - RULER); }
+    if (W.down > 0.05) { g.fillStyle = "rgba(128,128,128,.10)"; g.fillRect(0, RULER, Math.max(0, X(W.down)), h - RULER); }
     // parts
-    var y0 = RULER;
     W.parts.forEach(function (p, i) {
       var a = X(timeOfBar(p.bar)), z = i + 1 < W.parts.length ? X(timeOfBar(W.parts[i + 1].bar)) : X(Math.max(W.dur, timeOfBar(nb + 1)));
+      if (z < 0 || a > w) return;
       var col = app.secColor(p.name);
       g.fillStyle = col + (i === W.sel ? "66" : "33");
-      roundRect(g, a + 1, y0 + 2, Math.max(2, z - a - 2), LANE - 4, 7); g.fill();
+      roundRect(g, a + 1, RULER + 2, Math.max(2, z - a - 2), LANE - 4, 7); g.fill();
+      if (p.name === "Part") { g.setLineDash([4, 3]); g.strokeStyle = faint; g.lineWidth = 1; roundRect(g, a + 1.5, RULER + 2.5, Math.max(2, z - a - 3), LANE - 5, 7); g.stroke(); g.setLineDash([]); }
       g.fillStyle = col;
-      g.fillRect(a, y0 + 2, 3, LANE - 4);
+      g.fillRect(a, RULER + 2, 3, LANE - 4);
       g.save();
-      g.beginPath(); g.rect(a + 6, y0, Math.max(0, z - a - 10), LANE); g.clip();
+      var la = Math.max(a, 0);
+      g.beginPath(); g.rect(la + 6, RULER, Math.max(0, z - la - 10), LANE); g.clip();
       g.fillStyle = text; g.font = "700 12.5px system-ui, sans-serif";
-      g.fillText(p.name, a + 9, y0 + LANE / 2);
+      g.fillText(p.name, la + 9, RULER + LANE / 2);
       g.restore();
     });
     // the song (all but the click)
-    var wy = RULER + LANE + 6, mid = wy + WAVE / 2;
+    var wy = RULER + LANE + 6, mid = wy + cv.wave / 2;
     g.fillStyle = "rgba(170,180,200,.55)";
-    var pk = W.peaks.v;
-    for (x = 0; x < w; x++) { var hh = Math.max(1, pk[x] * (WAVE - 4)); g.fillRect(x, mid - hh / 2, 1, hh); }
-    // each track, as how loud it is
-    var ry = wy + WAVE + 6;
+    for (x = 0; x < w; x++) {
+      var tt = (o + x) / W.zoom;
+      if (tt > W.dur) break;
+      var hh = Math.max(1, peakIn(W.mixEnv, tt, tt + tps) * (cv.wave - 4));
+      g.fillRect(x, mid - hh / 2, 1, hh);
+    }
+    // each track: how loud it is
+    var ry = wy + cv.wave + 6, step = Math.max(1, Math.round(2 * tps * FPS) ? 2 : 1);
     cv.rows.forEach(function (t) {
-      var mx = 0;
-      for (var i = 0; i < t.env.length; i++) if (t.env[i] > mx) mx = t.env[i];
-      var per = t.env.length / (W.dur * W.zoom), col = app.roleColor(t.role);
+      var col = app.roleColor(t.role), mx = t.envMax || 1;
       g.fillStyle = col;
       for (var px = 0; px < w; px += 2) {
-        var a2 = Math.floor(px * per), z2 = Math.floor((px + 2) * per), m = 0;
-        for (var k = a2; k < z2 && k < t.env.length; k++) if (t.env[k] > m) m = t.env[k];
-        var v = mx ? Math.sqrt(m / mx) : 0;
+        var ta = (o + px) / W.zoom;
+        if (ta > W.dur) break;
+        var v = Math.sqrt(peakIn(t.env, ta, ta + 2 * tps) / mx);
         if (v < 0.08) continue;
         g.globalAlpha = Math.min(1, 0.15 + v);
-        g.fillRect(px, ry, 2, ROW);
+        g.fillRect(px, ry, 2, cv.row);
       }
       g.globalAlpha = 1;
-      ry += ROW + GAP;
+      ry += cv.row + GAP;
     });
     // part lines across everything
-    W.parts.forEach(function (p, i) {
+    W.parts.forEach(function (p) {
       var a = Math.round(X(timeOfBar(p.bar))) + 0.5;
+      if (a < -2 || a > w + 2) return;
       g.fillStyle = app.secColor(p.name);
       g.globalAlpha = 0.7;
       g.fillRect(a, RULER + LANE, 1, h - RULER - LANE);
@@ -429,12 +520,34 @@
     });
     // playhead
     var px2 = Math.round(X(W.t)) + 0.5;
-    g.fillStyle = live;
-    g.fillRect(px2 - 0.5, 0, 2, h);
-    g.beginPath(); g.moveTo(px2 - 5, 0); g.lineTo(px2 + 6, 0); g.lineTo(px2 + 0.5, 7); g.fill();
+    if (px2 >= -6 && px2 <= w + 6) {
+      g.fillStyle = live;
+      g.fillRect(px2 - 0.5, 0, 2, h);
+      g.beginPath(); g.moveTo(px2 - 5, 0); g.lineTo(px2 + 6, 0); g.lineTo(px2 + 0.5, 7); g.fill();
+    }
     var bn = $("swBar"), ck = $("swClock");
     if (bn) bn.textContent = W.t < W.down ? T("swCountIn") : T("swBarN", { n: barAt(W.t) });
     if (ck) ck.textContent = fmtTime(W.t);
+  }
+  // zoom keeping the time under x (on screen) in place
+  function zoomTo(z, atClientX) {
+    var tl = $("swTl");
+    if (!tl) return;
+    var r = tl.getBoundingClientRect(), px = atClientX == null ? (X(W.t) >= 0 && X(W.t) <= tl.clientWidth ? X(W.t) : tl.clientWidth / 2) : atClientX - r.left;
+    var t = (tl.scrollLeft + px) / W.zoom;
+    W.zoom = Math.max(fitZoom(), Math.min(ZMAX, z));
+    setupCanvas();
+    tl.scrollLeft = Math.max(0, t * W.zoom - px);
+    draw();
+  }
+  function zoomToPart(i) {
+    var tl = $("swTl"), p = W.parts[i];
+    if (!tl || !p) return;
+    var a = timeOfBar(p.bar), z = i + 1 < W.parts.length ? timeOfBar(W.parts[i + 1].bar) : W.dur;
+    W.zoom = Math.max(fitZoom(), Math.min(ZMAX, (tl.clientWidth * 0.8) / Math.max(0.5, z - a)));
+    setupCanvas();
+    tl.scrollLeft = Math.max(0, a * W.zoom - tl.clientWidth * 0.1);
+    draw();
   }
   function roundRect(g, x, y, w, h, r) {
     g.beginPath();
@@ -517,7 +630,7 @@
     var tl = $("swTl");
     if (!tl) return;
     var x = X(W.t);
-    if (x > tl.scrollLeft + tl.clientWidth * 0.8 || x < tl.scrollLeft) tl.scrollLeft = Math.max(0, x - tl.clientWidth * 0.25);
+    if (x > tl.clientWidth * 0.8 || x < 0) { tl.scrollLeft = Math.max(0, W.t * W.zoom - tl.clientWidth * 0.25); }
   }
   function playIcon() {
     var ic = $("swPlayIc");
@@ -530,6 +643,7 @@
 
   // ---------------------------------------------------------------- editing parts
   function addPartAt(t) {
+    W.edited = true;
     // a tap while listening comes a little late: the nearest bar line to just before it
     var b = Math.round((t - W.down) / barSec()) + 1;
     b = Math.max(1, Math.min(nBars(), b));
@@ -561,7 +675,7 @@
     if (!pop || !p) return;
     W.sel = i;
     var base = p.name.replace(/\s+\d+$/, "");
-    pop.innerHTML = '<div class="pop-head"><b>' + esc(T("swPartAt", { n: p.bar })) + '</b><button type="button" class="icon-btn" data-x="close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>' +
+    pop.innerHTML = '<div class="pop-head"><b>' + esc(T("swPartAt", { n: p.bar })) + (p.said ? ' <small class="sw-said">' + esc(T("swSaid", { t: p.said })) + "</small>" : "") + '</b><button type="button" class="icon-btn" data-x="close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>' +
       '<div class="sw-names">' + NAMES.map(function (n) { return '<button type="button" data-name="' + esc(n) + '"' + (n === base ? ' class="on"' : "") + ' style="--c:' + app.secColor(n) + '">' + esc(n) + "</button>"; }).join("") + "</div>" +
       '<div class="sw-custom"><input type="text" id="swCustom" maxlength="40" placeholder="' + esc(T("swOtherName")) + '" value="' + esc(NAMES.indexOf(base) < 0 ? p.name : "") + '"></div>' +
       '<div class="pop-acts"><button type="button" class="chip-btn" data-x="del">' + esc(T("swDeletePart")) + "</button>" +
@@ -572,6 +686,7 @@
     draw();
   }
   function setName(i, name) {
+    W.edited = true;
     var p = W.parts[i];
     if (!p) return;
     p.name = name; p.auto = false;
@@ -582,6 +697,17 @@
   // ---------------------------------------------------------------- events
   function bind() {
     $("swClose").addEventListener("click", close);
+    // the whole window, or a panel
+    var full = false;
+    try { full = localStorage.getItem("sp.swFull") === "1"; } catch (e) { }
+    $("stemWiz").classList.toggle("full", full);
+    $("swFull").addEventListener("click", function () {
+      full = !$("stemWiz").classList.contains("full");
+      $("stemWiz").classList.toggle("full", full);
+      $("swFull").setAttribute("aria-pressed", full);
+      try { localStorage.setItem("sp.swFull", full ? "1" : "0"); } catch (e) { }
+      if (W && W.step === 2) requestAnimationFrame(function () { setupCanvas(); draw(); });
+    });
     $("stemWiz").addEventListener("click", function (e) { if (e.target === $("stemWiz")) close(); });
     $("swBack").addEventListener("click", function () { stopPlay(); W.step = 1; render(); });
     $("swNext").addEventListener("click", function () {
@@ -589,8 +715,8 @@
       if (W.step === 1) {
         readSong();
         if (!(W.bpm >= 20 && W.bpm <= 300)) return;
-        if (!W.parts.length || W.gridChanged) { suggestParts(); W.gridChanged = false; }
-        W.peaks = null;
+        if (!W.parts.length || W.gridChanged) { suggestParts(); W.gridChanged = false; W.edited = false; W.heardCount = 0; hearGuide(); }
+        W.mixEnv = null;
         W.step = 2; W.zoom = 0; W.t = 0; W.sel = -1;
         render();
         return;
@@ -609,7 +735,7 @@
       var li = e.target.closest(".sw-tr");
       if (!li) return;
       var t = W.tracks[+li.dataset.i];
-      if (e.target.dataset.act === "inc") { t.include = e.target.checked; li.classList.toggle("off", !t.include); W.peaks = null; W.ab = null; W.gridChanged = true; }
+      if (e.target.dataset.act === "inc") { t.include = e.target.checked; li.classList.toggle("off", !t.include); W.mixEnv = null; W.ab = null; W.gridChanged = true; }
       if (e.target.dataset.act === "role") { t.role = e.target.value; W.gridChanged = true; }
     });
     body.addEventListener("click", function (e) {
@@ -628,7 +754,7 @@
         if (P.gains && P.gains[k]) P.gains[k].gain.value = W[key] !== false ? (k === "click" ? 0.7 : 0.9) : 0;
         return;
       }
-      if (b.dataset.zoom) { var tl = $("swTl"), c = W.t; W.zoom *= b.dataset.zoom === "1" ? 1.6 : 1 / 1.6; W.peaks = null; setupCanvas(); draw(); tl.scrollLeft = Math.max(0, X(c) - tl.clientWidth / 2); return; }
+      if (b.dataset.zoom) { if (b.dataset.zoom === "fit") zoomTo(0); else zoomTo(W.zoom * (b.dataset.zoom === "1" ? 1.6 : 1 / 1.6)); return; }
       if (b.dataset.nudge) {
         var bs = 60 / W.bpm, d = { "-beat": -bs, beat: bs, "-ms": -0.01, ms: 0.01 }[b.dataset.nudge];
         W.down = Math.max(0, W.down + d);
@@ -640,7 +766,7 @@
       if (pop) {
         if (b.dataset.name) { var nm = b.dataset.name; setName(W.sel, nm); openName(W.sel); return; }
         if (b.dataset.x === "close") { pop.hidden = true; return; }
-        if (b.dataset.x === "del") { W.parts.splice(W.sel, 1); W.sel = -1; pop.hidden = true; renameAuto(); refreshParts(); return; }
+        if (b.dataset.x === "del") { W.parts.splice(W.sel, 1); W.sel = -1; W.edited = true; pop.hidden = true; renameAuto(); refreshParts(); return; }
         if (b.dataset.x === "go") { seek(timeOfBar(W.parts[W.sel].bar) - 0.05); if (!playing()) startPlay(W.t); return; }
       }
     });
@@ -661,22 +787,57 @@
         if (Math.abs(X(timeOfBar(W.parts[i].bar)) - x) < 8) { drag = { i: i, moved: false }; e.target.setPointerCapture(e.pointerId); return; }
       }
       if (y >= RULER && y < RULER + LANE) {
-        var t = x / W.zoom, k = -1;
+        var t = (x + off()) / W.zoom, k = -1;
         for (var j = 0; j < W.parts.length; j++) if (timeOfBar(W.parts[j].bar) <= t + 1e-6) k = j;
         if (k >= 0) { openName(k); return; }
       }
-      seek(x / W.zoom);
+      seek((x + off()) / W.zoom);
     });
+    // zoom: Ctrl/Cmd + wheel or a pinch on the trackpad, the slider, + and -; double click a part to fit it
+    body.addEventListener("wheel", function (e) {
+      if (!W || W.step !== 2 || !e.target.closest("#swTl")) return;
+      if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoomTo(W.zoom * Math.exp(-e.deltaY * 0.0025), e.clientX); }
+      else if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && !e.shiftKey) { e.preventDefault(); $("swTl").scrollLeft += e.deltaY; }
+    }, { passive: false });
+    body.addEventListener("scroll", function (e) { if (e.target.id === "swTl") draw(); }, true);
+    body.addEventListener("dblclick", function (e) {
+      if (!W || e.target.id !== "swCanvas") return;
+      var t = tAtClient(e.clientX), k = -1;
+      for (var j = 0; j < W.parts.length; j++) if (timeOfBar(W.parts[j].bar) <= t + 1e-6) k = j;
+      if (k >= 0) zoomToPart(k);
+    });
+    body.addEventListener("input", function (e) {
+      if (!W || e.target.id !== "swZoom") return;
+      var f = fitZoom();
+      zoomTo(f * Math.pow(ZMAX / f, +e.target.value / 1000));
+    });
+    // the timeline's height: drag the grip under it
+    var grip = null;
+    body.addEventListener("pointerdown", function (e) {
+      if (!W || !e.target.closest("#swGrip")) return;
+      var wrap = $("swTlWrap");
+      grip = { y: e.clientY, h: wrap.getBoundingClientRect().height };
+      e.target.closest("#swGrip").setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    body.addEventListener("pointermove", function (e) {
+      if (!grip) return;
+      W.tlH = Math.max(180, Math.min(window.innerHeight - 120, Math.round(grip.h + e.clientY - grip.y)));
+      var wrap = $("swTlWrap");
+      wrap.style.flex = "none"; wrap.style.height = W.tlH + "px";
+      setupCanvas(); draw();
+    });
+    window.addEventListener("pointerup", function () { if (grip) { grip = null; try { localStorage.setItem("sp.swTlH", String(W.tlH)); } catch (e) { } } });
     body.addEventListener("pointermove", function (e) {
       if (!W || W.step !== 2) return;
       var c = $("swCanvas");
       if (!c) return;
       var r = c.getBoundingClientRect(), x = e.clientX - r.left;
       if (drag) {
-        var b = Math.round((x / W.zoom - W.down) / barSec()) + 1, p = W.parts[drag.i];
+        var b = Math.round(((x + off()) / W.zoom - W.down) / barSec()) + 1, p = W.parts[drag.i];
         var lo = W.parts[drag.i - 1].bar + 1, hi = drag.i + 1 < W.parts.length ? W.parts[drag.i + 1].bar - 1 : nBars();
         b = Math.max(lo, Math.min(hi, b));
-        if (b !== p.bar) { p.bar = b; drag.moved = true; draw(); }
+        if (b !== p.bar) { p.bar = b; drag.moved = true; W.edited = true; draw(); }
         return;
       }
       if (e.target.id === "swCanvas") {
@@ -693,10 +854,13 @@
       if (e.key === "Escape") { var pop = $("swPop"); if (pop && !pop.hidden) pop.hidden = true; else close(); e.preventDefault(); return; }
       if (W.step !== 2 || /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
       if (e.key === " ") { e.preventDefault(); $("swPlay").click(); }
+      else if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomTo(W.zoom * 1.6); }
+      else if (e.key === "-" || e.key === "_") { e.preventDefault(); zoomTo(W.zoom / 1.6); }
+      else if (e.key === "0") { e.preventDefault(); zoomTo(0); }
       else if (e.key === "m" || e.key === "M") { e.preventDefault(); addPartAt(Math.max(0, nowT() - (playing() ? 0.12 : 0))); }
-      else if ((e.key === "Delete" || e.key === "Backspace") && W.sel > 0) { e.preventDefault(); W.parts.splice(W.sel, 1); W.sel = -1; renameAuto(); refreshParts(); var pp = $("swPop"); if (pp) pp.hidden = true; }
+      else if ((e.key === "Delete" || e.key === "Backspace") && W.sel > 0) { e.preventDefault(); W.parts.splice(W.sel, 1); W.sel = -1; W.edited = true; renameAuto(); refreshParts(); var pp = $("swPop"); if (pp) pp.hidden = true; }
     }, true);
-    window.addEventListener("resize", function () { if (W && W.step === 2) { W.peaks = null; setupCanvas(); draw(); } });
+    window.addEventListener("resize", function () { if (W && W.step === 2) { setupCanvas(); draw(); } });
   }
   var taps = [];
   function tap() {

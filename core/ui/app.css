@@ -1613,7 +1613,8 @@ html[data-layout="console"] .act-auto { display: none; }
 .sw-status .sw-prog b { display: block; height: 100%; background: var(--loop); transition: width .3s; }
 .sw-spin { width: 14px; height: 14px; flex: none; border-radius: 50%; border: 2px solid var(--edge); border-top-color: var(--loop); animation: sw-spin .8s linear infinite; }
 @keyframes sw-spin { to { transform: rotate(360deg); } }
-.sw-body { flex: 1; min-height: 0; overflow: auto; }
+.sw-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.sw-body > * { flex: 1 1 auto; }
 .sw-foot { display: flex; justify-content: flex-end; gap: 10px; }
 .sw-foot .tk-act { min-width: 140px; }
 .sw-foot .tk-act:disabled { opacity: .4; }
@@ -1694,3 +1695,24 @@ html[data-layout="console"] .act-auto { display: none; }
 .sw-fields .field-row > *, .sw-fields .field { min-width: 0; }
 .sw-bpm input { width: 100%; }
 .sw-foot .tk-act:not(.ghost):not(:disabled) { background: var(--live); color: var(--stage); }
+/* stems assistant: full screen, a timeline that fills the room, zoom */
+#stemWiz.full { padding: 0; }
+#stemWiz.full .sw-card { width: 100vw; height: 100vh; max-height: none; border-radius: 0; border: 0; }
+#swFull svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+#swFull .sw-co { display: none; }
+#stemWiz.full #swFull .sw-ex { display: none; }
+#stemWiz.full #swFull .sw-co { display: inline; }
+.sw-parts { height: 100%; min-height: 0; }
+.sw-tlwrap { flex: 1 1 auto; min-height: 180px; display: flex; }
+.sw-tl { flex: 1; min-width: 0; height: auto; overflow-x: auto; overflow-y: hidden; }
+.sw-space { position: relative; height: 100%; }
+.sw-space canvas { position: sticky; left: 0; top: 0; display: block; }
+.sw-grip { height: 12px; margin-top: -6px; display: grid; place-items: center; cursor: ns-resize; touch-action: none; }
+.sw-grip i { width: 44px; height: 4px; border-radius: 2px; background: var(--edge); }
+.sw-grip:hover i { background: var(--faint); }
+.sw-plist { max-height: 118px; overflow-y: auto; flex: none; }
+.sw-zoom { align-items: center; }
+.sw-zoom input[type=range] { width: 140px; accent-color: var(--loop); }
+.sw-zoom .sw-fit { width: auto; padding: 0 12px; font-size: 13px; font-weight: 650; }
+.sw-said { display: block; font-weight: 500; font-size: 12px; color: var(--dim); margin-top: 2px; }
+@media (max-width: 760px) { .sw-zoom input[type=range] { width: 90px; } }

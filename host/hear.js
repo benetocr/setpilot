@@ -50,7 +50,15 @@ function makeHear({ log = () => {}, dirs } = {}) {
 			en.forEach((t, i) => { const p = partName(t); out[i].text = t; if (p) Object.assign(out[i], p, { lang: "en" }); });
 			const left = out.map((o, i) => (o.name ? -1 : i)).filter(i => i >= 0);
 			if (left.length) {
-				const es = await run(left.map(i => files[i]), "es");
+				// a single short word can come back empty: the Spanish pass hears it said twice
+				const twice = left.map(i => {
+					const c = cues[i].pcm, gap = 4800, two = new Int16Array(c.length * 2 + gap);
+					two.set(c, 0); two.set(c, c.length + gap);
+					const f = path.join(dir, "cue-" + i + "-x2.wav");
+					fs.writeFileSync(f, wav16(two));
+					return f;
+				});
+				const es = await run(twice, "es");
 				es.forEach((t, k) => { const i = left[k], p = partName(t); if (p) Object.assign(out[i], p, { text: t, lang: "es" }); else if (!out[i].text) out[i].text = t; });
 			}
 			log("guide cues heard in " + ((Date.now() - t0) / 1000).toFixed(1) + " s: " + out.map(o => (o.name || "?") + " (" + o.text + ")").join(", "));
