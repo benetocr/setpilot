@@ -225,12 +225,12 @@ def _clip_setattr_guard(clip, name, value):
 
 class Track(Observable):
     _props = ("name", "mute", "solo", "color", "output_meter_level", "arrangement_clips", "devices",
-              "output_routing_type", "output_routing_channel", "available_output_routing_channels")
+              "output_routing_type", "output_routing_channel", "available_output_routing_channels", "clip_slots")
     ROUTES = (RoutingType("Ext. Out", 1), RoutingType("Main", 2), RoutingType("Band Bus", 3))
 
     def __init__(self, name, midi=False):
         Observable.__init__(self, name=name, mute=False, solo=False, color=0xff6600, output_meter_level=0.0,
-                            arrangement_clips=(), devices=(), output_routing_type=self.ROUTES[1],
+                            arrangement_clips=(), devices=(), clip_slots=(), output_routing_type=self.ROUTES[1],
                             output_routing_channel=RoutingType(""), available_output_routing_channels=(RoutingType(""),))
         self.has_midi_input = midi
         self.is_foldable = False
@@ -404,6 +404,11 @@ class Song(Observable):
         c = CuePoint(self, name, time)
         self.cue_points = self.cue_points + (c,)
         return c
+
+    def delete_track(self, index):
+        lst = list(self._v["tracks"])
+        del lst[int(index)]
+        self._set_quiet("tracks", tuple(lst))
 
     def create_audio_track(self, index=-1):
         t = Track("Audio")

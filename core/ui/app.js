@@ -1763,7 +1763,12 @@
     if (s.arr && s.arr.length) return s.arr.slice();
     return s.sections.map(function (_, j) { return j; });
   }
-  function auTracks() { return mixer && mixer.tracks ? mixer.tracks.filter(function (x) { return !x.kind; }) : null; }
+  // the song's channels: those with something in this song (empty tracks left out)
+  function auTracks() {
+    if (!mixer || !mixer.tracks) return null;
+    var s = auSong(), used = s && s.used;
+    return mixer.tracks.filter(function (x) { return !x.kind && !x.group && (!used || used.indexOf(x.name) >= 0); });
+  }
   function openAuto() {
     var s = songs()[shownIdx];
     if (!s || s.med) return;
@@ -2649,8 +2654,34 @@
     showAddPane("pick");
     var item = e.dataTransfer.items && e.dataTransfer.items[0];
     var entry = item && item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
-    if (entry) alsFromEntry(entry, 0).then(findDropped);
+    var dropped = Array.prototype.slice.call(e.dataTransfer.files || []);
+    var audio = dropped.filter(function (f) { return /\.(wav|wave|aif|aiff|mp3|m4a|flac|ogg)$/i.test(f.name); });
+    if (audio.length >= 2 && audio.length === dropped.length) { window.SPStems.open(audio, ""); return; }
+    if (entry) alsFromEntry(entry, 0).then(function (f) {
+      if (f || !entry.isDirectory) { findDropped(f); return; }
+      window.SPStems.fromEntry(entry).then(function (files) {
+        if (files.some(function (x) { return /\.(wav|wave|aif|aiff|mp3|m4a|flac|ogg)$/i.test(x.name); })) window.SPStems.open(files, entry.name);
+        else findDropped(null);
+      });
+    });
     else findDropped(e.dataTransfer.files[0] && /\.als$/i.test(e.dataTransfer.files[0].name) ? e.dataTransfer.files[0] : null);
+  });
+  // a folder of tracks without a Live Set: the stems assistant
+  var ROLE_COL = { click: "#959db3", guide: "#5ab6f0", drums: "#f45b84", perc: "#f2b441", bass: "#a47dff", eg: "#ff8a4c", ag: "#e3c06b", keys: "#2ec7b0", synth: "#6f8dff", strings: "#8bd45f", vox: "#ff6fb5", loops: "#7fd1e6", other: "#b8bfcf" };
+  window.SPStems.init({
+    esc: esc, toast: showToast, fmtBpm: fmtBpm,
+    secColor: function (n) { return SEC_HEX[family(n)] || "#959db3"; },
+    roleColor: function (r) { return ROLE_COL[r] || ROLE_COL.other; },
+    showProgress: function (title) { add.busy = true; $("addSheet").hidden = false; showAddPane("progress"); $("addStatus").classList.remove("ok"); $("addStatus").textContent = T("addWorking", { title: title }); $("addBar").style.width = "4%"; }
+  });
+  $("btnAddStems").addEventListener("click", function () { $("stemsPick").click(); });
+  $("stemsPick").addEventListener("change", function () {
+    var files = Array.prototype.slice.call(this.files || []);
+    var folder = files[0] && files[0].webkitRelativePath ? files[0].webkitRelativePath.split("/")[0] : "";
+    // the folder's own tracks (and one level of sub folders)
+    files = files.filter(function (f) { return !f.webkitRelativePath || f.webkitRelativePath.split("/").length <= 3; });
+    if (files.length) window.SPStems.open(files, folder);
+    this.value = "";
   });
   $("dropZone").addEventListener("click", function () { $("dropFile").click(); });
   $("dropFile").addEventListener("change", function () { if (this.files[0]) findDropped(this.files[0]); this.value = ""; });

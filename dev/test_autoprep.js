@@ -26,10 +26,10 @@ const get = p => new Promise((res, rej) => http.get({ host: "127.0.0.1", port: P
 	try {
 		for (let i = 0; i < 100 && !(h.status.autoPrepared); i++) await sleep(100);
 		assert.ok(h.status.autoPrepared && h.status.autoPrepared.ok, "prepared on connect: " + JSON.stringify(h.status.autoPrepared));
-		assert.deepStrictEqual(h.status.autoPrepared.done, ["SetPilot Cues", "SetPilot Click", "SetPilot Crossfade"]);
+		assert.deepStrictEqual(h.status.autoPrepared.done, ["SetPilot Cues", "SetPilot Click", "SetPilot Crossfade", "2 empty default tracks removed"]);
 		await sleep(1500);
 		assert.deepStrictEqual(Object.keys(h.status.setRoles).sort(), ["click", "cues", "tail"]);
-		ok("an empty set gets its SetPilot tracks as soon as Live connects");
+		ok("an empty set gets its SetPilot tracks as soon as Live connects, and Live's empty default tracks go");
 		http.get({ host: "127.0.0.1", port: PORT, path: "/events" }, r => { r.setEncoding("utf8"); let ev = ""; r.on("data", d => { for (const line of d.split("\n")) { if (line.startsWith("event: ")) ev = line.slice(7); else if (line.startsWith("data: ") && ev === "import") events.push(JSON.parse(line.slice(6))); } }); });
 		await sleep(300);
 		h.status.autoPrepared = null;

@@ -65,6 +65,26 @@ function prepareSet({ mirror, router, log = () => {} }) {
 		const guide = tracks().find(id => GUIDE_RE.test(String(mirror.get(id, "name"))));
 		if (guide) { addPlugin(guide, "guide"); done.push("Guide (" + mirror.get(guide, "name") + ")"); }
 	}
+	// the tracks a new Live Set comes with ("1-MIDI", "3-Audio"...), if they are
+	// still empty, are taken out: they would only be noise in the mixer
+	const DEFAULT_RE = /^\d+[-\s]?(MIDI|Audio)$/i;
+	const emptyDefault = id => {
+		if (!DEFAULT_RE.test(String(mirror.get(id, "name")))) return false;
+		if ((mirror.get(id, "arrangement_clips") || []).length) return false;
+		if (devicesOf(id).length) return false;
+		let slots = [];
+		try { slots = (mirror.get(id, "clip_slots") || []).map(r => r.$); } catch (e) { slots = []; }
+		return !slots.some(sl => Number(mirror.get(sl, "has_clip")));
+	};
+	let removed = 0;
+	for (let guard = 0; guard < 16; guard++) {
+		const list = tracks();
+		const i = list.findIndex(id => { try { return emptyDefault(id); } catch (e) { return false; } });
+		if (i < 0 || list.length <= 1) break;
+		mirror.call(mirror.roots.song, "delete_track", [i], { sync: true });
+		removed++;
+	}
+	if (removed) { done.push(removed + " empty default track" + (removed > 1 ? "s" : "") + " removed"); log("removed " + removed + " empty default tracks"); }
 	return done;
 }
 

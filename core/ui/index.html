@@ -458,6 +458,11 @@
           <small data-i18n="dropSub">The .als file or the song's folder</small>
         </button>
         <input type="file" id="dropFile" accept=".als" hidden>
+        <button class="add-click add-stems" id="btnAddStems" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h13"/><circle cx="19" cy="12" r="2"/></svg>
+          <span><strong data-i18n="swEntry">Song from a folder of tracks</strong><small data-i18n="swEntrySub">No Live Set needed: SetPilot hears the tempo, the key and the parts</small></span>
+        </button>
+        <input type="file" id="stemsPick" webkitdirectory multiple hidden>
         <button class="add-click" id="btnAddClick" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 21h8l-3-17h-2zM12 14l5-6"/></svg>
           <span><strong data-i18n="clkTitle">Click song</strong><small data-i18n="clkSub">Only the click and a pad, at the tempo and key you choose</small></span>
@@ -530,6 +535,22 @@
     </div>
   </div>
 
+  <div class="sheet stem-wiz" id="stemWiz" hidden>
+    <div class="sheet-card sw-card" role="dialog" aria-modal="true" aria-labelledby="swTitle">
+      <div class="sw-head">
+        <h3 id="swTitle" data-i18n="swTitle">New song from tracks</h3>
+        <ol class="sw-steps" id="swSteps"><li data-s="1"><i>1</i><span data-i18n="swStepSong">Song</span></li><li data-s="2"><i>2</i><span data-i18n="swStepParts">Parts</span></li></ol>
+        <button class="icon-btn" id="swClose" data-i18n-label="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="sw-status" id="swStatus"></div>
+      <div class="sw-body" id="swBody"></div>
+      <div class="sw-foot">
+        <button class="tk-act ghost" id="swBack" data-i18n="addBack">Back</button>
+        <button class="tk-act" id="swNext" data-i18n="swNext">Next</button>
+      </div>
+    </div>
+  </div>
+
   <div class="sheet" id="autoSheet" hidden>
     <div class="sheet-card auto-card" role="dialog" aria-modal="true" aria-labelledby="autoTitle">
       <div class="tk-head">
@@ -598,6 +619,8 @@
   </div>
 </div>
 <script src="i18n.js"></script>
+<script src="stems_dsp.js"></script>
+<script src="stems.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

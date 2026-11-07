@@ -27,6 +27,7 @@ function makeSets(o) {
 		let st = null;
 		try { st = fs.statSync(file); } catch (e) { }
 		all[title] = { path: file, name: path.basename(file), size: st ? st.size : 0, mtime: st ? st.mtimeMs : 0, instr: opts.instr || null, gap: opts.gap, key: opts.key || "", bpm: Number(opts.bpm) || 0, at: Date.now() };
+		if (opts.stems) all[title].stems = opts.stems;
 		writeJson(SOURCES, all);
 	}
 	function rememberMedley(body) {
@@ -133,6 +134,24 @@ function makeSets(o) {
 				continue;
 			}
 			const src = s.songs[title].source;
+			if (src.stems) {
+				// a song made from a folder of tracks: the same tracks, found again if they moved
+				const spec = JSON.parse(JSON.stringify(src.stems));
+				let okAll = true;
+				for (const t of spec.tracks || []) {
+					if (t.path && fs.existsSync(t.path)) continue;
+					let st2 = null;
+					const hits = o.findByName(o.roots.map(dir => ({ dir, depth: 6 })), path.basename(t.path || ""), t.size, 0);
+					if (hits.length) t.path = hits[0].path; else { st2 = 1; okAll = false; }
+					if (st2) break;
+				}
+				const r = okAll ? o.importStems(Object.assign(spec, { title })) : { ok: false, error: "not_found" };
+				if (!r.ok) { skipped.push(title); log("setlist: tracks not found", title); continue; }
+				const ks = await waitDone(10 * 60 * 1000);
+				if (ks !== "done") { skipped.push(title); log("setlist: import", ks, title); }
+				await sleep(800);
+				continue;
+			}
 			const file = findFile(src, title);
 			if (!file) { skipped.push(title); log("setlist: not found", title); continue; }
 			const r = o.importFile({ path: file, title, instr: src.instr || undefined, gap: src.gap, key: src.key || undefined, bpm: src.bpm || undefined });

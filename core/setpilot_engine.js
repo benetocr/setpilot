@@ -366,7 +366,8 @@ function buildSongs(cues, endOfSet) {
 		var s = out[k];
 		if (!s.sections.length || s.sections[0].start > s.start + 0.001) {
 			var lead = s.sections.length ? s.sections[0].start - s.start : 0;
-			s.sections.unshift({ name: !s.sections.length ? "Song" : (lead <= barLen() * 4 + 0.001 ? "Count Off" : "Start"), start: s.start, cue: s.cue, implicit: 1 });
+			var first = songOpts[s.name] && songOpts[s.name].first;
+			s.sections.unshift({ name: first || (!s.sections.length ? "Song" : (lead <= barLen() * 4 + 0.001 ? "Count Off" : "Start")), start: s.start, cue: s.cue, implicit: 1 });
 		}
 		for (var n = 0; n < s.sections.length; n++) {
 			var nx = s.sections[n + 1];
@@ -426,10 +427,37 @@ function orderNames() {
 	return names;
 }
 
+// which tracks have something in each song (the automation shows only those)
+var usedSig = "", usedCache = null;
+function tracksUsed() {
+	var ids = trackIds(), sig = structSig + "|" + ids.join(",");
+	if (sig == usedSig && usedCache) return usedCache;
+	var per = [], si;
+	for (si = 0; si < songs.length; si++) per.push({});
+	for (var i = 0; i < ids.length; i++) {
+		var id = ids[i];
+		if (id == ownTrackId || id == tailTrackId || id == gateTrackId || id == clickTrackId) continue;
+		trackApi.id = id;
+		var nm = str(trackApi.get("name")), raw = trackApi.get("arrangement_clips") || [];
+		for (var k = 0; k < raw.length; k++) {
+			if (raw[k] != "id") continue;
+			clipApi.id = num(raw[k + 1]); k++;
+			var st = num(clipApi.get("start_time")), et = num(clipApi.get("end_time"));
+			for (si = 0; si < songs.length; si++) if (et > songs[si].start + 0.001 && st < songs[si].end - 0.001) per[si][nm] = 1;
+		}
+	}
+	usedCache = per.map(function (o) { return Object.keys(o); });
+	usedSig = sig;
+	return usedCache;
+}
+
 function publishStruct() {
 	structVersion++;
+	var used = null;
+	try { used = tracksUsed(); } catch (e) { used = null; }
 	for (var si = 0; si < songs.length; si++) {
 		var o = opt(si);
+		songs[si].used = used ? used[si] : null;
 		songs[si].tempoSet = o.bpm;
 		songs[si].semis = o.semis;
 		songs[si].baseBpm = baseBpm(si);
@@ -3635,7 +3663,8 @@ function importplan() {
 	steps.push({ type: "done" });
 
 	if (plan.instr) for (var nmK in plan.instr) if (plan.instr.hasOwnProperty(nmK) && INSTR.indexOf(plan.instr[nmK]) >= 0) instr.tracks[normTrack(nmK)] = plan.instr[nmK];
-	job = { steps: steps, i: 0, P: P, dest: dest, title: plan.title, savedTempo: tempo, warp: {} };
+	if (plan.first) { songOpts[plan.title] = songOpts[plan.title] || { bpm: 0, semis: 0 }; songOpts[plan.title].first = plan.first; }
+	job = { steps: steps, i: 0, P: P, dest: dest, title: plan.title, savedTempo: tempo, warp: {}, first: plan.first || "" };
 	importMsg("start", plan.title, steps.length, Math.round(P / bl) + 1);
 	log("import " + plan.title + " at bar " + (Math.round(P / bl) + 1) + ": " + matched + " tracks matched, " + created + " new, " + missing + " missing files");
 }
@@ -4211,6 +4240,7 @@ function runJob() {
 		// keep each stem's original timing, to repair the warp later if needed
 		if (!songOpts[title]) songOpts[title] = { bpm: 0, semis: 0 };
 		songOpts[title].warp = job.warp;
+		if (job.first) songOpts[title].first = job.first;
 		needStore = true;
 		job = null;
 		guard("outputs", applyOutputs)("");

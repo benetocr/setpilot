@@ -6,7 +6,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { parseAls, findSessions, findByName, guessInstr, INSTR } = require("./setpilot_als.js");
+const { parseAls, findSessions, findByName, guessInstr, INSTR, metaFromName } = require("./setpilot_als.js");
 const { makeSets } = require("./setpilot_sets.js");
 const { buildTail, afconvertDecoder, buildWave, buildCounted, normalizeCueFile, extractGuide } = require("./setpilot_tail.js");
 
@@ -101,6 +101,7 @@ function start(engine) {
 		importFile: o => importFile(o),
 		medley: o => { if (engine.medley) engine.medley(o); },
 		clickSong: song => clickSong(song),
+		importStems: spec => stemsCreate(spec),
 		restore: json => { if (engine.restore) engine.restore(json); },
 		getStore: () => (engine.getStore ? engine.getStore() : null),
 		getStruct: () => struct,
@@ -168,6 +169,113 @@ function start(engine) {
 		try { sets.rememberImport(plan.title, file, { instr: plan.instr, gap, key: opts.key, bpm: opts.bpm }); } catch (e) { }
 		return { ok: true, title: plan.title, key: plan.key, bpm: plan.bpm, sections: p.locators.length, tracks: p.tracks.length, missing: p.missing, tempoChanges: p.tempoChanges };
 	}
+	// ---- a folder of stems (no Live Set): the assistant listens in the dashboard
+	// and sends the song's tempo, key, beat one and parts; the tracks go into Live here
+	const AUDIO_RE = /\.(wav|wave|aif|aiff|mp3|m4a|flac|ogg)$/i;
+	// names, roles and what the folder's name says about the song
+	const BPM_RE = /(\d{2,3}(?:\.\d+)?)\s*bpm/i, KEYTOK_RE = /(?:^|[\s_\-(\[.])([A-G](?:#|b)?m?)(?=$|[\s_\-)\].])/;
+	function stemsMeta(folder, files) {
+		const strip = n => n.replace(AUDIO_RE, "").replace(BPM_RE, " ").replace(/[_]+/g, " ").replace(/\s+/g, " ").trim();
+		const names = files.map(f => strip(f.name));
+		// what every name starts with (the song's name, usually) goes
+		let pre = names[0] || "";
+		for (const n of names) while (pre && !n.startsWith(pre)) pre = pre.slice(0, -1);
+		const cut = names.length > 1 && /[\s\-]$/.test(pre) ? pre.length : (names.length > 1 ? pre.replace(/[^\s\-]*$/, "").length : 0);
+		const tracks = names.map(n => {
+			let t = n.slice(cut).replace(/^[\s\-]+|[\s\-]+$/g, "");
+			t = t.replace(new RegExp(KEYTOK_RE.source + "\\s*$"), "").replace(/^[\s\-]+|[\s\-]+$/g, "") || t || n;
+			return t.replace(/^\d+[\s.\-_]+/, "").trim() || n;
+		});
+		const all = [folder].concat(files.map(f => f.name)).join(" | ");
+		const bm = all.match(BPM_RE);
+		const meta = metaFromName(String(folder || ""));
+		let key = meta.key || "";
+		if (!key) { const km = String(folder || "").match(KEYTOK_RE) || (cut ? pre.match(KEYTOK_RE) : null); if (km) key = km[1]; }
+		// "Song - Eb - Artist 67.50bpm": the song is the first piece that isn't a key or a tempo
+		let title = meta.title && meta.title !== folder ? meta.title : "";
+		if (!title) {
+			const bits = String(folder || "").replace(/_/g, " ").split(/\s+-\s+|\s*\|\s*/).map(b => b.replace(BPM_RE, " ").replace(/\s+/g, " ").trim()).filter(b => b && !/^[A-G](#|b)?m?$/.test(b));
+			title = bits[0] || "";
+		}
+		if (!title && cut) title = pre.replace(/[\s\-]+$/, "");
+		return { title, key, bpm: meta.bpm || (bm ? Number(bm[1]) : 0), tracks };
+	}
+	function stemsFind(q) {
+		const files = Array.isArray(q.files) ? q.files.filter(f => f && AUDIO_RE.test(f.name || "")).slice(0, 64) : [];
+		if (!files.length) return { ok: false, error: "no_audio" };
+		const done = list => {
+			const meta = stemsMeta(q.folder || path.basename(path.dirname(list[0].path)), list);
+			return { ok: true, title: meta.title, key: meta.key, bpm: meta.bpm, files: list.map((f, i) => ({ name: f.name, path: f.path, track: meta.tracks[i], role: guessInstr(meta.tracks[i]) })) };
+		};
+		// the dashboard in the desktop app knows the paths already
+		if (files.every(f => f.path && fs.existsSync(f.path))) return done(files.map(f => ({ name: f.name, path: f.path })));
+		const home = os.homedir();
+		const roots = importRoots.map(dir => ({ dir, depth: 6 })).concat([{ dir: home, depth: 4 }, { dir: "/Volumes", depth: 5 }]);
+		const first = files.slice().sort((a, b) => b.size - a.size)[0];
+		const hits = findByName(roots, first.name, first.size, first.mtime);
+		for (const h of hits) {
+			// the folder the dropped one sits in (or the song folder above it)
+			for (const dir of [path.dirname(h.path), path.dirname(path.dirname(h.path))]) {
+				const out = [];
+				for (const f of files) {
+					const p1 = path.join(dir, f.rel || f.name), p2 = path.join(path.dirname(h.path), f.name);
+					const pth = [p1, p2].find(x => { try { return fs.statSync(x).size === f.size; } catch (e) { return false; } });
+					if (!pth) break;
+					out.push({ name: f.name, path: pth });
+				}
+				if (out.length === files.length) return done(out);
+			}
+		}
+		return { ok: false, error: "not_found" };
+	}
+	function stemsCreate(o) {
+		const bpm = Number(o.bpm);
+		if (!(bpm >= 20 && bpm <= 300)) return { ok: false, error: "bpm" };
+		const tracks = (Array.isArray(o.tracks) ? o.tracks : []).filter(t => t && t.path && AUDIO_RE.test(t.path) && t.include !== false);
+		if (!tracks.length) return { ok: false, error: "no_audio" };
+		for (const t of tracks) if (!fs.existsSync(t.path)) return { ok: false, error: "not_found", file: t.path };
+		const meter = /^\d+\/\d+$/.test(o.meter || "") ? o.meter : "4/4";
+		const [mn, md] = meter.split("/").map(Number);
+		const bb = mn * 4 / md, P = 60 / bpm;
+		const down = Math.max(0, Number(o.downbeat) || 0), downB = down / P;
+		// the song starts on the bar line at or before the files' start: what comes
+		// before it in the files (less than a bar, before the click) is left out
+		const A = Math.ceil(downB / bb - 1e-9) * bb - downB;           // the files' start, in their own bar grid
+		const startBeat = A > 1e-6 ? bb : 0;                          // the first bar line inside the files
+		const lead = Math.floor(downB / bb + 1e-9) * bb;              // where beat one lands in the song
+		let end = 0;
+		const instr = {};
+		const plan = {
+			title: String(o.title || "Untitled").replace(/[#|]/g, " ").trim().slice(0, 80) || "Untitled",
+			key: /^[A-G](#|b)?m?$/.test(o.key || "") ? o.key : "",
+			bpm, meter, gap: [0, 2, 4, 8, 16, 32].includes(Number(o.gap)) ? Number(o.gap) : lastGap,
+			instr,
+			tracks: tracks.map(t => {
+				const name = String(t.name || path.basename(t.path).replace(AUDIO_RE, "")).slice(0, 60);
+				const len = Math.max(1, (Number(t.dur) || 0) / P + A - startBeat);
+				end = Math.max(end, len);
+				if (t.role) instr[name] = t.role;
+				return { name, clips: [{ time: 0, file: t.path, startBeat, length: len, markers: [[0, A], [P, A + 1]] }] };
+			}),
+			locators: []
+		};
+		const seen = {};
+		(Array.isArray(o.sections) ? o.sections : []).forEach(sec => {
+			const bar = Math.max(1, Math.round(Number(sec.bar) || 1));
+			if (seen[bar]) return;
+			seen[bar] = 1;
+			plan.locators.push({ time: lead + (bar - 1) * bb, name: String(sec.name || "Part").replace(/[#|]/g, " ").trim().slice(0, 40) || "Part" });
+		});
+		plan.locators.sort((a, b) => a.time - b.time);
+		// a part on the song's very first beat takes the song's name locator: it gets the part's name another way
+		if (plan.locators.length && plan.locators[0].time < 0.001) plan.first = plan.locators[0].name;
+		plan.end = end;
+		engine.importPlan(plan);
+		try { sets.rememberImport(plan.title, path.dirname(tracks[0].path), { stems: o, key: plan.key, bpm }); } catch (e) { }
+		engine.log("stems: " + plan.title + ", " + tracks.length + " tracks, " + plan.locators.length + " parts, " + bpm + " BPM, beat one at " + down.toFixed(3) + " s");
+		return { ok: true, title: plan.title };
+	}
+
 	function setCue(args) {
 		cue = { speak: Number(args[0]) || 0, natural: Number(args[1]) || 0, text: args.slice(2).join(" ") };
 		broadcast("cue", cue);
@@ -283,6 +391,20 @@ function start(engine) {
 			req.on("end", () => {
 				let out;
 				try { out = importFile(JSON.parse(body || "{}")); } catch (e) { out = { ok: false, error: "bad_request" }; }
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify(out));
+			});
+			return;
+		}
+		if (req.method === "POST" && (url.pathname === "/stems/find" || url.pathname === "/stems/create")) {
+			let body = "";
+			req.on("data", c => { body += c; if (body.length > 5e5) req.destroy(); });
+			req.on("end", () => {
+				let out;
+				try {
+					const o = JSON.parse(body || "{}");
+					out = url.pathname === "/stems/find" ? stemsFind(o) : (pos && pos.playing ? { ok: false, error: "playing" } : stemsCreate(o));
+				} catch (e) { out = { ok: false, error: "bad_request" }; }
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify(out));
 			});
