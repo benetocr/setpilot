@@ -771,7 +771,8 @@
     $("smRuler").innerHTML = ruler;
     $("smEdited").hidden = !L.edited || !!L.med;
     $("smMed").hidden = !L.med;
-    $("smArr").hidden = $("smEdit").hidden = $("actArr").hidden = !!L.med;
+    $("smArr").hidden = $("smEdit").hidden = $("actArr").hidden = $("smAuto").hidden = $("actAuto").hidden = !!L.med;
+    $("actAutoDot").hidden = !hasAutoAny(s);
     $("actArrDot").hidden = !L.edited || !!L.med;
     $("smMedEdit").hidden = !L.med && !(songs()[shownIdx] && songs()[shownIdx].med);
     if (L.med) $("smMedName").textContent = medleys()[shownMed].name;
@@ -826,7 +827,7 @@
     var ci = curItem(L);
     L.items.forEach(function (it, i) {
       var st = itemState(L, it);
-      var c = { "is-current": st.current, "is-live": st.current && !!pos.playing, "is-past": st.past, "is-queued": st.queued, "is-loop": st.loop, "is-sel": sm.edit && sm.sel === it.j, "has-auto": !L.med && !!auto[it.j] };
+      var c = { "is-current": st.current, "is-live": st.current && !!pos.playing, "is-past": st.past, "is-queued": st.queued, "is-loop": st.loop, "is-sel": sm.edit && sm.sel === it.j, "has-auto": !L.med && (!!auto[it.j] || !!(s.ev && s.ev[it.j]) || !!(s.blk && it.k != null && s.blk[it.k])) };
       for (var k in c) {
         if (regs[i] && regs[i].classList.contains(k) !== c[k]) regs[i].classList.toggle(k, c[k]);
         if (labs[i] && labs[i].classList.contains(k) !== c[k]) labs[i].classList.toggle(k, c[k]);
@@ -1749,6 +1750,181 @@
   $("dockAutoClear").addEventListener("click", function () { if (autoMode()) send("autoclear", shownIdx, sm.sel, -1); });
   $("dockAutoDone").addEventListener("click", function () { sm.sel = -1; updateAutoMode(); render(); });
 
+  // ------------------------------------------------------------ automation
+  // Tempo, key and channels along a song: on a section (every time it plays,
+  // copies included) or on one block of the arrangement (that block only).
+  var au = { scope: "sec", open: -1, song: -1 };
+  function auSong() { return songs()[au.song]; }
+  function auPlay(s) {
+    var a = s.arr && s.arr.length ? s.arr : null, l = [];
+    if (a) return a.slice();
+    for (var j = 0; j < s.sections.length; j++) l.push(j);
+    return l;
+  }
+  function openAuto() {
+    var s = songs()[shownIdx];
+    if (!s || s.med) return;
+    au.song = shownIdx;
+    au.open = -1;
+    $("autoSheet").hidden = false;
+    send("mixeron");
+    clearInterval(au.ping);
+    au.ping = setInterval(function () { if ($("autoSheet").hidden) clearInterval(au.ping); else send("mixeron"); }, 5000);
+    renderAuto();
+  }
+  function closeAuto() { $("autoSheet").hidden = true; au.open = -1; }
+  function postAuto(body) {
+    var s = auSong();
+    if (!s) return;
+    body.song = s.name;
+    body.scope = au.scope;
+    fetch("/auto", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(function () {});
+  }
+  function auEntry(s, i) {
+    // what is set on this row: { t, k, mix: { name: 0|1 } }
+    if (au.scope === "blk") {
+      var b = s.blk && s.blk[i];
+      return { t: b && b.t, k: b && b.k, mix: (b && b.mix) || {} };
+    }
+    var e = s.ev && s.ev[i], m = {}, a = s.auto && s.auto[i];
+    if (a) for (var n in a) if (a[n] && a[n].m != null) m[n] = a[n].m;
+    return { t: e && e.t, k: e && e.k, mix: m };
+  }
+  function auTracks() {
+    return mixer && mixer.tracks ? mixer.tracks.filter(function (x) { return !x.kind; }) : null;
+  }
+  function auChips(s, e, inherited) {
+    var c = [], cls = inherited ? " inh" : "";
+    if (e.t) c.push('<span class="au-chip t' + cls + '">' + (e.t.bpm ? fmtBpm(e.t.bpm) + " BPM" : esc(T("autoSongTempo"))) + (e.t.ramp ? " · " + esc(T("autoRampN", { n: e.t.ramp })) : "") + "</span>");
+    if (e.k) c.push('<span class="au-chip k' + cls + '">' + esc(e.k.orig ? T("autoSongKey") : (keyName(s.key, e.k.semis) || semisLabel(e.k.semis))) + "</span>");
+    var tr = auTracks() || [];
+    for (var n in e.mix) {
+      var t = tr.filter(function (x) { return normName(x.name) === n; })[0];
+      c.push('<span class="au-chip ' + (e.mix[n] ? "off" : "on") + cls + '">' + esc((t ? t.name : n) + " " + T(e.mix[n] ? "autoOff" : "autoOn")) + "</span>");
+    }
+    return c.join("");
+  }
+  function renderAuto() {
+    var s = auSong();
+    if (!s || $("autoSheet").hidden) return;
+    $("autoTitle").textContent = T("autoTitle", { song: s.name });
+    setSeg("autoScope", au.scope);
+    var note = $("autoNote");
+    note.textContent = T(au.scope === "blk" ? "autoNoteBlk" : "autoNoteSec");
+    note.classList.toggle("warn", au.scope === "blk");
+    var rows = [], L = auPlay(s);
+    if (au.scope === "sec") s.sections.forEach(function (sec, j) { rows.push({ i: j, name: sec.name, bars: sec, inh: null }); });
+    else L.forEach(function (j, k) { var sec = s.sections[j]; rows.push({ i: k, name: sec.name, bars: sec, inh: auEntrySec(s, j), num: k + 1 }); });
+    var html = rows.map(function (r) {
+      var e = auEntry(s, r.i), open = au.open === r.i;
+      var chips = auChips(s, e, false) + (r.inh ? auChips(s, r.inh, true) : "");
+      return '<li class="au-row' + (open ? " open" : "") + '" data-i="' + r.i + '">' +
+        '<button class="au-head" type="button" aria-expanded="' + open + '"><span class="au-n">' + (r.num || r.i + 1) + '</span><span class="au-name">' + esc(r.name) + "</span>" +
+        '<span class="au-chips">' + (chips || '<span class="au-none">' + esc(T("autoNothing")) + "</span>") + "</span></button>" +
+        (open ? auEditor(s, e) : "") + "</li>";
+    }).join("");
+    var list = $("autoList"), y = list.scrollTop;
+    list.innerHTML = html;
+    list.scrollTop = y;
+  }
+  function auEntrySec(s, j) {
+    var e = s.ev && s.ev[j], m = {}, a = s.auto && s.auto[j];
+    if (a) for (var n in a) if (a[n] && a[n].m != null) m[n] = a[n].m;
+    return { t: e && e.t, k: e && e.k, mix: m };
+  }
+  function seg3(act, cur, opts) {
+    return '<div class="seg-ctl au-seg" data-act="' + act + '">' + opts.map(function (o) {
+      return '<button type="button" role="radio" data-v="' + o[0] + '" aria-checked="' + (String(cur) === String(o[0])) + '">' + esc(o[1]) + "</button>";
+    }).join("") + "</div>";
+  }
+  function auEditor(s, e) {
+    var tMode = !e.t ? "none" : e.t.bpm ? "set" : "song";
+    var kMode = !e.k ? "none" : e.k.orig ? "song" : "set";
+    var base = s.tempoSet || s.bpm || (pos && pos.tempo) || 120;
+    var h = '<div class="au-ed">';
+    h += '<div class="au-sec"><span class="au-lab">' + esc(T("tempo")) + "</span>" +
+      seg3("tmode", tMode, [["none", T("autoNoChange")], ["set", T("autoChange")], ["song", T("autoSongTempo")]]);
+    if (tMode !== "none") {
+      h += '<div class="au-line">' + (tMode === "set" ? '<label class="au-num"><input type="number" data-act="bpm" min="20" max="300" step="0.5" value="' + (e.t.bpm || base) + '"><small>BPM</small></label>' : "") +
+        seg3("ramp", e.t.ramp ? "ramp" : "jump", [["jump", T("autoAtOnce")], ["ramp", T("autoRamp")]]) +
+        (e.t.ramp ? '<select class="sel au-bars" data-act="rampbars">' + [1, 2, 4, 8].map(function (n) { return '<option value="' + n + '"' + (n === e.t.ramp ? " selected" : "") + ">" + esc(T("autoRampN", { n: n })) + "</option>"; }).join("") + "</select>" : "") + "</div>";
+      if (e.t.ramp) h += '<small class="set-help">' + esc(T("autoRampHelp", { n: e.t.ramp })) + "</small>";
+    }
+    h += "</div>";
+    h += '<div class="au-sec"><span class="au-lab">' + esc(T("addKey")) + "</span>" +
+      seg3("kmode", kMode, [["none", T("autoNoChange")], ["set", T("autoChange")], ["song", T("autoSongKey")]]);
+    if (kMode === "set") {
+      var p = parseKey(s.key);
+      if (p) {
+        h += '<div class="au-keys">';
+        for (var d = -5; d <= 6; d++) {
+          var on = e.k.semis === d;
+          h += '<button type="button" class="au-key' + (on ? " on" : "") + (d === (s.semis || 0) ? " home" : "") + '" data-act="key" data-v="' + d + '"><b>' + esc(keyName(s.key, d)) + "</b><small>" + semisLabel(d) + "</small></button>";
+        }
+        h += "</div>";
+      } else {
+        h += '<div class="au-line">' + [-2, -1, 1, 2, 3].map(function (d) { return '<button type="button" class="au-key' + (e.k.semis === d ? " on" : "") + '" data-act="key" data-v="' + d + '"><b>' + semisLabel(d) + "</b></button>"; }).join("") + "</div>";
+      }
+    }
+    h += "</div>";
+    var tr = auTracks();
+    h += '<div class="au-sec"><span class="au-lab">' + esc(T("autoChannels")) + "</span>";
+    if (!tr) h += '<small class="set-help">' + esc(T("addLoading")) + "</small>";
+    else h += '<div class="au-tracks">' + tr.map(function (x) {
+      var n = normName(x.name), v = e.mix[n] == null ? "" : e.mix[n] ? "off" : "on";
+      return '<div class="au-track" data-name="' + esc(x.name) + '"><span>' + esc(x.name) + "</span>" + seg3("mix", v, [["", "–"], ["on", T("autoOn")], ["off", T("autoOff")]]) + "</div>";
+    }).join("") + "</div>";
+    h += "</div>";
+    h += '<div class="au-foot"><button type="button" class="chip-btn" data-act="clear">' + esc(T("autoClear")) + "</button></div>";
+    return h + "</div>";
+  }
+  $("autoScope").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    au.scope = b.dataset.v;
+    au.open = -1;
+    renderAuto();
+  });
+  $("autoClose").addEventListener("click", closeAuto);
+  $("autoSheet").addEventListener("click", function (e) { if (e.target === $("autoSheet")) closeAuto(); });
+  $("actAuto").addEventListener("click", openAuto);
+  $("smAuto").addEventListener("click", openAuto);
+  $("autoList").addEventListener("click", function (e) {
+    var row = e.target.closest(".au-row");
+    if (!row) return;
+    var i = +row.dataset.i, s = auSong();
+    if (e.target.closest(".au-head")) { au.open = au.open === i ? -1 : i; renderAuto(); return; }
+    var b = e.target.closest("button");
+    if (!b || !s) return;
+    var grp = b.closest("[data-act]"), act = b.dataset.act || (grp && grp.dataset.act), v = b.dataset.v, cur = auEntry(s, i);
+    var base = s.tempoSet || s.bpm || (pos && pos.tempo) || 120;
+    if (act === "tmode") postAuto({ i: i, tempo: v === "none" ? "none" : { bpm: v === "set" ? (cur.t && cur.t.bpm) || base : 0, ramp: cur.t ? cur.t.ramp || 0 : 0 } });
+    else if (act === "ramp") postAuto({ i: i, tempo: { bpm: cur.t ? cur.t.bpm : 0, ramp: v === "ramp" ? (cur.t && cur.t.ramp) || 2 : 0 } });
+    else if (act === "kmode") postAuto({ i: i, key: v === "none" ? "none" : v === "song" ? { orig: 1 } : { semis: (cur.k && !cur.k.orig ? cur.k.semis : (s.semis || 0) + 1) } });
+    else if (act === "key") postAuto({ i: i, key: { semis: +v } });
+    else if (act === "mix") { var m = {}; m[b.closest(".au-track").dataset.name] = v === "" ? null : v === "off" ? 1 : 0; postAuto({ i: i, mix: m }); }
+    else if (act === "clear") {
+      var mx = {};
+      (auTracks() || []).forEach(function (x) { mx[x.name] = null; });
+      postAuto({ i: i, tempo: "none", key: "none", mix: mx });
+    }
+  });
+  $("autoList").addEventListener("change", function (e) {
+    var row = e.target.closest(".au-row"), s = auSong();
+    if (!row || !s) return;
+    var i = +row.dataset.i, cur = auEntry(s, i), act = e.target.dataset.act;
+    if (act === "bpm") { var b = +e.target.value; if (b >= 20 && b <= 300) postAuto({ i: i, tempo: { bpm: b, ramp: cur.t ? cur.t.ramp || 0 : 0 } }); }
+    else if (act === "rampbars") postAuto({ i: i, tempo: { bpm: cur.t ? cur.t.bpm : 0, ramp: +e.target.value } });
+  });
+  function hasAutoAny(s) {
+    if (!s) return false;
+    var x;
+    for (x in (s.ev || {})) return true;
+    for (x in (s.blk || {})) return true;
+    for (x in (s.auto || {})) return true;
+    return false;
+  }
+
   // Double tap on the section that is playing: play it once more; another
   // double tap: loop it; another: back to normal. (On other sections a double
   // tap still jumps there now.)
@@ -1966,9 +2142,11 @@
     }
     var key = s && (keyName(s.key, s.semis) || (s.semis ? semisLabel(s.semis) : ""));
     if (shownMed >= 0 && medleys()[shownMed] && medleys()[shownMed].key) key = medleys()[shownMed].key;
+    var autoK = s && pos && pos.autoKey != null && pos.autoKey !== -99 && pos.song === shownIdx && pos.autoKey !== (s.semis || 0);
+    if (autoK) key = keyName(s.key, pos.autoKey) || semisLabel(pos.autoKey);
     $("keyStat").hidden = !key;
     if (key) $("key").textContent = key;
-    $("keyStat").classList.toggle("mod", !!(s && s.semis));
+    $("keyStat").classList.toggle("mod", !!(s && s.semis) || !!autoK);
     $("statTempo").classList.toggle("mod", !!(s && s.tempoSet));
   }
 
@@ -2469,6 +2647,7 @@
     var txt = "", warn = false;
     if (n.kind === "warpfixed") { warn = +n.c > 0; txt = T(warn ? "ntWarpStill" : (+n.b === 1 ? "ntWarpFixed1" : "ntWarpFixed"), { song: n.a, n: n.b, still: n.c }); }
     else if (n.kind === "warpnoref") { warn = true; txt = T("ntWarpNoRef", { song: n.a }); }
+    else if (n.kind === "blknew") { warn = true; txt = T(+n.b === 1 ? "ntBlkNew1" : "ntBlkNew", { song: n.a, n: n.b }); }
     else if (n.kind === "guideready") txt = +n.b > 0 ? T("ntGuide", { song: n.a, found: n.b, total: n.c }) : T("ntGuideNone", { song: n.a });
     if (!txt) return;
     showToast(txt, warn);
@@ -2880,7 +3059,7 @@
     else if (k === "ArrowLeft") send("prevsec");
     else if (k === "ArrowDown") { e.preventDefault(); send("nextsong"); }
     else if (k === "ArrowUp") { e.preventDefault(); send("prevsong"); }
-    else if (k === "Escape") { send("cancel"); $("sheet").hidden = true; $("tkSheet").hidden = true; $("addSheet").hidden = true; $("trSheet").hidden = true; $("mixSheet").hidden = true; }
+    else if (k === "Escape") { send("cancel"); $("sheet").hidden = true; $("tkSheet").hidden = true; $("addSheet").hidden = true; $("trSheet").hidden = true; $("mixSheet").hidden = true; closeAuto(); }
     else if (k === "l" || k === "L" || k === "i" || k === "I") { if (pos && pos.song >= 0) send("loop", pos.song, pos.sec); }
     else if (k === "r" || k === "R") { if (pos && pos.song >= 0) send("repeat", pos.song, pos.sec); }
     else if (k === "t" || k === "T") openTk("tempo");
@@ -2919,9 +3098,17 @@
       render();
       if (wiz.open && !wiz.building) wzRender();
       updateSettings();
+      if (!$("autoSheet").hidden) { if (!auSong() || auSong().med) closeAuto(); else renderAuto(); }
+      $("actAutoDot").hidden = !hasAutoAny(songs()[shownIdx]);
     });
     es.addEventListener("cue", function (e) { cue = JSON.parse(e.data); updateCue(); });
-    es.addEventListener("mixer", function (e) { mixer = JSON.parse(e.data); renderMixer(); });
+    es.addEventListener("mixer", function (e) {
+      mixer = JSON.parse(e.data);
+      renderMixer();
+      // the automation panel needs the song's channels once
+      var n = auTracks() ? auTracks().length : 0;
+      if (!$("autoSheet").hidden && n !== au.nTracks) { au.nTracks = n; renderAuto(); }
+    });
     es.addEventListener("meters", function (e) { onMeters(JSON.parse(e.data)); });
     es.addEventListener("notice", function (e) { notice(JSON.parse(e.data)); });
     es.addEventListener("routes", function (e) { routes = JSON.parse(e.data); renderOutputs(); });

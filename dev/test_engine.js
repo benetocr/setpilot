@@ -14,11 +14,12 @@ function setup(opts = {}) {
 	const song = new FakeSong(DEMO_CUES);
 	if (opts.tail) song.tailDevice = 8;
 	let last = null, struct = null, eng = null;
-	const tailPlans = [];
+	const tailPlans = [], notices = [];
 	eng = loadEngine(song, {
 		realtime: false,
 		onOutlet: a => {
 			if (a[0] === "pos") last = a;
+			if (a[0] === "notice") notices.push(a.slice(1));
 			// the server mixing a tail: answer right away
 			if (a[0] === "tailprep") { tailPlans.push(JSON.parse(JSON.stringify(eng.dicts.setpilot_tail))); setImmediate(() => {}); song.reply.push(["tailready", a[1], "/sim/tails/" + a[1] + ".wav"]); }
 		}
@@ -34,7 +35,7 @@ function setup(opts = {}) {
 	// a few ticks later: let it catch up before the test looks at the song
 	const settle = () => { for (let i = 0; i < WRITE_DELAY; i++) eng.step(20); };
 	const until = (pred, maxMs = 900000) => { for (let ms = 0; ms < maxMs; ms += 20) { eng.step(20); if (pred(pos())) { settle(); return; } } throw new Error("timeout, at t=" + pos().t); };
-	return { song, eng, run, struct, pos, until, tailPlans, cmd: (c, ...a) => eng.send(c, a) };
+	return { song, eng, run, struct, pos, until, tailPlans, notices, cmd: (c, ...a) => eng.send(c, a) };
 }
 
 test("parses songs, sections and STOP markers", () => {
@@ -1193,6 +1194,91 @@ test("track names are matched loosely", () => {
 	assert.strictEqual(n("Drums (Live)"), n("Drums"));
 	assert.strictEqual(n("Cues"), "guide");
 	assert.notStrictEqual(n("Keys 1"), n("Keys 2"));
+});
+
+
+// ------------------------------------------------------------------ automation
+const auto = (t, o) => t.eng.send("medleyjson", [JSON.stringify(Object.assign({ action: "auto", song: "Grande y Fiel" }, o))]);
+
+test("automation by section: tempo and key change on the downbeat and stay; back to the song's key later", () => {
+	const t = setup();
+	t.run(100);
+	auto(t, { scope: "sec", i: 6, tempo: { bpm: 80, ramp: 0 }, key: { semis: 1 } });    // last Coro
+	auto(t, { scope: "sec", i: 7, key: { orig: 1 } });                                     // Final: song's key
+	const keys = () => t.song.clips.find(c => c.id === 501).pitch_coarse;
+	t.cmd("section", 0, 5, 0);           // Puente
+	t.run(200);
+	t.cmd("play");
+	t.until(p => p.t >= 175.9);
+	assert.strictEqual(t.song.props.tempo, 72, "not before the Coro");
+	assert.strictEqual(keys(), 0);
+	t.until(p => p.t >= 176.1);
+	assert.strictEqual(t.song.props.tempo, 80, "80 BPM from the Coro on");
+	assert.strictEqual(keys(), 1, "a semitone up from the Coro on");
+	t.until(p => p.t >= 208.2);
+	assert.strictEqual(t.song.props.tempo, 80, "the tempo stays");
+	assert.strictEqual(keys(), 0, "Final: back to the song's key");
+	t.cmd("stop");
+	t.run(200);
+	// stopped on an earlier section: what is in force there
+	t.cmd("section", 0, 2, 0);
+	t.run(200);
+	assert.strictEqual(t.song.props.tempo, 72);
+	assert.strictEqual(keys(), 0);
+	t.cmd("section", 0, 6, 0);
+	t.run(200);
+	assert.strictEqual(t.song.props.tempo, 80, "prepared on the last Coro: its tempo");
+	assert.strictEqual(keys(), 1);
+});
+
+test("automation: a tempo ramp over the bars before the section", () => {
+	const t = setup();
+	t.run(100);
+	auto(t, { scope: "sec", i: 6, tempo: { bpm: 90, ramp: 2 } });
+	t.cmd("section", 0, 5, 0);
+	t.run(200);
+	t.cmd("play");
+	t.until(p => p.t >= 167.5);
+	assert.strictEqual(t.song.props.tempo, 72, "flat before the ramp");
+	t.until(p => p.t >= 172);
+	const mid = t.song.props.tempo;
+	assert.ok(mid > 76 && mid < 86, "half way up: " + mid);
+	t.until(p => p.t >= 176.2);
+	assert.ok(Math.abs(t.song.props.tempo - 90) < 0.05, "there: " + t.song.props.tempo);
+});
+
+test("automation by section follows duplicates; on a block it stays with that block", () => {
+	const t = setup();
+	t.run(100);
+	t.cmd("arrset", 0, 0, 1, 2, 2, 7);          // Intro, Verso, Coro, Coro, Final
+	auto(t, { scope: "sec", i: 2, key: { semis: 2 } });
+	auto(t, { scope: "blk", i: 3, key: { semis: 3 }, mix: { Drums: 1 } });
+	let sg = t.eng.dicts.setpilot_struct.songs[0];
+	assert.deepStrictEqual(Object.keys(sg.blk), ["3"]);
+	const keys = () => t.song.clips.find(c => c.id === 501).pitch_coarse;
+	const drums = () => t.song.tracks.find(x => x.name === "Drums").mute;
+	t.cmd("playsong", 0);
+	t.until(p => p.t >= 49);
+	assert.strictEqual(keys(), 2, "first Coro: the section's key");
+	assert.strictEqual(drums(), 0);
+	t.until(p => p.t >= 70);
+	t.until(p => p.t < 60 && p.t >= 48.5);
+	assert.strictEqual(keys(), 3, "second Coro (its own block): +3");
+	assert.strictEqual(drums(), 1, "drums off on that block only");
+	t.cmd("stop");
+	t.run(200);
+	// a block more: the block's automation stays where it was, the new one has none (and the dashboard is told)
+	t.notices.length = 0;
+	t.cmd("arrset", 0, 0, 1, 2, 2, 2, 7);
+	sg = t.eng.dicts.setpilot_struct.songs[0];
+	assert.deepStrictEqual(Object.keys(sg.blk), ["3"]);
+	assert.deepStrictEqual(t.notices.find(n => n[0] === "blknew"), ["blknew", "Grande y Fiel", 1]);
+	// a block taken out before it: the automation moves with its block
+	t.cmd("arrset", 0, 0, 2, 2, 2, 7);
+	sg = t.eng.dicts.setpilot_struct.songs[0];
+	assert.deepStrictEqual(Object.keys(sg.blk), ["2"]);
+	auto(t, { scope: "blk", i: 2, key: "none", mix: { Drums: null } });
+	assert.strictEqual(t.eng.dicts.setpilot_struct.songs[0].blk, null, "cleared");
 });
 
 console.log(failures ? `\n${failures} failing` : "\nall passing");

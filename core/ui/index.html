@@ -226,6 +226,7 @@
               <button class="act" id="actRepeat" data-i18n-title="sheetRepeat"><span>1×</span><small data-i18n="actRepeat">Repeat</small></button>
               <button class="act" id="actLoop" data-i18n-title="sheetLoop"><span class="inf">∞</span><small data-i18n="actLoop">Loop</small></button>
               <button class="act act-arr" id="actArr" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="6" height="14" rx="1.5"/><rect x="11" y="5" width="4" height="14" rx="1.5"/><rect x="17" y="5" width="4" height="14" rx="1.5"/></svg><small data-i18n="arrangement">Arrangement</small><i class="act-dot" id="actArrDot" hidden></i></button>
+              <button class="act act-arr act-auto" id="actAuto"><svg viewBox="0 0 24 24"><path d="M3 17c3 0 4-10 7-10s3 6 5 6 3-4 6-4"/><circle cx="10" cy="7" r="1.6"/><circle cx="15" cy="13" r="1.6"/></svg><small data-i18n="automation">Automation</small><i class="act-dot" id="actAutoDot" hidden></i></button>
             </div>
           </div>
         </div>
@@ -263,6 +264,7 @@
           </div>
           <button class="sm-edit" id="smMedEdit" hidden><svg viewBox="0 0 24 24"><rect x="3" y="6" width="7" height="12" rx="2"/><rect x="14" y="6" width="7" height="12" rx="2"/><path d="M10 12h4"/></svg><span data-i18n="medEdit">Edit medley</span></button>
           <button class="sm-edit" id="smArr" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="6" height="14" rx="1.5"/><rect x="11" y="5" width="4" height="14" rx="1.5"/><rect x="17" y="5" width="4" height="14" rx="1.5"/></svg><span data-i18n="arrangement">Arrangement</span></button>
+          <button class="sm-edit" id="smAuto"><svg viewBox="0 0 24 24"><path d="M3 17c3 0 4-10 7-10s3 6 5 6 3-4 6-4"/><circle cx="10" cy="7" r="1.6"/><circle cx="15" cy="13" r="1.6"/></svg><span data-i18n="automation">Automation</span></button>
           <button class="sm-edit" id="smEdit" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg><span data-i18n="edit">Edit</span></button>
         </div>
       </div>
@@ -525,6 +527,21 @@
           <button class="tk-act" id="addFinish" data-i18n="addFinish">Done</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div class="sheet" id="autoSheet" hidden>
+    <div class="sheet-card auto-card" role="dialog" aria-modal="true" aria-labelledby="autoTitle">
+      <div class="tk-head">
+        <h3 id="autoTitle" data-i18n="automation">Automation</h3>
+        <button class="icon-btn" id="autoClose" data-i18n-label="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="seg-ctl auto-scope" id="autoScope" role="radiogroup">
+        <button data-v="sec" role="radio" data-i18n="autoBySection">By section</button>
+        <button data-v="blk" role="radio" data-i18n="autoByArr">On this arrangement</button>
+      </div>
+      <p class="auto-note" id="autoNote"></p>
+      <ol class="auto-list" id="autoList"></ol>
     </div>
   </div>
 

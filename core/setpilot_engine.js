@@ -436,6 +436,8 @@ function publishStruct() {
 		songs[si].tr = o.tr || 0;
 		songs[si].auto = o.auto || null;
 		songs[si].clk = o.clk || null;
+		songs[si].ev = o.ev || null;
+		songs[si].blk = blkOf(si);
 		if (o.clk && songs[si].sections.length == 1 && songs[si].sections[0].implicit) songs[si].sections[0].name = "Click";
 		songs[si].arr = arrOf(si);
 		songs[si].trEff = trMode(si);
@@ -703,6 +705,7 @@ function tick() {
 	guard("listen", listenTick)();
 	guard("medpad", medPadTick)();
 	guard("clicksong", clkTick)();
+	if (!job) guard("automation", autoTick)();
 	if (medPlace) guard("medplace", runMedPlace)();
 	if (clock - lastTrackScan > 3000) { lastTrackScan = clock; scanTracks(); }
 	if (clock - lastPing > 3000) { lastPing = clock; ping(); }
@@ -1009,6 +1012,7 @@ function medleyApply(o) {
 	if (o.action == "unbuild") { medUnbuild(o); return; }
 	if (o.action == "songdelete") { songDelete(o); return; }
 	if (o.action == "clicksong") { clickSong(o.song || {}); return; }
+	if (o.action == "auto") { autoEdit(o); return; }
 	var mi = medIndex(o.id);
 	if (o.action == "delete") {
 		if (mi < 0) return;
@@ -1573,7 +1577,8 @@ function keyRootNow() {
 	}
 	var kp = keyParse(songs[s].key);
 	if (!kp) return null;
-	return { root: (((kp.root + (opt(s).semis || 0)) % 12) + 12) % 12, minor: kp.minor };
+	var ks = keyApplied[songs[s].name] != null ? keyApplied[songs[s].name] : (opt(s).semis || 0);
+	return { root: (((kp.root + ks) % 12) + 12) % 12, minor: kp.minor };
 }
 function padfree(on) {
 	padFree = on === undefined || on === "" ? !padFree : !!parseInt(on, 10);
@@ -1722,8 +1727,10 @@ function arrset() {
 		if (j != i - 1) same = false;
 	}
 	var o = opt(s);
+	var oldL = playList(s);
 	if (!list.length || same) delete o.arr;
 	else o.arr = { sig: secNames(s), list: list };
+	blkRemap(s, oldL, playList(s));
 	if (queue && queue.auto && !queue.fired) queue = null;
 	if (arrCur && arrCur.song == s) {
 		var a = arrOf(s);
@@ -2085,7 +2092,8 @@ function send() {
 		(arrCur && arrCur.song == curSong) ? arrCur.k : (!playing && arrHint && arrHint.song == curSong ? arrHint.k : -1),
 		q && q.arrK != null ? q.arrK : -1, q && q.auto ? 1 : 0,
 		med ? med.i : -1, med ? med.k : -1, q && q.medK != null ? q.medK : (q && q.medStart != null ? 0 : -1),
-		padFree ? 1 : 0
+		padFree ? 1 : 0,
+		autoKeyNow(curSong)
 	];
 	var key = msg.slice(2).join(" ");
 	// the dashboard runs its own clock between messages: the time alone is sent 20 times a second
@@ -2294,10 +2302,18 @@ function getVol(trackId) {
 }
 
 function applyAuto(s, j) {
-	var key = s + ":" + j;
+	var bl = medOf(s) ? null : blkOf(s), k = -1;
+	if (bl) { var L = playList(s); k = autoBlock(s, L); }
+	var key = s + ":" + j + ":" + k;
 	if (key == autoAt) return;
 	autoAt = key;
-	var want = autoFor(s, j) || {};
+	var want = autoFor(s, j) || {}, bm = bl && bl[k] && bl[k].mix;
+	if (bm) {
+		var mw = {}, x;
+		for (x in want) if (want.hasOwnProperty(x)) mw[x] = want[x];
+		for (x in bm) if (bm.hasOwnProperty(x)) mw[x] = { v: mw[x] ? mw[x].v : null, m: bm[x].m };
+		want = mw;
+	}
 	var list = songTrackIds(true), n = 0;
 	for (var i = 0; i < list.length; i++) {
 		var id = list[i].id, w = want[normTrack(list[i].name)];
@@ -2367,6 +2383,211 @@ function autoChanged(s, j) {
 	publishStruct();
 	if (playing && curSong == s) { autoAt = ""; applyAuto(curSong, curSec); }
 }
+
+// ------------------------------------------------------------------ automation
+// Tempo and key changes, and channels on or off, along a song. Set on a
+// section (o.ev[j] for tempo and key, o.auto[j] for the mix), they come with
+// every time that section plays, duplicates included. Set on one block of the
+// arrangement (o.blk.list[k]), they belong to that block only. A tempo or key
+// change stays until the next one; the mix only lasts its section or block.
+//   tempo: { bpm (0 = the song's tempo), ramp (bars before the block, 0 = at once) }
+//   key:   { semis (from the recording) } or { orig: 1 } (the song's key)
+var keyApplied = {}, keyClips = {}, autoTempoOn = {};
+
+function playList(s) {
+	var a = arrOf(s);
+	if (a) return a.slice();
+	var l = [];
+	for (var j = 0; j < songs[s].sections.length; j++) l.push(j);
+	return l;
+}
+
+function blkOf(s) {
+	var o = songs[s] && opt(s);
+	if (!o || !o.blk || o.blk.sig != secNames(s)) return null;
+	for (var k in o.blk.list) if (o.blk.list.hasOwnProperty(k)) return o.blk.list;
+	return null;
+}
+
+// the arrangement changed: each block's automation stays with its block
+// (matched in order); blocks that are new get none, and the dashboard is told
+function blkRemap(s, oldL, newL) {
+	var o = opt(s), bl = blkOf(s);
+	if (!bl) return;
+	var n = oldL.length, m = newL.length, L = [], i, j;
+	for (i = 0; i <= n; i++) { L.push([]); for (j = 0; j <= m; j++) L[i].push(0); }
+	for (i = n - 1; i >= 0; i--) for (j = m - 1; j >= 0; j--)
+		L[i][j] = oldL[i] == newL[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+	var map = {}, got = {};
+	i = 0; j = 0;
+	while (i < n && j < m) {
+		if (oldL[i] == newL[j]) { map[i] = j; got[j] = 1; i++; j++; }
+		else if (L[i + 1][j] >= L[i][j + 1]) i++;
+		else j++;
+	}
+	var nl = {};
+	for (var k in bl) if (bl.hasOwnProperty(k) && map[k] != null) nl[map[k]] = bl[k];
+	o.blk = { sig: secNames(s), list: nl };
+	var fresh = 0;
+	for (j = 0; j < m; j++) if (!got[j]) fresh++;
+	if (fresh) outlet(0, "notice", "blknew", songs[s].name, fresh);
+}
+
+function evAt(s, L, i) {
+	var o = opt(s), e = {}, se = o.ev && o.ev[L[i]], bl = blkOf(s), be = bl && bl[i];
+	if (se) { if (se.t) e.t = se.t; if (se.k) e.k = se.k; }
+	if (be) { if (be.t) e.t = be.t; if (be.k) e.k = be.k; }
+	return e;
+}
+
+function hasEv(s, what) {
+	var o = opt(s), x, bl = blkOf(s);
+	if (o.ev) for (x in o.ev) if (o.ev.hasOwnProperty(x) && o.ev[x][what]) return true;
+	if (bl) for (x in bl) if (bl.hasOwnProperty(x) && bl[x][what]) return true;
+	return false;
+}
+
+function songBpm(s) { var o = opt(s); return o.bpm || songs[s].bpm || baseCache[songs[s].name] || 0; }
+
+// tempo and key in force on block k of the play order
+function evState(s, L, k) {
+	var base = songBpm(s), st = { bpm: base, semis: opt(s).semis || 0 };
+	for (var i = 0; i <= k && i < L.length; i++) {
+		var e = evAt(s, L, i);
+		if (e.t) st.bpm = e.t.bpm || base;
+		if (e.k) st.semis = e.k.orig ? (opt(s).semis || 0) : e.k.semis;
+	}
+	return st;
+}
+
+// the block of the play order the song is on (playing, or where it will start)
+function autoBlock(s, L) {
+	if (playing && curSong == s) {
+		if (arrCur && arrCur.song == s && arrOf(s) && arrCur.k >= 0) return arrCur.k;
+		var i = L.indexOf(curSec);
+		if (i >= 0) return i;
+		for (i = L.length - 1; i >= 0; i--) if (L[i] < curSec) return i;
+		return 0;
+	}
+	if (arrHint && arrHint.song == s && arrHint.k >= 0) return arrHint.k;
+	var j = curSong == s ? L.indexOf(curSec) : -1;
+	return j >= 0 ? j : 0;
+}
+
+function autoKeyNow(s) {
+	if (s < 0 || !songs[s] || keyApplied[songs[s].name] == null || !hasEv(s, "k")) return -99;
+	return keyApplied[songs[s].name];
+}
+
+// the pitched clips of a song, kept to change its key on the beat
+function keyClipsOf(s) {
+	var sg = songs[s], c = keyClips[sg.name];
+	if (c && c.sig == structSig) return c.ids;
+	var ids = trackIds(), out = [];
+	for (var i = 0; i < ids.length; i++) {
+		var id = ids[i];
+		if (id == ownTrackId || id == gateTrackId || id == clickTrackId || id == tailTrackId) continue;
+		trackApi.id = id;
+		if (NONPITCH_RE.test(str(trackApi.get("name")))) continue;
+		if (num(trackApi.get("has_midi_input"))) continue;
+		var raw = trackApi.get("arrangement_clips") || [];
+		for (var k = 0; k < raw.length; k++) {
+			if (raw[k] != "id") continue;
+			clipApi.id = num(raw[k + 1]); k++;
+			var st = num(clipApi.get("start_time"));
+			if (st < sg.start - 0.01 || st >= sg.end - 0.01) continue;
+			if (!num(clipApi.get("is_audio_clip"))) continue;
+			if (num(clipApi.get("warping")) && num(clipApi.get("warp_mode")) != 6) clipApi.set("warp_mode", 6);
+			out.push(num(raw[k]));
+		}
+	}
+	keyClips[sg.name] = { sig: structSig, ids: out };
+	return out;
+}
+
+function setKeyNow(s, semis) {
+	var ids = keyClipsOf(s);
+	for (var i = 0; i < ids.length; i++) { clipApi.id = ids[i]; clipApi.set("pitch_coarse", semis); }
+	keyApplied[songs[s].name] = semis;
+	if (!playing) log("key " + songs[s].name + " " + (semis > 0 ? "+" : "") + semis + " (automation)");
+}
+
+function autoTick() {
+	var s = playing ? curSong : (armSong >= 0 ? armSong : curSong);
+	if (s < 0 || s >= songs.length || !songs[s] || medOf(s) || pre) return;
+	var nm = songs[s].name, L = playList(s), k = autoBlock(s, L);
+	if (k >= L.length) k = L.length - 1;
+	if (k < 0) return;
+	var st = evState(s, L, k), bl = barLen();
+	var sec = songs[s].sections[L[k]];
+	// just before the next block of the play order: its state, so the change lands on the beat
+	var natural = playing && curSong == s && !loopState && (!queue || queue.auto) && k + 1 < L.length;
+	var left = sec ? sec.end - t : 1e9;
+	if (natural && left <= 0.05 * tempo / 60) { st = evState(s, L, k + 1); }
+	else if (natural) {
+		var e2 = evAt(s, L, k + 1);
+		if (e2.t && e2.t.ramp > 0 && sec) {
+			var target = e2.t.bpm || songBpm(s), rs = Math.max(sec.start, sec.end - e2.t.ramp * bl);
+			if (target && t >= rs) st.bpm = st.bpm + (target - st.bpm) * Math.min(1, (t - rs) / Math.max(0.001, sec.end - rs));
+		}
+	}
+	if (hasEv(s, "t")) {
+		autoTempoOn[nm] = 1;
+		if (st.bpm && Math.abs(tempo - st.bpm) > 0.02) { setProp("tempo", st.bpm); tempo = st.bpm; }
+	} else if (autoTempoOn[nm]) {
+		delete autoTempoOn[nm];
+		applyTempo(s);
+	}
+	if (hasEv(s, "k")) {
+		if (keyApplied[nm] !== st.semis) setKeyNow(s, st.semis);
+	} else if (keyApplied[nm] != null && keyApplied[nm] !== (opt(s).semis || 0)) {
+		setKeyNow(s, opt(s).semis || 0);
+	}
+}
+
+// o: { action: "auto", song, scope: "sec" | "blk", i, tempo, key, mix: { track: 0 on | 1 off | null } }
+// tempo / key: an object to set, "none" to clear, missing to leave as is
+function autoEdit(o) {
+	var s = songIndex(String(o.song || ""));
+	if (s < 0 || medOf(s)) return;
+	var so = opt(s), i = parseInt(o.i, 10), e, n = songs[s].sections.length;
+	if (o.scope == "blk") {
+		var L = playList(s);
+		if (!(i >= 0 && i < L.length)) return;
+		if (!so.blk || so.blk.sig != secNames(s)) so.blk = { sig: secNames(s), list: {} };
+		e = so.blk.list[i] = so.blk.list[i] || {};
+	} else {
+		if (!(i >= 0 && i < n)) return;
+		so.ev = so.ev || {};
+		e = so.ev[i] = so.ev[i] || {};
+	}
+	if (o.tempo === "none") delete e.t;
+	else if (o.tempo && typeof o.tempo == "object") {
+		var b = Number(o.tempo.bpm) || 0;
+		e.t = { bpm: b ? Math.max(20, Math.min(300, Math.round(b * 100) / 100)) : 0, ramp: Math.max(0, Math.min(16, parseInt(o.tempo.ramp, 10) || 0)) };
+	}
+	if (o.key === "none") delete e.k;
+	else if (o.key && typeof o.key == "object") e.k = o.key.orig ? { orig: 1 } : { semis: Math.max(-12, Math.min(12, parseInt(o.key.semis, 10) || 0)) };
+	if (o.mix && typeof o.mix == "object") {
+		for (var tn in o.mix) {
+			if (!o.mix.hasOwnProperty(tn)) continue;
+			var key = normTrack(tn), v = o.mix[tn];
+			var box;
+			if (o.scope == "blk") { e.mix = e.mix || {}; box = e.mix; }
+			else { so.auto = so.auto || {}; so.auto[i] = so.auto[i] || {}; box = so.auto[i]; }
+			if (v === null || v === undefined || v === "") { if (box[key]) { delete box[key].m; if (box[key].v == null) delete box[key]; } }
+			else { box[key] = box[key] || {}; box[key].m = v ? 1 : 0; }
+		}
+		if (o.scope == "blk" && e.mix && isEmpty(e.mix)) delete e.mix;
+		if (o.scope != "blk" && so.auto && so.auto[i] && isEmpty(so.auto[i])) delete so.auto[i];
+	}
+	if (o.scope == "blk") { if (isEmpty(e)) delete so.blk.list[i]; }
+	else if (isEmpty(e)) delete so.ev[i];
+	log("automation " + songs[s].name + " " + (o.scope == "blk" ? "block " : "section ") + i + ": " + JSON.stringify(e));
+	autoAt = "";
+	autoChanged(s, -1);
+}
+function isEmpty(x) { for (var k in x) if (x.hasOwnProperty(k)) return false; return true; }
 
 // ------------------------------------------------------------------ section edit
 // Move the start of a section (its locator) to a new beat. Live's locators
@@ -3246,6 +3467,7 @@ function applyKey(s, override) {
 			if (want && num(clipApi.get("warping")) && num(clipApi.get("warp_mode")) != 6) clipApi.set("warp_mode", 6);
 		}
 	}
+	keyApplied[sg.name] = semis;
 	if (changed || override == null) log("key " + sg.name + " " + (semis > 0 ? "+" : "") + semis + " (" + changed + " clips)");
 }
 

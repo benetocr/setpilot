@@ -75,6 +75,15 @@ const post = (p, body) => new Promise((res, rej) => { const d = JSON.stringify(b
 		assert.ok(c2 && c2.end - c2.start === 32 && c2.clk.bars === 8 && c2.clk.pad === 0 && c2.key === "", "8 bars, no pad, no key: " + JSON.stringify(all.map(x => [x.name, x.start, x.end, x.clk, x.key])));
 		ok("with a length: 8 bars and then it ends");
 
+		// automation through the dashboard's route
+		r = await post("/auto", { song: "Cielo Abierto", scope: "sec", i: 3, tempo: { bpm: 132, ramp: 2 }, key: { semis: 1 }, mix: { Drums: 1 } });
+		assert.ok(r.ok, JSON.stringify(r));
+		await sleep(800);
+		const ca = (await songsNow()).find(x => x.name === "Cielo Abierto");
+		assert.deepStrictEqual(ca.ev, { 3: { t: { bpm: 132, ramp: 2 }, k: { semis: 1 } } });
+		assert.strictEqual(ca.auto[3].drums.m, 1);
+		ok("automation set from the dashboard is kept on the song");
+
 		// deleting a song takes its clips and locators out of Live
 		const g = all.find(x => x.name === "Grande y Fiel");
 		const before = (await dump(g.start, g.end)).length;

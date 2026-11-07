@@ -77,7 +77,7 @@ function start(engine) {
 			song: a[5], sec: a[6],
 			qSong: a[7], qSec: a[8], qFired: a[9],
 			loopSong: a[10], loopSec: a[11], loopOnce: a[12], liveLoop: a[13],
-			armSong: a[14], pendingSong: a[15], autoStop: a[16], version: a[17], fade: a[18] || 0, countIn: a[19] || 0, arrK: a[20] == null ? -1 : a[20], qArrK: a[21] == null ? -1 : a[21], qAuto: a[22] || 0, med: a[23] == null ? -1 : a[23], medK: a[24] == null ? -1 : a[24], qMedK: a[25] == null ? -1 : a[25], padFree: a[26] || 0,
+			armSong: a[14], pendingSong: a[15], autoStop: a[16], version: a[17], fade: a[18] || 0, countIn: a[19] || 0, arrK: a[20] == null ? -1 : a[20], qArrK: a[21] == null ? -1 : a[21], qAuto: a[22] || 0, med: a[23] == null ? -1 : a[23], medK: a[24] == null ? -1 : a[24], qMedK: a[25] == null ? -1 : a[25], padFree: a[26] || 0, autoKey: a[27] == null ? -99 : a[27],
 			at: Date.now()
 		};
 		broadcast("pos", pos);
@@ -305,6 +305,24 @@ function start(engine) {
 						out = { ok: true };
 					} else out = { ok: false, error: "bad_medley" };
 				} catch (e) { out = { ok: false, error: "bad_request" }; }
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify(out));
+			});
+			return;
+		}
+		// automation: tempo, key and channels on a section or a block of the arrangement
+		if (req.method === "POST" && url.pathname === "/auto") {
+			let body = "";
+			req.on("data", c => { body += c; if (body.length > 2e4) req.destroy(); });
+			req.on("end", () => {
+				let out = { ok: false, error: "bad_request" };
+				try {
+					const o = JSON.parse(body || "{}");
+					if (o.song && (o.scope === "sec" || o.scope === "blk") && Number.isInteger(o.i)) {
+						engine.medley({ action: "auto", song: String(o.song), scope: o.scope, i: o.i, tempo: o.tempo, key: o.key, mix: o.mix });
+						out = { ok: true };
+					}
+				} catch (e) { }
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify(out));
 			});
