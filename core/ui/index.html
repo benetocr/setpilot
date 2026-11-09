@@ -204,6 +204,7 @@
     <div class="setlist-head">
       <h2 data-i18n="setlist">Setlist</h2>
       <span class="setlist-meta" id="setlistMeta"></span>
+      <button class="icon-btn small" id="btnExportSet" data-i18n-label="exportSet" data-i18n-title="exportSet"><svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/></svg></button>
     </div>
     <ol class="songs" id="songs"></ol>
     <button class="add-song" id="btnAddSong"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span data-i18n="addSong">Add song</span></button>
@@ -264,6 +265,7 @@
           </div>
           <button class="sm-edit" id="smMedEdit" hidden><svg viewBox="0 0 24 24"><rect x="3" y="6" width="7" height="12" rx="2"/><rect x="14" y="6" width="7" height="12" rx="2"/><path d="M10 12h4"/></svg><span data-i18n="medEdit">Edit medley</span></button>
           <button class="sm-edit" id="smArr" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="6" height="14" rx="1.5"/><rect x="11" y="5" width="4" height="14" rx="1.5"/><rect x="17" y="5" width="4" height="14" rx="1.5"/></svg><span data-i18n="arrangement">Arrangement</span></button>
+          <button class="sm-edit" id="smExport"><svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/></svg><span data-i18n="export">Export</span></button>
           <button class="sm-edit" id="smAuto"><svg viewBox="0 0 24 24"><path d="M3 17c3 0 4-10 7-10s3 6 5 6 3-4 6-4"/><circle cx="10" cy="7" r="1.6"/><circle cx="15" cy="13" r="1.6"/></svg><span data-i18n="automation">Automation</span></button>
           <button class="sm-edit" id="smEdit" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg><span data-i18n="edit">Edit</span></button>
         </div>
@@ -638,6 +640,40 @@
       <p class="set-help" id="saveHelp" data-i18n="saveHelp"></p>
       <p class="save-warn" id="saveWarn" hidden></p>
       <button class="cta" id="saveGo"><span data-i18n="saveGo">Save</span></button>
+    </div>
+  </div>
+
+  <div class="sheet" id="xpSheet" hidden>
+    <div class="sheet-card xp-card" role="dialog" aria-modal="true" aria-labelledby="xpTitle">
+      <div class="tk-head">
+        <h3 id="xpTitle"></h3>
+        <button class="icon-btn" id="xpClose" data-i18n-label="close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div id="xpForm">
+        <div class="seg-ctl" id="xpWhat" role="radiogroup">
+          <button type="button" role="radio" data-v="song" id="xpWhatSong"></button>
+          <button type="button" role="radio" data-v="set" data-i18n="xpWhole">Whole setlist</button>
+        </div>
+        <p class="set-help" data-i18n="xpHelp"></p>
+        <label class="switch-row">
+          <span><strong data-i18n="xpGuide">Include the guide</strong><small data-i18n="xpGuideHelp"></small></span>
+          <input type="checkbox" id="xpGuide" checked><i class="switch"></i>
+        </label>
+        <label class="switch-row">
+          <span><strong data-i18n="xpClick">Include the click</strong><small data-i18n="xpClickHelp"></small></span>
+          <input type="checkbox" id="xpClick"><i class="switch"></i>
+        </label>
+        <button class="cta" id="xpGo"><span data-i18n="xpGo">Open Ableton's export</span></button>
+      </div>
+      <div class="xp-run" id="xpRun" hidden>
+        <div class="sl-bar xp-bar" id="xpBar"><i id="xpFill"></i></div>
+        <p class="xp-msg" id="xpMsg"></p>
+        <div class="xp-acts">
+          <button class="chip-btn small ghost" id="xpPrefs" hidden data-i18n="xpPrefs">Open Settings</button>
+          <button class="chip-btn small ghost" id="xpCancel" data-i18n="cancel">Cancel</button>
+          <button class="chip-btn small" id="xpDone" hidden data-i18n="xpDone">I'm done</button>
+        </div>
+      </div>
     </div>
   </div>
 

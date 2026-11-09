@@ -139,6 +139,12 @@ function start(engine) {
 		broadcast("notice", { kind: String(args[0]), a: args[1] == null ? "" : String(args[1]), b: args[2] == null ? "" : args[2], c: args[3] == null ? "" : args[3], at: Date.now() });
 	}
 
+	let lastExport = null;
+	function setExport(o) {
+		lastExport = Object.assign({ at: Date.now() }, o);
+		broadcast("export", lastExport);
+	}
+
 	function setImport(args) {
 		lastImport = { kind: String(args[0]), a: args[1], b: args[2], c: args[3], at: Date.now() };
 		broadcast("import", lastImport);
@@ -457,6 +463,28 @@ function start(engine) {
 			return;
 		}
 		// automation: tempo, key and channels on a section or a block of the arrangement
+		// export the arrangement through Live's Export window: { action: "start", what: "song" | "set", song, click, guide } or { action: "cancel" }
+		if (req.method === "POST" && url.pathname === "/export") {
+			let body = "";
+			req.on("data", c => { body += c; if (body.length > 2e4) req.destroy(); });
+			req.on("end", () => {
+				let out = { ok: false, error: "bad_request" };
+				try {
+					const o = JSON.parse(body || "{}");
+					if (o.action === "start" && (o.what === "set" || (o.what === "song" && o.song))) {
+						engine.exportCmd({ what: o.what, song: String(o.song || ""), click: !!o.click, guide: !!o.guide });
+						out = { ok: true };
+					} else if (o.action === "cancel" || o.action === "done") {
+						engine.exportCancel(o.action);
+						out = { ok: true };
+					} else if (o.action === "state") out = { ok: true, state: lastExport };
+					else if (o.action === "prefs") { engine.openAccessibility(); out = { ok: true }; }
+				} catch (e) { }
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify(out));
+			});
+			return;
+		}
 		if (req.method === "POST" && url.pathname === "/auto") {
 			let body = "";
 			req.on("data", c => { body += c; if (body.length > 2e4) req.destroy(); });
@@ -560,7 +588,7 @@ function start(engine) {
 	listen();
 
 	return {
-		setStruct, setPos, setCue, setVoice, setImport, setNotice, setMixer, setMeters, setRoutes, setWave, importFile, runCommand,
+		setStruct, setPos, setCue, setVoice, setImport, setExport, setNotice, setMixer, setMeters, setRoutes, setWave, importFile, runCommand,
 		get url() { return `http://localhost:${port}`; },
 		close() { server.close(); for (const r of clients) r.end(); }
 	};
@@ -578,6 +606,7 @@ if (maxApi) {
 	writeLog("server starting, node", process.version);
 	let localUrl = `http://localhost:${BASE_PORT}`;
 	let lastStoreJson = null;
+	let exportWatch = null;
 	const srv = start({
 		send(cmd, args) { maxApi.outlet("js", cmd, ...args); },
 		medley(o) {
@@ -585,6 +614,12 @@ if (maxApi) {
 			maxApi.outlet("js", "medleyjson", JSON.stringify(o));
 		},
 		restore(json) { maxApi.outlet("js", "restore", json); },
+		exportCmd(o) { maxApi.outlet("js", "exportjson", JSON.stringify(Object.assign({ action: "start" }, o))); },
+		openAccessibility() { if (maxApi.openAccessibility) maxApi.openAccessibility(); },
+		exportCancel(why) {
+			if (exportWatch) { exportWatch.stop(); exportWatch = null; }
+			maxApi.outlet("js", "exportjson", JSON.stringify({ action: "clean", why: why === "done" ? "done" : "cancel" }));
+		},
 		audioInfo() { return maxApi.audioInfo ? maxApi.audioInfo() : null; },
 		hear(cues) { return maxApi.hear ? maxApi.hear(cues) : Promise.resolve({ ok: false, error: "no_whisper" }); },
 		canHear() { return !!(maxApi.canHear && maxApi.canHear()); },
@@ -837,6 +872,21 @@ if (maxApi) {
 	maxApi.addHandler("cueplan", (...args) => srv.setCue(args));
 	maxApi.addHandler("cuefired", () => {});
 	maxApi.addHandler("importmsg", (...args) => srv.setImport(args));
+	// the print is in place: open Live's Export window on it, and clean up when it closes
+	maxApi.addHandler("exportmsg", (kind, a, b, c) => {
+		srv.setExport({ phase: String(kind), a, b, c });
+		if (kind !== "ready") { if (kind === "clean" && exportWatch) { exportWatch.stop(); exportWatch = null; } return; }
+		if (!maxApi.exportOpen) { srv.setExport({ phase: "manual", a, b, c }); return; }
+		exportWatch = maxApi.exportOpen(state => {
+			writeLog("export window:", state);
+			srv.setExport({ phase: state, a, b, c });
+			// closed: rendered or cancelled in Live; noopen: it never showed; denied: no permission (the user opens it by hand)
+			if (state === "closed") {
+				exportWatch = null;
+				maxApi.outlet("js", "exportjson", JSON.stringify({ action: "clean", why: state }));
+			}
+		});
+	});
 	// a Live Set dropped on the device
 	maxApi.addHandler("importpath", (...args) => {
 		let p = args.join(" ").replace(/^"|"$/g, "");

@@ -309,6 +309,12 @@ class View(Observable):
         # grid, and the grid follows the zoom (3 = zoom in, 2 = zoom out)
         self.grid = 16.0
 
+    def show_view(self, name):
+        self.shown = name
+
+    def focus_view(self, name):
+        self.focused = name
+
     def zoom_view(self, direction, name, modifier):
         if not isinstance(direction, int):
             raise TypeError("direction")

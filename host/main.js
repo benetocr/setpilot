@@ -79,6 +79,10 @@ function startHost({ log: logOut = console.log } = {}) {
 	const hearer = makeHear({ log });
 	maxApi.hear = cues => hearer.hear(cues);
 	maxApi.canHear = () => hearer.available();
+	// Live's Export window, opened on the printed arrangement
+	const { makeExportWindow, openAccessibilitySettings } = require("./export_window");
+	maxApi.exportOpen = makeExportWindow({ log });
+	maxApi.openAccessibility = openAccessibilitySettings;
 	audio.refresh().catch(() => {});
 
 	// ---------------------------------------------------------------- engine thread

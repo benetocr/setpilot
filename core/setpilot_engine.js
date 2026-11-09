@@ -708,6 +708,13 @@ function tick() {
 			}
 		}
 	}
+	// an export is printing or Live's Export window is open: nothing else moves
+	if (xp) {
+		if (job) runJobSafe();
+		if (clock - lastPing > 3000) { lastPing = clock; ping(); }
+		send();
+		return;
+	}
 	var loc = locate(t);
 	curSong = loc[0];
 	curSec = loc[1];
@@ -1318,8 +1325,9 @@ function runDup(step) {
 		clipApi.set("loop_start", step.sm);
 	}
 	try { clipApi.set("end_marker", step.em); } catch (e) { }
-	if (num(clipApi.get("pitch_coarse")) != step.pitch) clipApi.set("pitch_coarse", step.pitch);
+	if (step.pitch != null && num(clipApi.get("pitch_coarse")) != step.pitch) clipApi.set("pitch_coarse", step.pitch);
 	if (step.pitch && num(clipApi.get("warping")) && num(clipApi.get("warp_mode")) != 6) clipApi.set("warp_mode", 6);
+	if (step.scale && step.scale != 1) scaleWarp(clipApi, step.sm, step.em, step.scale, step.name);
 	(job.dups = job.dups || []).push({ track: step.track, pos: step.pos, len: (step.em - step.sm) / (step.f || 1), name: step.name });
 }
 
@@ -3473,11 +3481,11 @@ function sendClick() {
 	// the song's own bar lines (a 6/8 song may not sit on Live's grid from the set's start)
 	var mo = s >= 0 && songs[s] && medOf(s) ? medMeterAt(s, playing ? t + 0.1 * tempo / 120 : songs[s].start) : null;
 	var origin = mo ? mo.origin : s >= 0 && songs[s] ? songs[s].start : 0;
-	var P = ["on", click.on || clkSong >= 0 || (playing && medCountForce) ? 1 : 0, "beats", sigNum, "sub", sub, "accmask", m.acc, "mutemask", m.mute, "midmask", m.mid, "softmask", m.soft, "origin", Math.round(origin * 1000) / 1000,
+	var P = ["on", !xp && (click.on || clkSong >= 0 || (playing && medCountForce)) ? 1 : 0, "beats", sigNum, "sub", sub, "accmask", m.acc, "mutemask", m.mute, "midmask", m.mid, "softmask", m.soft, "origin", Math.round(origin * 1000) / 1000,
 		"lvlacc", click.acc / 100, "lvlbeat", click.beat / 100, "lvlsub", click.subl / 100,
 		"sound", click.sound, "gain", click.gain / 100,
 		// songs' click stems land on this track too: heard only when SetPilot's click doesn't replace them
-		"thru", click.on && click.muteSong ? 0 : 1];
+		"thru", click.on && click.muteSong && !xp ? 0 : 1];
 	var sig = P.join(",");
 	if (sig == click.lastSent && clock - (click.sentAt || 0) < 5000) return;
 	click.lastSent = sig; click.sentAt = clock;
@@ -4291,6 +4299,9 @@ function runJob() {
 		runDup(step);
 	} else if (step.type == "rmclips") {
 		rmClips(step.from, step.to);
+	} else if (step.type == "xpready") {
+		exportReady();
+		return;
 	} else if (step.type == "meddone") {
 		medDone();
 		return;
@@ -4391,7 +4402,8 @@ function runJob() {
 		return;
 	}
 	job.i++;
-	if (job.i % 2 == 0 || step.type == "clip") importMsg("progress", job.i, job.steps.length, step.name || step.type);
+	if (job.xp) { if (job.i % 3 == 0) exportMsg("progress", job.i, job.steps.length); }
+	else if (job.i % 2 == 0 || step.type == "clip") importMsg("progress", job.i, job.steps.length, step.name || step.type);
 }
 
 // maintenance: remove every clip and locator from a bar on (to redo an import)
@@ -4426,3 +4438,214 @@ function clearCueStep() {
 }
 
 
+
+// ------------------------------------------------------------------ export
+// The MD's arrangement lives in SetPilot (jumps, tempo, key, mutes while it
+// plays); Live's own export only sees the timeline. So an export first prints
+// the arrangement after the end of the set: the sections in their order, each
+// with its key, without the tracks muted on that block, its tempo written into
+// the clips' warp (the whole print plays at one tempo). Live's Export window
+// then renders that range, and the print goes away.
+var xp = null;   // { P, Q, T, title, saved: {...}, click, guide, phase }
+
+function exportjson() {
+	var o;
+	try { o = JSON.parse(arrayfromargs(arguments).join(" ")); } catch (e) { log("export: bad json"); return; }
+	if (o.action == "clean") { exportClean(o.why || "done"); return; }
+	exportStart(o);
+}
+
+function exportMsg(kind, a, b, c) {
+	outlet(0, "exportmsg", kind, a === undefined ? "" : a, b === undefined ? "" : b, c === undefined ? "" : c);
+}
+
+// the bpm of a medley's part at a time inside it (seams take the next part's)
+function medBpmAt(s, x) {
+	var m = medOf(s), rel = x - songs[s].start;
+	if (!m || !m.parts || !m.parts.length) return songBpm(s) || tempo;
+	for (var i = 0; i < m.parts.length; i++) if (rel < m.parts[i].b - 0.001) return m.parts[i].bpm || songBpm(s) || tempo;
+	return m.parts[m.parts.length - 1].bpm || tempo;
+}
+
+// pieces of one song as it plays: [{ a, b, bpm, semis (null: as it is), mute: { track: 1 } }]
+function printPieces(s) {
+	var sg = songs[s], out = [], bl = barLen();
+	if (medOf(s)) {
+		for (var j = 0; j < sg.sections.length; j++) {
+			var sc = sg.sections[j];
+			out.push({ a: sc.start, b: sc.end, bpm: medBpmAt(s, sc.start), semis: null, mute: {} });
+		}
+		return out;
+	}
+	var L = playList(s), blk = blkOf(s), base = songBpm(s) || tempo;
+	for (var k = 0; k < L.length; k++) {
+		var sec = sg.sections[L[k]];
+		if (!sec || sec.end - sec.start < 0.01) continue;
+		var st = evState(s, L, k), bpm = st.bpm || base;
+		var want = autoFor(s, L[k]) || {}, mute = {}, x;
+		for (x in want) if (want.hasOwnProperty(x) && want[x].m == 1) mute[x] = 1;
+		var bm = blk && blk[k] && blk[k].mix;
+		if (bm) for (x in bm) if (bm.hasOwnProperty(x)) { if (bm[x].m == 1) mute[x] = 1; else delete mute[x]; }
+		// a ramp into the next block: its last bars step towards the new tempo, one bar at a time
+		var e2 = k + 1 < L.length ? evAt(s, L, k + 1) : {}, rampBars = 0, target = 0;
+		if (e2.t && e2.t.ramp > 0) { target = e2.t.bpm || base; rampBars = Math.min(e2.t.ramp, Math.floor((sec.end - sec.start) / bl)); }
+		var rs = rampBars && target && Math.abs(target - bpm) > 0.01 ? sec.end - rampBars * bl : sec.end;
+		if (rs > sec.start + 0.01) out.push({ a: sec.start, b: rs, bpm: bpm, semis: st.semis, mute: mute });
+		for (var r = 0; rs < sec.end - 0.01 && r < rampBars; r++) {
+			out.push({ a: rs + r * bl, b: Math.min(sec.end, rs + (r + 1) * bl), bpm: bpm + (target - bpm) * (r + 0.5) / rampBars, semis: st.semis, mute: mute });
+		}
+	}
+	return out;
+}
+
+// what a print copies: the audio clips under [a, b), with the guide and the click when asked
+function printClips(a, b, guide, clickToo) {
+	var out = [], ids = trackIds();
+	for (var i = 0; i < ids.length; i++) {
+		var id = ids[i];
+		if (id == ownTrackId || id == tailTrackId || id == gateTrackId) continue;
+		trackApi.id = id;
+		if (num(trackApi.get("has_midi_input"))) continue;
+		var nm = str(trackApi.get("name")), isClick = normTrack(nm) == "click" || CLICK_RE.test(nm) || id == clickTrackId;
+		if (isClick && !clickToo) continue;
+		if (!isClick && GUIDEV_RE.test(nm) && !guide) continue;
+		var raw = trackApi.get("arrangement_clips") || [];
+		for (var k = 0; k < raw.length; k++) {
+			if (raw[k] != "id") continue;
+			var cid = num(raw[k + 1]); k++;
+			clipApi.id = cid;
+			if (!num(clipApi.get("is_audio_clip")) || num(clipApi.get("muted"))) continue;
+			var st = num(clipApi.get("start_time")), et = num(clipApi.get("end_time"));
+			if (et <= a + 0.001 || st >= b - 0.001) continue;
+			var warped = !!num(clipApi.get("warping"));
+			out.push({ track: id, name: nm, norm: normTrack(nm), clip: cid, st: st, et: et, sm: num(clipApi.get("loop_start")), f: warped ? 1 : 60 / (tempo || 120),
+				pitched: warped && !NONPITCH_RE.test(nm), warped: warped });
+		}
+	}
+	return out;
+}
+
+// o: { what: "song" | "set", song, click, guide }
+function exportStart(o) {
+	if (xp) { exportMsg("error", "busy"); return; }
+	if (job) { exportMsg("error", "busy"); return; }
+	if (playing) { exportMsg("error", "playing"); return; }
+	var list = [];
+	if (o.what == "set") { for (var i = 0; i < order.length; i++) if (order[i] < MED) list.push(order[i]); else { var mi = order[i] - MED; if (medleys[mi]) { var ms = songIndex(medleys[mi].name); if (ms >= 0) list.push(ms); } } }
+	else { var s0 = songIndex(String(o.song || "")); if (s0 >= 0) list.push(s0); }
+	list = list.filter(function (s) { return songs[s] && !clkOf(s); });
+	if (!list.length) { exportMsg("error", "nothing"); return; }
+	var bl = barLen(), guide = !!o.guide, clickToo = !!o.click;
+	var last = songEndBeats();
+	var P = Math.ceil((last + 4 * bl) / bl - 1e-6) * bl, Q = P, T = 0, steps = [], n = 0;
+	for (var q = 0; q < list.length; q++) {
+		var s = list[q], pcs = printPieces(s);
+		if (!T && pcs.length) T = pcs[0].bpm || songBpm(s) || tempo;
+		if (q > 0) Q += bl;   // a bar of silence between songs
+		for (var p = 0; p < pcs.length; p++) {
+			var pc = pcs[p], sc = T / (pc.bpm || T), under = printClips(pc.a, pc.b, guide, clickToo);
+			for (var c = 0; c < under.length; c++) {
+				var cl = under[c];
+				if (pc.mute[cl.norm]) continue;
+				var x0 = Math.max(pc.a, cl.st), x1 = Math.min(pc.b, cl.et);
+				if (x1 - x0 < 0.01) continue;
+				var f = cl.warped ? 1 : 60 / T;
+				steps.push({ type: "dup", track: cl.track, clip: cl.clip, pos: Q + (x0 - pc.a) * sc, sm: cl.sm + (x0 - cl.st) * f, em: cl.sm + (x1 - cl.st) * f, f: f,
+					pitch: pc.semis == null ? null : (cl.pitched ? pc.semis : 0), scale: cl.warped && Math.abs(sc - 1) > 0.0005 ? sc : 1, name: cl.name });
+				n++;
+			}
+			Q += (pc.b - pc.a) * sc;
+		}
+	}
+	if (!n) { exportMsg("error", "nothing"); return; }
+	var title = o.what == "set" ? "Setlist" : songs[list[0]].name;
+	xp = { P: P, Q: Q, T: T, title: title, guide: guide, click: clickToo, phase: "print",
+		saved: { tempo: tempo, loop: num(getProp("loop")), ls: num(getProp("loop_start")), ll: num(getProp("loop_length")), time: num(getProp("current_song_time")), clickOn: click.on } };
+	steps.unshift({ type: "tempo", bpm: T });
+	steps.push({ type: "xpready" });
+	job = { steps: steps, i: 0, P: P, dest: {}, title: title, savedTempo: xp.saved.tempo, warp: {}, xp: 1 };
+	exportMsg("start", title, steps.length, Math.round((Q - P) / bl));
+	log("export " + title + ": " + list.length + " song(s), " + n + " clips printed at bar " + (Math.round(P / bl) + 1) + ", " + Math.round((Q - P) / bl) + " bars at " + Math.round(T * 100) / 100 + " bpm" + (guide ? ", guide" : "") + (clickToo ? ", click" : ""));
+}
+
+// the print is in place: the range goes on the loop brace, the Arrangement in front, Live's click stems and guide heard
+function exportReady() {
+	setProp("loop_start", xp.P);
+	setProp("loop_length", xp.Q - xp.P);
+	setProp("loop_start", xp.P);
+	setProp("current_song_time", xp.P);
+	if (Math.abs(tempo - xp.T) > 0.01) { setProp("tempo", xp.T); tempo = xp.T; }
+	try {
+		var av = new LiveAPI(null, "live_app view");
+		av.call("show_view", "Arranger");
+		av.call("focus_view", "Arranger");
+	} catch (e) { log("export: view " + e.message); }
+	// SetPilot's own click and its guide gate stay out of the render; the songs' stems decide
+	click.lastSent = "";
+	sendClick();
+	if (xp.guide) { setGate(1, true); muteTracks(guideIds, 0, mutedGuide); }
+	if (xp.click) muteTracks(clickIds, 0, mutedClick);
+	xp.phase = "ready";
+	job = null;
+	exportMsg("ready", xp.title, Math.round((xp.Q - xp.P) / barLen()), Math.round((xp.Q - xp.P) * 60 / xp.T));
+}
+
+// the Export window closed (or the export was called off): the print goes, everything as it was
+function exportClean(why) {
+	if (!xp) { exportMsg("clean", why || ""); return; }
+	if (job && job.xp) job = null;
+	try { rmClips(xp.P - 0.001, 1e9); } catch (e) { log("export clean: " + e.message); }
+	var sv = xp.saved;
+	try {
+		setProp("loop_start", sv.ls); setProp("loop_length", sv.ll); setProp("loop_start", sv.ls);
+		if (num(getProp("loop")) != sv.loop) setProp("loop", sv.loop);
+		if (sv.tempo && Math.abs(num(getProp("tempo")) - sv.tempo) > 0.01) { setProp("tempo", sv.tempo); tempo = sv.tempo; }
+		setProp("current_song_time", sv.time);
+	} catch (e) { log("export restore: " + e.message); }
+	xp = null;
+	click.lastSent = "";
+	applyMode();
+	applyClickMutes();
+	sendClick();
+	structSig = "";
+	dirty = true;
+	log("export " + (why || "done") + ": print removed");
+	exportMsg("clean", why || "done");
+}
+
+// A copied piece plays at another tempo than the print's: its warp markers
+// after the piece's start move out (or in) by f, so the same audio fills f
+// times the beats. Markers go in at both ends first so nothing outside moves.
+function secAtBeat(cur, beat) {
+	var i = 0;
+	while (i < cur.length - 2 && beat > cur[i + 1].beat) i++;
+	var a = cur[i], b = cur[i + 1];
+	return a.sec + (beat - a.beat) * (b.sec - a.sec) / ((b.beat - a.beat) || 1);
+}
+
+function scaleWarp(clip, sm, em, f, name) {
+	var cur = markersOf(clip);
+	if (cur.length < 2) { log("export: " + name + " has no warp markers to scale"); return; }
+	[sm, em].forEach(function (b) {
+		for (var i = 0; i < cur.length; i++) if (Math.abs(cur[i].beat - b) < 0.01) return;
+		var sec = secAtBeat(cur, b);
+		try { clip.call("add_warp_marker", { beat_time: b, sample_time: sec }); } catch (e) { try { clip.call("add_warp_marker", b, sec); } catch (e2) { } }
+		cur = markersOf(clip);
+	});
+	var plan = [];
+	for (var i = 0; i < cur.length; i++) {
+		if (cur[i].beat <= sm + 0.001) continue;
+		if (i > 0 && cur[i].beat - cur[i - 1].beat < 0.1 && cur[i - 1].beat > sm + 0.001) continue;   // Live's own helper marker
+		plan.push({ beat: cur[i].beat, target: sm + (cur[i].beat - sm) * f });
+	}
+	var refused = 0;
+	function move(m) { try { clip.call("move_warp_marker", m.beat, m.target - m.beat); } catch (e) { refused++; } }
+	if (f > 1) for (var r = plan.length - 1; r >= 0; r--) move(plan[r]);
+	else for (var l = 0; l < plan.length; l++) move(plan[l]);
+	var end = sm + (em - sm) * f;
+	try {
+		if (f > 1) { clip.set("end_marker", end); clip.set("loop_end", end); }
+		else { clip.set("loop_end", end); clip.set("end_marker", end); }
+	} catch (e) { log("export: " + name + " end " + e.message); }
+	if (refused) log("export: " + name + " " + refused + " warp markers refused");
+}

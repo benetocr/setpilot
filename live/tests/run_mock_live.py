@@ -83,6 +83,9 @@ def main():
     surface = SetPilotSurface(CInstance(song))
     # Live's application object (browser with SetPilot Audio in it)
     surface.bridge.app = mock_live.Application(song)
+    # what Live.Clip.WarpMarker is in Live (the import tests run the older fallback)
+    if os.environ.get("SP_MOCK_MARKERS") == "1":
+        surface.bridge.make_marker = lambda b, s_: mock_live.WarpMarker(b, s_)
     bell = None
     if a.doorbell:
         bell = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -117,6 +120,17 @@ def main():
         song.advance((now - last) * 1000.0)
         last = now
         mock_live.flush_later()
+        dump = os.environ.get("SP_MOCK_DUMP")
+        if dump and os.path.exists(dump + ".req"):
+            # a test asks for the clips as they are now
+            os.remove(dump + ".req")
+            out = {"tempo": song.tempo, "loop_start": song.loop_start, "loop_length": song.loop_length, "tracks": [
+                {"name": tr.name, "mute": bool(tr.mute), "clips": [
+                    {"start": c.start_time, "end": c.end_time, "ls": c.loop_start, "le": c.loop_end, "pitch": c.pitch_coarse,
+                     "markers": [[m.beat_time, m.sample_time] for m in c.warp_markers]} for c in tr.arrangement_clips]} for tr in song.tracks]}
+            with open(dump + ".tmp", "w") as f:
+                json.dump(out, f)
+            os.rename(dump + ".tmp", dump)
         if now >= next_tick:
             surface.update_display()
             next_tick += a.tick / 1000.0

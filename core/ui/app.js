@@ -2032,6 +2032,77 @@
   });
   $("actAuto").addEventListener("click", openAuto);
   $("smAuto").addEventListener("click", openAuto);
+
+  // ---------------------------------------------------------------- export
+  // SetPilot prints the arrangement in Live and opens Ableton's Export window on it
+  var xpS = { what: "song", song: "", busy: false };
+  function openExport(what) {
+    var name = "";
+    if (shownMed >= 0 && medleys()[shownMed]) name = medleys()[shownMed].name;
+    else if (songs()[shownIdx] && !songs()[shownIdx].clk) name = songs()[shownIdx].name;
+    if (what === "song" && !name) return;
+    xpS.song = name;
+    $("xpTitle").textContent = T("exportTitle");
+    $("xpWhatSong").textContent = name || T("xpNoSong");
+    $("xpWhatSong").disabled = !name;
+    xpPick(name ? what : "set");
+    if (!xpS.busy) { $("xpForm").hidden = false; $("xpRun").hidden = true; }
+    $("xpSheet").hidden = false;
+  }
+  function xpPick(v) {
+    xpS.what = v;
+    [].forEach.call($("xpWhat").children, function (b) { b.setAttribute("aria-checked", String(b.dataset.v === v)); });
+  }
+  $("xpWhat").addEventListener("click", function (e) { var b = e.target.closest("button"); if (b && !b.disabled) xpPick(b.dataset.v); });
+  function xpShow(msg, opts) {
+    opts = opts || {};
+    $("xpForm").hidden = true;
+    $("xpRun").hidden = false;
+    $("xpMsg").innerHTML = msg;
+    $("xpBar").hidden = opts.frac == null;
+    if (opts.frac != null) $("xpFill").style.transform = "scaleX(" + Math.max(0.04, Math.min(1, opts.frac)) + ")";
+    $("xpDone").hidden = !opts.done;
+    $("xpPrefs").hidden = !opts.prefs;
+    $("xpCancel").hidden = !!opts.noCancel;
+  }
+  var KEYS = "<kbd>⌘⇧L</kbd> " + "{then}" + " <kbd>⌘⇧R</kbd>";
+  function xpKeys() { return KEYS.replace("{then}", esc(T("xpThen"))); }
+  function onExport(x) {
+    if (!x || !x.phase) return;
+    var ph = x.phase;
+    if (ph === "start") { xpS.busy = true; xpShow(esc(T("xpPrinting")), { frac: 0.04 }); }
+    else if (ph === "progress") { xpS.busy = true; xpShow(esc(T("xpPrinting")), { frac: (+x.a || 0) / Math.max(1, +x.b || 1) }); }
+    else if (ph === "ready" || ph === "opening") xpShow(esc(T("xpOpening")));
+    else if (ph === "open") xpShow(esc(T("xpOpen")) + (x.c ? " <small>(" + esc(fmtLen(+x.c)) + ")</small>" : ""), { done: true });
+    else if (ph === "denied") xpShow(esc(T("xpDenied")) + "<br><br>" + esc(T("xpByHand")).replace("{keys}", xpKeys()), { done: true, prefs: true });
+    else if (ph === "noopen" || ph === "manual" || ph === "failed" || ph === "nolive") xpShow(esc(T("xpByHand")).replace("{keys}", xpKeys()), { done: true });
+    else if (ph === "clean") {
+      var was = xpS.busy;
+      xpS.busy = false;
+      $("xpSheet").hidden = true;
+      $("xpForm").hidden = false; $("xpRun").hidden = true;
+      if (was && x.a !== "cancel") showToast(T("xpClean"));
+    } else if (ph === "error") {
+      xpS.busy = false;
+      $("xpForm").hidden = false; $("xpRun").hidden = true;
+      showToast(T("xpErr_" + x.a) || T("xpErr_busy"), true);
+    }
+  }
+  function fmtLen(sec) { sec = Math.round(sec || 0); return Math.floor(sec / 60) + ":" + ("0" + sec % 60).slice(-2); }
+  $("smExport").addEventListener("click", function () { openExport("song"); });
+  $("btnExportSet").addEventListener("click", function () { openExport("song"); });
+  $("xpGo").addEventListener("click", function () {
+    xpS.busy = true;
+    xpShow(esc(T("xpPrinting")), { frac: 0.04 });
+    postJson("/export", { action: "start", what: xpS.what, song: xpS.song, guide: $("xpGuide").checked, click: $("xpClick").checked })
+      .then(function (r) { if (!r.ok) { xpS.busy = false; $("xpForm").hidden = false; $("xpRun").hidden = true; showToast(T("xpErr_busy"), true); } })
+      .catch(function () { });
+  });
+  $("xpCancel").addEventListener("click", function () { postJson("/export", { action: "cancel" }).catch(function () { }); });
+  $("xpDone").addEventListener("click", function () { postJson("/export", { action: "done" }).catch(function () { }); });
+  $("xpPrefs").addEventListener("click", function () { postJson("/export", { action: "prefs" }).catch(function () { }); });
+  $("xpClose").addEventListener("click", function () { $("xpSheet").hidden = true; });
+  $("xpSheet").addEventListener("click", function (e) { if (e.target === $("xpSheet")) $("xpSheet").hidden = true; });
   function hasAutoAny(s) {
     if (!s) return false;
     var x;
@@ -3322,6 +3393,7 @@
     });
     es.addEventListener("meters", function (e) { onMeters(JSON.parse(e.data)); });
     es.addEventListener("notice", function (e) { notice(JSON.parse(e.data)); });
+    es.addEventListener("export", function (e) { onExport(JSON.parse(e.data)); });
     es.addEventListener("routes", function (e) { routes = JSON.parse(e.data); renderOutputs(); });
     es.addEventListener("wave", function (e) {
       var w = JSON.parse(e.data);

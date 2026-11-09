@@ -62,6 +62,7 @@
       "extendInfo": {
         "LSUIElement": true,
         "NSLocalNetworkUsageDescription": "SetPilot shows its dashboard to your phones and tablets on this network.",
+        "NSAppleEventsUsageDescription": "SetPilot opens Ableton Live's Export window on your arrangement.",
         "NSBonjourServices": [
           "_http._tcp"
         ]

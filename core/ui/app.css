@@ -1749,3 +1749,15 @@ html[data-layout="console"] .act-auto { display: none; }
 .mt-now { margin: 0 6px; padding: 1px 8px; border-radius: 999px; background: var(--deck); font-size: 12.5px; }
 .link-btn { border: 0; background: none; color: var(--loop); font: inherit; font-size: 12.5px; font-weight: 650; padding: 0; cursor: pointer; }
 #addClick { max-height: min(70vh, 680px); overflow-y: auto; padding-right: 4px; }
+
+/* export through Ableton's window */
+.xp-card { width: min(460px, 100%); gap: 12px; }
+.xp-card #xpForm { display: flex; flex-direction: column; gap: 12px; }
+.xp-card .cta { justify-content: center; margin-top: 4px; }
+.xp-run { display: flex; flex-direction: column; gap: 12px; }
+.xp-bar { height: 6px; }
+.xp-bar.idle i { transform: scaleX(1); opacity: .35; }
+.xp-msg { margin: 0; line-height: 1.5; }
+.xp-msg kbd { font: inherit; font-weight: 600; padding: 1px 6px; border-radius: 6px; border: 1px solid currentColor; opacity: .9; }
+.xp-acts { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.setlist-head .icon-btn.small { width: 32px; height: 32px; align-self: center; margin-left: 8px; }
