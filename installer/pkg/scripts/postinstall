@@ -1,0 +1,15 @@
+#!/bin/bash
+# The app is in /Applications. Clear the download flag so macOS opens it,
+# then start it as the person who is signed in: on its first start SetPilot
+# puts its script and its audio plug-in where Ableton Live finds them.
+APP="/Applications/SetPilot.app"
+xattr -cr "$APP" 2>/dev/null || true
+U="$(stat -f%Su /dev/console)"
+if [ -n "$U" ] && [ "$U" != "root" ]; then
+  H="$(dscl . -read "/Users/$U" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+  for p in "$H/Library/Audio/Plug-Ins/VST3/SetPilot Audio.vst3" "$H/Library/Audio/Plug-Ins/Components/SetPilot Audio.component"; do
+    [ -e "$p" ] && xattr -cr "$p" 2>/dev/null
+  done
+  launchctl asuser "$(id -u "$U")" sudo -u "$U" open "$APP" >/dev/null 2>&1 &
+fi
+exit 0

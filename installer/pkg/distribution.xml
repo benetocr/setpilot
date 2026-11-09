@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>SetPilot</title>
+    <options customize="never" require-scripts="false" hostArchitectures="__ARCH__"/>
+    <allowed-os-versions><os-version min="11.0"/></allowed-os-versions>
+    <domains enable_localSystem="true"/>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+    <choices-outline><line choice="default"><line choice="app.setpilot.desktop"/></line></choices-outline>
+    <choice id="default"/>
+    <choice id="app.setpilot.desktop" visible="false"><pkg-ref id="app.setpilot.desktop"/></choice>
+    <pkg-ref id="app.setpilot.desktop" version="__VERSION__" onConclusion="none">SetPilot-app.pkg</pkg-ref>
+</installer-gui-script>

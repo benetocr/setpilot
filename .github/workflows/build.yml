@@ -135,12 +135,37 @@ jobs:
           }
           pack dist/mac-arm64 arm64
           pack dist/mac x64
+      - name: Double-click installers (.pkg)
+        run: |
+          V=$(node -p 'require("./package.json").version')
+          P=installer/pkg
+          mkpkg() {
+            local dir="$1" arch="$2" out="$3" w="$RUNNER_TEMP/pkg-$arch"
+            rm -rf "$w"; mkdir -p "$w/root/Applications"
+            ditto "$dir/SetPilot.app" "$w/root/Applications/SetPilot.app"
+            pkgbuild --analyze --root "$w/root" "$w/comp.plist"
+            plutil -replace 0.BundleIsRelocatable -bool NO "$w/comp.plist"
+            pkgbuild --root "$w/root" --component-plist "$w/comp.plist" --install-location / \
+              --scripts "$P/scripts" --identifier app.setpilot.desktop --version "$V" "$w/SetPilot-app.pkg"
+            sed -e "s/__ARCH__/$arch/" -e "s/__VERSION__/$V/" "$P/distribution.xml" > "$w/distribution.xml"
+            productbuild --distribution "$w/distribution.xml" --resources "$P/resources" --package-path "$w" "$GITHUB_WORKSPACE/$out"
+            pkgutil --check-signature "$GITHUB_WORKSPACE/$out" || true
+            ls -la "$GITHUB_WORKSPACE/$out"
+          }
+          mkpkg dist/mac-arm64 arm64 SetPilot-Installer-Apple-chip.pkg
+          mkpkg dist/mac x86_64 SetPilot-Installer-Intel.pkg
+      - name: Try the installer
+        run: |
+          sudo installer -pkg SetPilot-Installer-Apple-chip.pkg -target / -verbose
+          test -x /Applications/SetPilot.app/Contents/MacOS/SetPilot
+          pkgutil --pkg-info app.setpilot.desktop
       - uses: actions/upload-artifact@v4
         with:
           name: SetPilot-app-mac
           path: |
             SetPilot-mac-*.zip
             SetPilot-mac-*.dmg
+            SetPilot-Installer-*.pkg
 
   # the builds go to the "latest" pre-release (files over 100 MB do not fit in git)
   publish:
