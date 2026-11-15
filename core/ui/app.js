@@ -2380,6 +2380,7 @@
     setSeg("optCueStyle", st.cueStyle || 0);
     setSeg("optCueSource", st.cueSource == null ? 0 : st.cueSource);
     setSeg("countIn", st.precount || 0);
+    setSeg("optEntry", st.precount || 2);
     setSeg("optLang", window.SPI18N.lang);
     $("cueModeHelp").textContent = T(["cueHelpOff", "cueHelpFix", "cueHelpAll"][st.cueMode] || "cueHelpAll");
     $("voiceInfo").textContent = voice && voice.bank != null ? (voice.bank ? T("bankInfo", { n: voice.bank }) : T("bankNone")) : "";
@@ -2498,6 +2499,7 @@
   }
   bindSeg("optCueMode", "cuemode");
   bindSeg("optUnderPad", "underpad");
+  bindSeg("optEntry", "precount");
   bindSeg("optCueBars", "cuebars");
   bindSeg("optCueStyle", "cuestyle");
   bindSeg("optCueSource", "cuesource");

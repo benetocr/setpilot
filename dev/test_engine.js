@@ -27,6 +27,8 @@ function setup(opts = {}) {
 	const run = ms => { for (let i = 0; i < ms / 20; i++) eng.step(20); };
 	run(40);
 	if (!opts.guide) eng.send("cuesource", [0]);
+	// most checks were written for a one-bar entry; the two-bar one has its own
+	if (!opts.entry2) eng.send("precount", [1]);
 	struct = eng.dicts.setpilot_struct;
 	const pos = () => ({ t: last[1], playing: last[2], song: last[6], sec: last[7], qSong: last[8], qSec: last[9],
 		loopSong: last[11], loopSec: last[12], arm: last[15], pending: last[16] });
@@ -969,6 +971,47 @@ test("hold between songs: the next song's first bar goes round with click and pa
 	assert.strictEqual(drums.mute, 0, "the band is in");
 	assert.strictEqual(t.song.props.loop, 0);
 	assert.ok(t.song.audio.played.some(x => t.song.audio.preload[x[0]] === "/sim/intro.wav"), "Intro is named");
+});
+
+test("two-bar entry: from a section, a spoken count on the first bar, the section's name on the second, then the band", () => {
+	const t = setup({ entry2: true });
+	const texts = t.eng.dicts.setpilot_struct.cueTexts;
+	assert.ok(texts.includes("1@72@4"), "the count at the song's tempo is asked for: " + texts.slice(0, 6).join(", "));
+	t.cmd("cuefile", "1@72@4", "/sim/count.wav");
+	t.cmd("cuefile", "Coro", "/sim/coro.wav");
+	t.cmd("section", 0, 2, 0);                 // Coro at 48
+	t.run(100);
+	t.cmd("play");
+	t.run(80);
+	assert.ok(t.pos().t >= 40 && t.pos().t < 41, "two bars early: " + t.pos().t);
+	const drums = t.song.tracks.find(x => x.name === "Drums");
+	assert.strictEqual(drums.mute, 1);
+	t.until(p => p.t >= 48.3);
+	const at = f => t.song.audio.played.filter(x => t.song.audio.preload[x[0]] === f).map(x => Math.round(x[1] * 10) / 10);
+	assert.ok(at("/sim/count.wav").length === 1 && at("/sim/count.wav")[0] < 40.6, "count on the first bar: " + JSON.stringify(at("/sim/count.wav")));
+	assert.deepStrictEqual(at("/sim/coro.wav"), [44], "the name on the second bar");
+	assert.strictEqual(drums.mute, 0, "band in on the Coro");
+});
+
+test("two-bar entry out of the underscore: a bar of count, a bar with the name, then the section", () => {
+	const t = setup({ entry2: true });
+	t.cmd("selectsong", 0, 0);
+	t.run(200);
+	t.cmd("underscore");
+	t.run(600);
+	t.cmd("cuefile", "1@72@4", "/sim/count.wav");
+	t.cmd("cuefile", "Coro", "/sim/coro.wav");
+	t.run(2400);
+	const loops = () => t.song.log.filter(l => /^loop 4 -> 0/.test(l)).length;
+	t.until(p => p.t > 1 && p.t < 1.5, 20000);
+	const l0 = loops();
+	t.cmd("section", 0, 2, 0);
+	t.until(p => p.t >= 48.5 && p.sec === 2, 60000);
+	const at = f => t.song.audio.played.filter(x => t.song.audio.preload[x[0]] === f).length;
+	assert.strictEqual(at("/sim/count.wav"), 1);
+	assert.strictEqual(at("/sim/coro.wav"), 1);
+	assert.strictEqual(loops() - l0, 2, "two more bars went round before the jump");
+	assert.strictEqual(t.song.tracks.find(x => x.name === "Drums").mute, 0);
 });
 
 test("count-in survives Live starting from its own selection first", () => {

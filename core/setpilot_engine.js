@@ -126,7 +126,7 @@ var ramp = null;        // crossfade fade-in of the next song: { list, at, ms }
 var paramApi = null;
 
 // practice and show helpers
-var precountBars = 1;   // bars of count-in when playback starts after the first section (1 or 2)
+var precountBars = 2;   // bars of entry when playing from a section or out of the underscore: 1 (the name) or 2 (a spoken count, then the name)
 var cueStyle = 0;       // 0: "Chorus"   1: "Chorus, two, three, four"
 var cueSource = 0;      // 0: the cue bank for every cue (one voice), 1: the song's own guide when it has the cue
 var cuePaths = {};      // cue key -> its audio file (an export prints them as clips)
@@ -521,7 +521,8 @@ function loadStore() {
 	if (restored.cueMode !== undefined) cueMode = restored.cueMode;
 	if (restored.cueBars !== undefined) cueBars = restored.cueBars;
 	if (restored.cueLang !== undefined) cueLang = restored.cueLang;
-	if (restored.precount !== undefined) precountBars = Math.max(1, Math.min(2, restored.precount || 1));
+	// stores from before the two-bar entry had one bar as the default: two now
+	if (restored.precount !== undefined && restored.entry2) precountBars = Math.max(1, Math.min(2, restored.precount || 1));
 	if (restored.cueStyle !== undefined) cueStyle = restored.cueStyle;
 	// stores from before the cue bank had the song's guide as the default: the bank is the default now
 	if (restored.cueSource !== undefined && restored.cueBank) cueSource = restored.cueSource ? 1 : 0;
@@ -558,7 +559,7 @@ function restore() {
 
 function saveStore() {
 	var names = orderNames();
-	restored = { order: names, medleys: medleys, autostop: autoStop, trDefault: trDefault, cueMode: cueMode, cueBars: cueBars, cueLang: cueLang, precount: precountBars, cueStyle: cueStyle, cueSource: cueSource, cueBank: 1, click: click, songs: songOpts, instr: instr };
+	restored = { order: names, medleys: medleys, autostop: autoStop, trDefault: trDefault, cueMode: cueMode, cueBars: cueBars, cueLang: cueLang, precount: precountBars, cueStyle: cueStyle, cueSource: cueSource, cueBank: 1, entry2: 1, click: click, songs: songOpts, instr: instr };
 	var json = JSON.stringify(restored);
 	lastStored = json;
 	var d = new Dict(STORE_DICT);
@@ -2910,6 +2911,8 @@ function cueTexts() {
 		var k = cueKey(c, s, mi, src);
 		if (c && !seen[k]) { seen[k] = 1; out.push(k); }
 	}
+	// the spoken count of an entry ("1, 2, 3, 4"), at each song's tempo and time signature
+	for (var ci = 0; ci < songs.length; ci++) { var ckk = countKey(ci); if (ckk && !seen[ckk]) { seen[ckk] = 1; out.push(ckk); } }
 	// medleys: one voice and one tempo for all their cues
 	for (var mi = 0; mi < medleys.length; mi++) {
 		var sl = medSlots(mi);
@@ -2950,6 +2953,10 @@ function computePlan() {
 		var ps = songs[pre.song], psec = ps && ps.sections[pre.sec];
 		if (psec) {
 			var pbl = barLen(), ptext = cleanCue(psec.name);
+			if (precountBars >= 2 && pre.S - pre.from > pbl + 0.01 && t < pre.S - pbl - 0.05) {
+				var ck = countKey(pre.song);
+				if (ck && cueMap[ck]) return { cueAt: pre.from, B: pre.S - pbl, text: "1", natural: false, now: false, song: pre.song, idxKey: ck, key: "precount|" + pre.from + "|" + cueMode };
+			}
 			var pAt = Math.max(pre.from, pre.S - (cueStyle ? 1 : cueBars) * pbl);
 			return { cueAt: pAt, B: pre.S, text: ptext, natural: false, now: false, song: pre.song,
 				key: "pre|" + ptext + "@" + Math.round(pAt * 1000) + "|" + cueMode };
@@ -2961,14 +2968,22 @@ function computePlan() {
 		var hn = songs[curSong].sections[curSec + 1];
 		if (!hn) return null;
 		var htx = cleanCue(hn.name);
+		if (precountBars >= 2 && !(medHold.passes >= 1)) {
+			var hck = countKey(curSong);
+			if (hck && cueMap[hck]) return { cueAt: medHold.b - 0.02, B: medHold.b, text: "1", natural: false, now: false, song: curSong, wrap: 1, idxKey: hck, key: "mhcount|" + medHold.at };
+		}
 		return { cueAt: medHold.b - 0.02, B: medHold.b, text: htx, natural: false, now: false, song: curSong, wrap: 1, src: songIdentityAt(curSong, hn.start),
 			key: "mhold|" + htx + "|" + medHold.at };
 	}
 	// the underscore says nothing until the song or a section is asked for; then it names it as always, and the click counts one whole bar
 	if (under) {
-		var us = songs[under.song], usec = under.go && under.cueOk && us ? us.sections[under.target] : null;
+		var us = songs[under.song], usec = under.go && under.cueOk && !under.count && us ? us.sections[under.target] : null;
 		if (!usec) return null;
 		var utext = cleanCue(usec.name);
+		if (precountBars >= 2 && !(under.passes >= 1)) {
+			var uck = countKey(under.song);
+			if (uck && cueMap[uck]) return { cueAt: under.b - 0.02, B: under.b, text: "1", natural: false, now: false, song: under.song, wrap: 1, idxKey: uck, key: "ucount|" + under.at };
+		}
 		// set a hair before the bar line (inside the bar that ends: a cue set exactly on the loop's first beat could be missed as Live goes round)
 		return { cueAt: under.b - 0.02, B: under.b, text: utext, natural: false, now: false, song: under.song, wrap: 1,
 			key: "under|" + utext + "|" + under.at };
@@ -3062,6 +3077,7 @@ function runCues() {
 		} else {
 			if (p.announce) annSaid = { text: p.text, at: Math.max(t, p.cueAt), B: p.B, key: p.key };
 			var idx = p.announce ? (cueMap[p.text] || 0) : ((p.src && cueMap[cueKey(p.text, p.song, null, p.src)]) || cueMap[cueKey(p.text, p.song)] || cueMap[p.text] || 0);
+			if (p.idxKey) idx = cueMap[p.idxKey] || 0;
 			var beat = 4 / (sigDen || 4);
 			if (cueMode == CUE_FIX && p.cueAt - 0.25 > t) setGate(1, true);
 			if (!p.now && (p.cueAt > t + 0.03 || p.wrap)) {
@@ -4978,7 +4994,10 @@ function underTick() {
 		return;
 	}
 	if (!u.count) {
-		if (wrapped) { u.count = 1; log("underscore: counting into " + songs[u.song].sections[u.target].name); }
+		if (wrapped) {
+			u.passes = (u.passes || 0) + 1;
+			if (u.passes >= (precountBars >= 2 ? 2 : 1)) { u.count = 1; log("underscore: into " + songs[u.song].sections[u.target].name); }
+		}
 		return;
 	}
 	// the count's bar: the band is unmuted a moment before its end
@@ -5045,7 +5064,10 @@ function medHoldTick() {
 	if (medHold) {
 		var h = medHold;
 		if (!playing || curSong != h.s || t < h.a - 0.01 || t >= h.b + 0.01) { medHoldEnd(); return; }
-		if (h.rel == 1 && t < lastT - 0.25) { setProp("loop", 0); liveLoop = 0; h.rel = 2; send(); }
+		if (h.rel == 1 && t < lastT - 0.25) {
+			h.passes = (h.passes || 0) + 1;
+			if (h.passes >= (precountBars >= 2 ? 2 : 1)) { setProp("loop", 0); liveLoop = 0; h.rel = 2; send(); }
+		}
 		return;
 	}
 	if (!playing || curSong < 0 || under || pre || queue) return;
@@ -5080,4 +5102,14 @@ function medHoldEnd() {
 	liveLoop = 0;
 	armedKey = null;
 	send();
+}
+
+// "1, 2, 3, 4" (one number a beat of the song's time signature) at the song's tempo, from the cue bank
+function countKey(s) {
+	if (s < 0 || !songs[s]) return "";
+	var m = /^(\d+)\/(\d+)$/.exec(String(songs[s].meter || "")), n = m ? +m[1] : (sigNum || 4), d = m ? +m[2] : (sigDen || 4);
+	var bpm = effTempo(s);
+	if (medOf(s)) { var mv = medTempoAt(s, songs[s].start + 0.001, true); if (mv) bpm = mv; }
+	if (!(bpm > 0) || n < 2) return "";
+	return "1@" + Math.round(bpm * d / 4 * 100) / 100 + "@" + Math.min(8, n);
 }
