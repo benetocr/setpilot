@@ -655,7 +655,14 @@
           <button type="button" role="radio" data-v="song" id="xpWhatSong"></button>
           <button type="button" role="radio" data-v="set" data-i18n="xpWhole">Whole setlist</button>
         </div>
-        <p class="set-help" data-i18n="xpHelp"></p>
+        <p class="set-help" id="xpHelpText"></p>
+        <div class="set-row" id="xpPreRow" hidden>
+          <span data-i18n="xpPre">Bars of the song before</span>
+          <div class="seg-ctl small" id="xpPre" role="radiogroup">
+            <button type="button" role="radio" data-v="4" aria-checked="true">4</button>
+            <button type="button" role="radio" data-v="8" aria-checked="false">8</button>
+          </div>
+        </div>
         <label class="switch-row">
           <span><strong data-i18n="xpGuide">Include the guide</strong><small data-i18n="xpGuideHelp"></small></span>
           <input type="checkbox" id="xpGuide" checked><i class="switch"></i>
@@ -664,7 +671,7 @@
           <span><strong data-i18n="xpClick">Include the click</strong><small data-i18n="xpClickHelp"></small></span>
           <input type="checkbox" id="xpClick"><i class="switch"></i>
         </label>
-        <button class="cta" id="xpGo"><span data-i18n="xpGo">Open Ableton's export</span></button>
+        <button class="cta" id="xpGo"><span data-i18n="xpGo">Export MP3</span></button>
       </div>
       <div class="xp-run" id="xpRun" hidden>
         <div class="sl-bar xp-bar" id="xpBar"><i id="xpFill"></i></div>

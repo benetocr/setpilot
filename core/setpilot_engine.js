@@ -110,7 +110,7 @@ var pendingKeys = false;
 var FAR = [9999, 1, 0];
 
 // transitions
-var TR_CUE = 1, TR_STAY = 2, TR_LINK = 3, TR_OVERLAP = 4, TR_XFADE = 5;
+var TR_CUE = 1, TR_STAY = 2, TR_LINK = 3, TR_OVERLAP = 4, TR_XFADE = 5, TR_HOLD = 6;
 var trDefault = TR_CUE;
 var XFADE_SEC = 5;
 var tailTrackId = 0, tailSeen = -99999;
@@ -739,12 +739,14 @@ function tick() {
 	if (playing && curSong >= 0 && !pre && med) guard("medley", runMed)();
 	else if (playing && curSong >= 0 && !pre) guard("arrangement", runArr)();
 	if (playing) runTransport();
+	guard("jumptempo", jumpTempoTick)();
 	guard("medtempo", medTempoTick)();
 	guard("medmeter", medMeterTick)();
 	guard("listen", listenTick)();
 	guard("medpad", medPadTick)();
 	guard("clicksong", clkTick)();
 	guard("underscore", underTick)();
+	guard("medhold", medHoldTick)();
 	guard("padramp", padRampTick)();
 	if (!job) guard("automation", autoTick)();
 	if (medPlace) guard("medplace", runMedPlace)();
@@ -773,6 +775,16 @@ function runTransport() {
 	if (queue) {
 		var target = songs[queue.song] && songs[queue.song].sections[queue.sec];
 		if (!target) { queue = null; return; }
+		if (queue.hold && !queue.muted && curSong != queue.song && t >= queue.landAt - (0.03 + writeLead) * tempo / 60) {
+			queue.muted = [];
+			var hl = songTrackIds(true);
+			for (var hm = 0; hm < hl.length; hm++) {
+				trackApi.id = hl[hm].id;
+				if (num(trackApi.get("mute"))) continue;
+				trackApi.set("mute", 1);
+				queue.muted.push(hl[hm].id);
+			}
+		}
 		if (!queue.fired && curSong == queue.song && curSec == queue.sec && queue.from != curSong + ":" + curSec) {
 			landed(); // the timeline got there on its own
 		} else if (!queue.fired) {
@@ -809,6 +821,14 @@ function runTransport() {
 	var E = arrEnd(curSong);
 	var ho = handoverPlan(curSong);
 	var mode = ho ? ho.mode : trMode(curSong);
+	if (ho && ho.mode == TR_HOLD) {
+		// into the next song's first bar on the bar line; the band goes silent as it lands
+		if (t >= ho.J - bl + 0.05) {
+			queue = { song: ho.n, sec: 0, now: 0, loop: 0, fired: 0, from: curSong + ":" + curSec, hold: 1, landAt: ho.J };
+			pendingSong = -1;
+		}
+		return;
+	}
 	if (ho && ho.mode != TR_LINK) {
 		if (t < ho.J - 0.02) {
 			if (t >= ho.J - bl + 0.05) startHandover(curSong, ho);
@@ -1099,7 +1119,7 @@ function medleyApply(o) {
 // song's options as opt(s).med and played by the engine.
 var VOX_RE = /(vox|vocal|voz|voces|bgv|bgvs|choir|\bcoro\b|alto|tenor|soprano|\blead\b|harmon|armon)/i;
 var GUIDEV_RE = /(guide|gu[ií]a|\bcues?\b)/i;
-var SEAM_BARS = { cut: 0, ant: 0, ramp: 0, pivot: 2, count: 2 };
+var SEAM_BARS = { cut: 0, ant: 0, ramp: 0, pivot: 2, count: 2, hold: 1 };
 var KEYS_SHARP = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
 var KEY_IDX = { C: 0, "C#": 1, Db: 1, D: 2, "D#": 3, Eb: 3, E: 4, F: 5, "F#": 6, Gb: 6, G: 7, "G#": 8, Ab: 8, A: 9, "A#": 10, Bb: 10, B: 11 };
 var medJobInfo = null;
@@ -1256,10 +1276,11 @@ function medBuild(o) {
 		var nextSeam = k + 1 < m.parts.length && m.seams && m.seams[k] ? String(m.seams[k].type) : "";
 		var nb = SEAM_BARS[nextSeam] || 0;
 		var nmeter = k + 1 < m.parts.length ? meterOfSong(m.parts[k + 1].song) : pmeter, nbl = meterBeats(nmeter);
-		if (nextSeam) seams.push({ type: nextSeam, at: Q - P, len: nb * nbl, from: parts.length - 1, meter: nmeter });
+		var rbars = nextSeam == "ramp" ? Math.max(1, Math.min(16, parseInt(m.seams[k].bars, 10) || 4)) : 0;
+		if (nextSeam) seams.push({ type: nextSeam, at: Q - P, len: nb * nbl, from: parts.length - 1, meter: nmeter, bars: rbars || undefined });
 		if (nb) {
 			// the song's own click bars fit only when the time signature stays the same; otherwise SetPilot counts
-			var lastRun = runs[runs.length - 1], ck = nmeter == pmeter ? clipsUnder(Math.max(lastRun.a, lastRun.b - nb * nbl), lastRun.b) : [];
+			var lastRun = runs[runs.length - 1], ck = nmeter == pmeter && nextSeam != "hold" ? clipsUnder(Math.max(lastRun.a, lastRun.b - nb * nbl), lastRun.b) : [];
 			for (var z = 0; z < ck.length; z++) {
 				if (!ck[z].click) continue;
 				var y0 = Math.max(lastRun.b - nb * nbl, ck[z].st), y1 = Math.min(lastRun.b, ck[z].et);
@@ -1502,19 +1523,20 @@ function clkTick() {
 // the tempo at a point of the medley: its part's, ramping into the next part
 // over the last 4 bars when that seam is a ramp; a pad bridge already takes
 // the next part's tempo
-function medTempoAt(s, time) {
+// (noRamp: a jump is on its way, the part keeps its own tempo until the jump's last two bars)
+function medTempoAt(s, time, noRamp) {
 	var md = medOf(s);
 	if (!md || !md.parts || !md.parts.length) return 0;
 	var rel = time - songs[s].start, bl = barLen(), p = md.parts, k = 0;
 	for (var i = 0; i < p.length; i++) if (rel >= p[i].a - 0.001) k = i;
 	var v = p[k].bpm;
 	if (rel >= p[k].b - 0.001 && k + 1 < p.length) v = p[k + 1].bpm;   // in the bridge after it
-	else {
+	else if (!noRamp) {
 		for (var j = 0; j < (md.seams || []).length; j++) {
 			var sm = md.seams[j];
 			if (sm.type != "ramp" || sm.from != k || !p[k + 1]) continue;
-			var r0 = p[k].b - 4 * bl;
-			if (rel > r0) v = p[k].bpm + (p[k + 1].bpm - p[k].bpm) * Math.min(1, (rel - r0) / (4 * bl));
+			var rb = (sm.bars || 4) * (meterBeats(p[k].meter) || bl), r0 = p[k].b - rb;
+			if (rel > r0) v = p[k].bpm + (p[k + 1].bpm - p[k].bpm) * Math.min(1, (rel - r0) / rb);
 		}
 	}
 	var o = opt(s), base = p[0].bpm;
@@ -1531,7 +1553,7 @@ function medMeterAt(s, time) {
 	for (var i = 0; i < p.length; i++) if (rel >= p[i].a - 0.001) k = i;
 	var seamAfter = null, seamBefore = null;
 	(md.seams || []).forEach(function (sm) { if (sm.from == k) seamAfter = sm; if (sm.from == k - 1) seamBefore = sm; });
-	if (seamAfter && rel >= seamAfter.at - 0.001 && p[k + 1]) return { meter: p[k + 1].meter || "4/4", origin: S + seamAfter.at, k: k + 1, seam: seamAfter.len > 0, change: (p[k + 1].meter || "4/4") != (p[k].meter || "4/4") };
+	if (seamAfter && rel >= seamAfter.at - 0.001 && p[k + 1]) return { meter: p[k + 1].meter || "4/4", origin: S + seamAfter.at, k: k + 1, seam: seamAfter.len > 0, change: (p[k + 1].meter || "4/4") != (p[k].meter || "4/4"), hold: seamAfter.type == "hold" };
 	var org = seamBefore && seamBefore.len > 0 ? S + seamBefore.at : S + (k == 0 ? 0 : p[k].a);
 	return { meter: p[k].meter || "4/4", origin: org, k: k };
 }
@@ -1595,7 +1617,7 @@ function medMeterTick() {
 	var mm = medMeterAt(curSong, t + 0.1 * tempo / 120);
 	if (!mm) return;
 	// a count into another time signature is SetPilot's to play: the songs' own click bars don't fit
-	var force = !!(mm.seam && mm.change);
+	var force = !!(mm.seam && (mm.change || mm.hold));
 	var key = mm.meter + "@" + mm.origin + (force ? "!" : "");
 	if (key == medMeterKey) return;
 	medMeterKey = key;
@@ -1607,8 +1629,8 @@ function medMeterTick() {
 
 var medTempoLast = 0;
 function medTempoTick() {
-	if (!playing || curSong < 0 || !medOf(curSong)) return;
-	var v = medTempoAt(curSong, t);
+	if (!playing || curSong < 0 || !medOf(curSong) || jumpBpm) return;
+	var v = medTempoAt(curSong, t, !!(queue && !queue.contiguous && !queue.auto));
 	if (!(v > 0)) return;
 	v = Math.round(v * 100) / 100;
 	if (Math.abs(tempo - v) > 0.009) { setProp("tempo", v); tempo = v; tempoOverridden = true; }
@@ -1642,7 +1664,7 @@ function medPadEvents(s) {
 			ev.push([end - bl, (kb.root + 7) % 12, 1]);        // V of the new key
 			ev.push([end, kb.root, kb.minor ? 2 : 1]);
 			ev.push([end + 2 * bl, 0, 0]);
-		} else if (sm.type == "count") {
+		} else if (sm.type == "count" || sm.type == "hold") {
 			ev.push([at - bl, ka.root, ka.minor ? 2 : 1]);
 			ev.push([at, kb.root, kb.minor ? 2 : 1]);
 			ev.push([end + bl, 0, 0]);
@@ -1714,6 +1736,7 @@ function medPadTick() {
 	}
 	var jumped = t < padLastT - 0.05 || t > padLastT + 2 * barLen();
 	padLastT = t;
+	if (medHold) jumped = false;   // going round the hold bar is not a jump: the pad goes on
 	var key = curSong + "|" + (md.built || 0);
 	if (key == padSent && !jumped) return;
 	padSent = key;
@@ -1905,6 +1928,8 @@ function handoverPlan(s) {
 		// the arrangement ends before the timeline does: no tail for that ending, link there
 		return (m == TR_LINK || m == TR_OVERLAP || m == TR_XFADE) ? { n: n, sec: firstSec(n), J: E, mode: TR_LINK, natural: false } : null;
 	}
+	// hold: the next song's first bar goes round with click and pad, the band silent, until it is released
+	if (m == TR_HOLD) return { n: n, sec: 0, J: E, mode: TR_HOLD, natural: false };
 	var f = firstSec(n);
 	var link = { n: n, sec: f, J: sg.end, mode: TR_LINK, natural: !f && Math.abs(songs[n].start - sg.end) < 0.001 };
 	if (m == TR_LINK) return link;
@@ -2142,7 +2167,7 @@ function tailfailed(id) {
 
 function transition(s, m) {
 	s = parseInt(s, 10); m = parseInt(m, 10);
-	if (s < 0 || s >= songs.length || m < 0 || m > 5) return;
+	if (s < 0 || s >= songs.length || m < 0 || m > 6) return;
 	opt(s).tr = m;
 	tailDirty = true;
 	saveStore();
@@ -2151,7 +2176,7 @@ function transition(s, m) {
 
 function transdefault(m) {
 	m = parseInt(m, 10);
-	if (m < 1 || m > 5) return;
+	if (m < 1 || m > 6) return;
 	trDefault = m;
 	autoStop = m == TR_LINK ? 0 : 1;
 	tailDirty = true;
@@ -2162,6 +2187,13 @@ function transdefault(m) {
 function landed() {
 	var q = queue;
 	queue = null;
+	if (q.hold) {
+		restoreQuant(q);
+		underEngage(q.song, songs[q.song].sections[q.sec].start, q.muted || []);
+		log("hold before " + songs[q.song].name + ": click and pad until it is released");
+		publishStruct();
+		return;
+	}
 	if (q.arrK != null && q.arrK >= 0) arrCur = { song: q.song, k: q.arrK, sec: q.sec };
 	if (q.medStart != null) { med = { i: q.medStart, k: q.medFirst || 0 }; lastEntered = q.song; applyTempo(q.song); }
 	else if (q.medK != null && med) med.k = q.medK;
@@ -2187,7 +2219,7 @@ function send() {
 		med ? med.i : -1, med ? med.k : -1, q && q.medK != null ? q.medK : (q && q.medStart != null ? 0 : -1),
 		padFree ? 1 : 0,
 		autoKeyNow(curSong),
-		under ? (under.go ? 2 : 1) : 0
+		under ? (under.go ? 2 : 1) : (medHold ? (medHold.rel ? 2 : 1) : 0)
 	];
 	var key = msg.slice(2).join(" ");
 	// the dashboard runs its own clock between messages: the time alone is sent 20 times a second
@@ -2626,7 +2658,8 @@ function autoTick() {
 			if (target && t >= rs) st.bpm = st.bpm + (target - st.bpm) * Math.min(1, (t - rs) / Math.max(0.001, sec.end - rs));
 		}
 	}
-	if (hasEv(s, "t")) {
+	if (jumpBpm) { /* the jump's tempo is in charge */ }
+	else if (hasEv(s, "t")) {
 		autoTempoOn[nm] = 1;
 		if (st.bpm && Math.abs(tempo - st.bpm) > 0.02) { setProp("tempo", st.bpm); tempo = st.bpm; }
 	} else if (autoTempoOn[nm]) {
@@ -2923,6 +2956,14 @@ function computePlan() {
 		}
 	}
 	if (!playing || curSong < 0 || cueMode == CUE_OFF) return null;
+	if (medHold && medHold.s == curSong && !queue) {
+		if (medHold.rel != 1) return null;
+		var hn = songs[curSong].sections[curSec + 1];
+		if (!hn) return null;
+		var htx = cleanCue(hn.name);
+		return { cueAt: medHold.b - 0.02, B: medHold.b, text: htx, natural: false, now: false, song: curSong, wrap: 1, src: songIdentityAt(curSong, hn.start),
+			key: "mhold|" + htx + "|" + medHold.at };
+	}
 	// the underscore says nothing until the song or a section is asked for; then it names it as always, and the click counts one whole bar
 	if (under) {
 		var us = songs[under.song], usec = under.go && under.cueOk && us ? us.sections[under.target] : null;
@@ -2936,6 +2977,7 @@ function computePlan() {
 	if (!sec) return null;
 	var B = sec.end, target = null, natural = false, now = false;
 
+	if (queue && queue.hold) return null;   // into a hold: nothing is said until it is released
 	if (queue) {
 		target = songs[queue.song] && songs[queue.song].sections[queue.sec];
 		natural = !!queue.contiguous;
@@ -2947,6 +2989,7 @@ function computePlan() {
 		return null;
 	} else {
 		var ho = handoverPlan(curSong);
+		if (ho && ho.mode == TR_HOLD) return null;   // nothing is said until the hold is released
 		if (ho && sec.start < ho.J - 0.001 && sec.end >= ho.J - 0.001) {
 			target = songs[ho.n].sections[ho.sec || 0];
 			natural = ho.natural;
@@ -4349,6 +4392,21 @@ function runJob() {
 		runDup(step);
 	} else if (step.type == "rmclips") {
 		rmClips(step.from, step.to);
+	} else if (step.type == "xppad") {
+		// the pad of a hold, cut to its bars, at its own speed
+		if (!step.created) {
+			step.created = 1;
+			trackApi.id = job.dest.xpcues;
+			try {
+				trackApi.call("create_audio_clip", step.file, step.pos);
+				var xpc = findClipAt(job.dest.xpcues, step.pos);
+				if (xpc) {
+					clipApi.id = xpc;
+					if (num(clipApi.get("warping"))) clipApi.set("warping", 0);
+					if (step.secs < num(clipApi.get("loop_end"))) { clipApi.set("loop_end", step.secs); try { clipApi.set("end_marker", step.secs); } catch (e) { } }
+				}
+			} catch (e) { log("export: " + step.name + " " + e.message); }
+		}
 	} else if (step.type == "xpcue") {
 		// a spoken cue as a clip at its own speed (no warp), on the export's cue track
 		if (!step.created) {
@@ -4589,6 +4647,15 @@ function printClips(a, b, guide, clickToo) {
 }
 
 // o: { what: "song" | "set", song, click, guide }
+// a pad recording for a key, to print under a hold (the folder comes from the host)
+var padDir = "";
+function paddir(d) { padDir = str(d); }
+var PAD_FILES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+
+// o: { what: "song" | "set", song, click, guide, pre }
+// A setlist is printed as it flows, song after song with their transitions;
+// each song then goes to its own file: the whole song, a few bars of the one
+// before it (o.pre: 4 or 8), the way into the next one and its first 4 bars.
 function exportStart(o) {
 	if (xp) { exportMsg("error", "busy"); return; }
 	if (job) { exportMsg("error", "busy"); return; }
@@ -4598,17 +4665,32 @@ function exportStart(o) {
 	else { var s0 = songIndex(String(o.song || "")); if (s0 >= 0) list.push(s0); }
 	list = list.filter(function (s) { return songs[s] && !clkOf(s); });
 	if (!list.length) { exportMsg("error", "nothing"); return; }
-	var bl = barLen(), guide = !!o.guide, clickToo = !!o.click;
+	var bl = barLen(), guide = !!o.guide, clickToo = !!o.click, pre = parseInt(o.pre, 10) == 8 ? 8 : 4, post = 4;
 	var last = songEndBeats();
-	var P = Math.ceil((last + 4 * bl) / bl - 1e-6) * bl, Q = P, T = 0, steps = [], n = 0, cueSteps = [], noCue = {};
+	var P = Math.ceil((last + 4 * bl) / bl - 1e-6) * bl, Q = P, T = 0, steps = [], n = 0, cueSteps = [], noCue = {}, padSteps = [], marks = [];
 	var lead = cueStyle ? 1 : cueBars;
 	for (var q = 0; q < list.length; q++) {
 		var s = list[q], pcs = printPieces(s);
 		if (!T && pcs.length) T = pcs[0].bpm || songBpm(s) || tempo;
-		if (q > 0) Q += bl;   // a bar of silence between songs
 		var sbl = meterBeats(songs[s].meter) || bl, prevHead = Q, prevSc = 1;
+		if (q > 0) {
+			// the way from the song before into this one, as its transition plays it
+			var pm = marks[q - 1], tm = trMode(list[q - 1]), gapBars = tm == TR_LINK || tm == TR_OVERLAP || tm == TR_XFADE ? 0 : tm == TR_HOLD ? 2 : 1;
+			var gap = gapBars * sbl * (T / (pcs.length ? pcs[0].bpm || T : T));
+			if (tm == TR_HOLD && gap > 0) {
+				var kp = keyParse(songs[s].key), ks = kp ? ((kp.root + (opt(s).semis || 0)) % 12 + 12) % 12 : -1;
+				if (ks >= 0 && padDir) padSteps.push({ type: "xppad", file: padDir + "/" + PAD_FILES[ks] + ".ogg", pos: Q, secs: gap * 60 / T, name: "pad " + PAD_FILES[ks] });
+			}
+			Q += gap;
+			pm.gapEnd = Q;
+		}
+		var mk = { s: s, name: songs[s].name, a: Q, b: Q, scA: 0, scB: 1, sbl: sbl };
+		marks.push(mk);
+		prevHead = Q;
 		for (var p = 0; p < pcs.length; p++) {
 			var pc = pcs[p], sc = T / (pc.bpm || T), under = printClips(pc.a, pc.b, guide, clickToo);
+			if (!mk.scA) mk.scA = sc;
+			mk.scB = sc;
 			// the cue of the block that starts here, said as SetPilot says it live: its bars before, never before the block before it
 			if (guide && pc.head && p > 0) {
 				var ctext = cleanCue(pc.name), cfile = cuePathFor(ctext, s);
@@ -4629,19 +4711,41 @@ function exportStart(o) {
 			}
 			Q += (pc.b - pc.a) * sc;
 		}
+		mk.b = Q;
 	}
 	if (!n) { exportMsg("error", "nothing"); return; }
+	// one file per song: the song, a few bars of the one before, the way into the next and its first bars
+	var ranges = [];
+	for (var r = 0; r < marks.length; r++) {
+		var m0 = marks[r], before = marks[r - 1], after = marks[r + 1];
+		var ra = before ? Math.max(before.a, before.b - pre * before.sbl * before.scB) : m0.a;
+		var rb = after ? Math.min(after.b, after.a + post * after.sbl * (after.scA || 1)) : m0.b;
+		ranges.push({ name: m0.name, a: Math.round(ra * 1000) / 1000, b: Math.round(rb * 1000) / 1000 });
+	}
 	var title = o.what == "set" ? "Setlist" : songs[list[0]].name;
-	xp = { P: P, Q: Q, T: T, title: title, guide: guide, click: clickToo, phase: "print",
+	xp = { P: P, Q: Q, T: T, title: title, guide: guide, click: clickToo, phase: "print", ranges: ranges, pre: pre,
 		saved: { tempo: tempo, loop: num(getProp("loop")), ls: num(getProp("loop_start")), ll: num(getProp("loop_length")), time: num(getProp("current_song_time")), clickOn: click.on } };
 	steps.unshift({ type: "tempo", bpm: T });
-	if (cueSteps.length) { steps.push({ type: "track", name: "SP Export Cues", key: "xpcues" }); steps = steps.concat(cueSteps); }
+	if (cueSteps.length || padSteps.length) { steps.push({ type: "track", name: "SP Export Cues", key: "xpcues" }); steps = steps.concat(padSteps, cueSteps); }
 	steps.push({ type: "xpready" });
 	job = { steps: steps, i: 0, P: P, dest: {}, title: title, savedTempo: xp.saved.tempo, warp: {}, xp: 1 };
 	exportMsg("start", title, steps.length, Math.round((Q - P) / bl));
 	var nc = Object.keys(noCue);
 	if (guide) log("export cues: " + cueSteps.length + " as clips" + (nc.length ? ", no recording for " + nc.join(", ") : ""));
-	log("export " + title + ": " + list.length + " song(s), " + n + " clips printed at bar " + (Math.round(P / bl) + 1) + ", " + Math.round((Q - P) / bl) + " bars at " + Math.round(T * 100) / 100 + " bpm" + (guide ? ", guide" : "") + (clickToo ? ", click" : ""));
+	log("export " + title + ": " + list.length + " song(s), " + n + " clips printed at bar " + (Math.round(P / bl) + 1) + ", " + Math.round((Q - P) / bl) + " bars at " + Math.round(T * 100) / 100 + " bpm" + (guide ? ", guide" : "") + (clickToo ? ", click" : "") +
+		(ranges.length > 1 ? "; files: " + ranges.map(function (x) { return x.name + " " + x.a + "-" + x.b; }).join(", ") : ""));
+}
+
+// the next file: its range on the loop brace and the playhead at its start
+function exportrange(i) {
+	if (!xp || !xp.ranges) return;
+	var r = xp.ranges[parseInt(i, 10)];
+	if (!r) return;
+	setProp("loop_start", r.a);
+	setProp("loop_length", r.b - r.a);
+	setProp("loop_start", r.a);
+	setProp("current_song_time", r.a);
+	exportMsg("range", parseInt(i, 10), r.a, r.b);
 }
 
 // the print is in place: the range goes on the loop brace, the Arrangement in front, Live's click stems and guide heard
@@ -4663,6 +4767,7 @@ function exportReady() {
 	xp.cueTrack = job && job.dest ? job.dest.xpcues || 0 : 0;
 	xp.phase = "ready";
 	job = null;
+	outlet(0, "exportmsg", "ranges", JSON.stringify(xp.ranges.map(function (r) { return { name: r.name, secs: Math.round((r.b - r.a) * 60 / xp.T) }; })));
 	exportMsg("ready", xp.title, Math.round((xp.Q - xp.P) / barLen()), Math.round((xp.Q - xp.P) * 60 / xp.T));
 }
 
@@ -4754,6 +4859,8 @@ function cuePathFor(text, s) {
 var under = null;   // { song, ids: [muted here], a, b, go, pad, loop: { on, ls, ll }, at }
 
 function underscore(on) {
+	// a medley's hold seam (and a hold between songs, which is an underscore) is released with the same button
+	if (medHold) { if (!medHold.rel) { medHold.rel = 1; armedKey = null; log("hold: released"); send(); } return; }
 	var want = on === undefined || on === "" ? !under : !!parseInt(on, 10);
 	if (under && !want) { underGo(); return; }
 	if (under || !want) return;
@@ -4763,15 +4870,27 @@ function underscore(on) {
 	if (s < 0 || s >= songs.length || !songs[s] || clkOf(s)) return;
 	if (!clickPresent()) { outlet(0, "notice", "undernoclick"); return; }
 	prepareSong(s);
+	underEngage(s, songs[s].start, []);
+	moveTo(under.a);
+	startFrom(under.a);
+	log("underscore for " + songs[s].name + ": click and pad, the band silent");
+	publishStruct();
+	send();
+}
+
+// click and pad on song s, going round the bar at a with the band silent (muted: tracks already muted for it)
+function underEngage(s, a, muted) {
 	var sg = songs[s], bl = meterBeats(sg.meter) || barLen();
-	var muted = [], list = songTrackIds(true);
+	muted = (muted || []).slice();
+	var list = songTrackIds(true);
 	for (var i = 0; i < list.length; i++) {
+		if (muted.indexOf(list[i].id) >= 0) continue;
 		trackApi.id = list[i].id;
 		if (num(trackApi.get("mute"))) continue;
 		trackApi.set("mute", 1);
 		muted.push(list[i].id);
 	}
-	under = { song: s, ids: muted, a: sg.start, b: sg.start + bl, go: 0, pad: 0, at: clock, started: 0,
+	under = { song: s, ids: muted, a: a, b: a + bl, go: 0, pad: 0, at: clock, started: playing ? 1 : 0,
 		loop: { on: num(getProp("loop")), ls: num(getProp("loop_start")), ll: num(getProp("loop_length")) } };
 	guard("tempo", applyTempo)(s);
 	applyClickMutes();
@@ -4781,11 +4900,6 @@ function underscore(on) {
 	setProp("loop", 1);
 	if (tailPresent() && !padFree) { padfree(1); under.pad = 1; }
 	armedKey = null;
-	moveTo(under.a);
-	startFrom(under.a);
-	log("underscore for " + sg.name + ": click and pad, the band silent");
-	publishStruct();
-	send();
 }
 
 // the song itself: from its start at the next bar line, or wherever a section was asked for
@@ -4885,4 +4999,85 @@ function underUnmute() {
 		try { trackApi.set("mute", 0); } catch (e) { }
 	}
 	under.ids = [];
+}
+
+// ------------------------------------------------------------------ tempo into a jump
+// A section asked for live: the tempo stays where it is (a ramp written into
+// a medley waits), and over the last two bars before the jump lands it moves
+// to the tempo of the section that comes, so the band arrives on it.
+var jumpBpm = 0;
+function sectionBpm(s, j, arrK) {
+	if (s < 0 || !songs[s] || !songs[s].sections[j]) return 0;
+	if (medOf(s)) return medTempoAt(s, songs[s].sections[j].start + 0.001, true);
+	if (hasEv(s, "t")) {
+		var L = playList(s), k = arrK != null && arrK >= 0 ? arrK : L.indexOf(j);
+		if (k >= 0) return evState(s, L, k).bpm || effTempo(s);
+	}
+	return effTempo(s);
+}
+
+function jumpTempoTick() {
+	var q = queue;
+	jumpBpm = 0;
+	if (!playing || !q || q.now || q.contiguous || q.handover || q.hold || q.medStart != null || med || under || pre || curSong < 0) return;
+	var cs = songs[curSong] && songs[curSong].sections[curSec];
+	if (!cs) return;
+	var L = q.landAt != null ? q.landAt : cs.end, bl = barLen(), w = 2 * bl;
+	if (!q.fired && q.landAt == null) q.landAt = L;
+	if (t < L - w - 0.001 || t >= L + 0.01) return;
+	var target = q.bpmTo || (q.bpmTo = sectionBpm(q.song, q.sec, q.arrK));
+	if (!(target > 0)) return;
+	if (q.bpmFrom == null) { q.bpmFrom = tempo; q.r0 = Math.max(t, L - w); }
+	if (Math.abs(target - q.bpmFrom) < 0.01) return;
+	var x = Math.max(0, Math.min(1, (t - q.r0) / Math.max(0.001, L - q.r0)));
+	jumpBpm = Math.round((q.bpmFrom + (target - q.bpmFrom) * x) * 100) / 100;
+	if (Math.abs(tempo - jumpBpm) > 0.009) { setProp("tempo", jumpBpm); tempo = jumpBpm; tempoOverridden = true; }
+}
+
+// ------------------------------------------------------------------ hold seam
+// A medley's "hold" bridge: one bar (in the next part's time signature) that
+// goes round with SetPilot's click and the pad in the next part's key, the
+// band silent, until the MD releases it. Then the next part is named on the
+// bar line, the click counts that bar, and the part comes in.
+var medHold = null;   // { s, a, b, rel: 0 holding | 1 released, counting the last bar | 2 going in, at, loop }
+
+function medHoldTick() {
+	if (medHold) {
+		var h = medHold;
+		if (!playing || curSong != h.s || t < h.a - 0.01 || t >= h.b + 0.01) { medHoldEnd(); return; }
+		if (h.rel == 1 && t < lastT - 0.25) { setProp("loop", 0); liveLoop = 0; h.rel = 2; send(); }
+		return;
+	}
+	if (!playing || curSong < 0 || under || pre || queue) return;
+	var md = medOf(curSong);
+	if (!md || !md.seams) return;
+	var S = songs[curSong].start, lead = (0.05 + writeLead) * tempo / 60;
+	for (var i = 0; i < md.seams.length; i++) {
+		var sm = md.seams[i];
+		if (sm.type != "hold" || !(sm.len > 0)) continue;
+		var a = S + sm.at, b = a + sm.len;
+		if (t < a - 0.01 || t >= b - lead) continue;
+		medHold = { s: curSong, a: a, b: b, rel: 0, at: clock, k: i,
+			loop: { on: num(getProp("loop")), ls: num(getProp("loop_start")), ll: num(getProp("loop_length")) } };
+		setProp("loop_start", a); setProp("loop_length", b - a); setProp("loop_start", a);
+		setProp("loop", 1);
+		liveLoop = 1;
+		armedKey = null;
+		log("hold in " + songs[curSong].name + ": click and pad until it is released");
+		send();
+		return;
+	}
+}
+
+function medHoldEnd() {
+	var h = medHold;
+	if (!h) return;
+	medHold = null;
+	try {
+		if (num(getProp("loop"))) setProp("loop", 0);
+		setProp("loop_start", h.loop.ls); setProp("loop_length", h.loop.ll); setProp("loop_start", h.loop.ls);
+	} catch (e) { }
+	liveLoop = 0;
+	armedKey = null;
+	send();
 }

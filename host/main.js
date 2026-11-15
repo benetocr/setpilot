@@ -84,9 +84,10 @@ function startHost({ log: logOut = console.log } = {}) {
 	maxApi.hear = cues => hearer.hear(cues);
 	maxApi.canHear = () => hearer.available();
 	// Live's Export window, opened on the printed arrangement
-	const { makeExportWindow, openAccessibilitySettings } = require("./export_window");
+	const { makeExportWindow, openAccessibilitySettings, reveal } = require("./export_window");
 	maxApi.exportOpen = makeExportWindow({ log });
 	maxApi.openAccessibility = openAccessibilitySettings;
+	maxApi.reveal = reveal;
 	audio.refresh().catch(() => {});
 
 	// ---------------------------------------------------------------- engine thread
@@ -99,6 +100,7 @@ function startHost({ log: logOut = console.log } = {}) {
 		if (!dir) continue;
 		try { const j = JSON.parse(fs.readFileSync(path.join(dir, "pads.json"), "utf8")); pads = { dir, list: j.pads }; break; } catch (e) { }
 	}
+	maxApi.padDir = pads ? pads.dir : "";
 	const worker = new Worker(path.join(__dirname, "engine_worker.js"), { workerData: { sab, bridgePort: port2, pads }, transferList: [port2] });
 	const toBridge = x => { port1.postMessage(x); Atomics.add(signal, 0, 1); Atomics.notify(signal, 0); };
 	let dictReq = 0, prepReq = 0;

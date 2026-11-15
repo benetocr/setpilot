@@ -1761,3 +1761,6 @@ html[data-layout="console"] .act-auto { display: none; }
 .xp-msg kbd { font: inherit; font-weight: 600; padding: 1px 6px; border-radius: 6px; border: 1px solid currentColor; opacity: .9; }
 .xp-acts { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .setlist-head .icon-btn.small { width: 32px; height: 32px; align-self: center; margin-left: 8px; }
+
+.wz-rampbars { display: flex; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+.wz-rampbars span { font-size: 13px; color: var(--dim); }

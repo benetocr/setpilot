@@ -417,9 +417,10 @@
     2: '<svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>',
     3: '<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
     4: '<svg viewBox="0 0 24 24"><rect x="3" y="7" width="11" height="10" rx="2"/><rect x="10" y="7" width="11" height="10" rx="2"/></svg>',
-    5: '<svg viewBox="0 0 24 24"><path d="M3 6c7 0 11 12 18 12"/><path d="M3 18c7 0 11-12 18-12"/></svg>'
+    5: '<svg viewBox="0 0 24 24"><path d="M3 6c7 0 11 12 18 12"/><path d="M3 18c7 0 11-12 18-12"/></svg>',
+    6: '<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>'
   };
-  var TR_KEY = { 1: "trCue", 2: "trStay", 3: "trLink", 4: "trOverlap", 5: "trXfade" };
+  var TR_KEY = { 1: "trCue", 2: "trStay", 3: "trLink", 4: "trOverlap", 5: "trXfade", 6: "trHold" };
   function trEff(s) { return (s && s.trEff) || (struct && struct.trDefault) || 1; }
   function tailMissing(m) { return (m === 4 || m === 5) && !(struct && struct.companions && struct.companions.tail); }
   function transChip(i) {
@@ -446,7 +447,7 @@
     var i = +$("trSheet").dataset.i, s = songs()[i];
     if (!s) return;
     var html = trOption(0, !s.tr);
-    for (var m = 1; m <= 5; m++) html += trOption(m, s.tr === m, tailMissing(m) ? '<span class="tag">!</span>' : "");
+    for (var m = 1; m <= 6; m++) html += trOption(m, s.tr === m, tailMissing(m) ? '<span class="tag">!</span>' : "");
     $("trList").innerHTML = html;
     var m2 = trEff(s), nx = nextSongIdx(i);
     $("trNote").textContent = nx < 0 ? T("trLast") : (tailMissing(m2) ? T("trNeedsTail") : "");
@@ -465,7 +466,7 @@
   });
   function renderTrDefault() {
     var d = (struct && struct.trDefault) || 1, html = "";
-    for (var m = 1; m <= 5; m++) html += trOption(m, d === m, tailMissing(m) ? '<span class="tag">!</span>' : "");
+    for (var m = 1; m <= 6; m++) html += trOption(m, d === m, tailMissing(m) ? '<span class="tag">!</span>' : "");
     $("optTrDefault").innerHTML = html;
   }
 
@@ -1247,8 +1248,8 @@
   // the medley a song of its own at the end of the arrangement (see the
   // engine's medBuild), so Live plays it straight through.
   var WZ_COST = [0, 1, 2.5, 5, 8, 13, 18];
-  var WZ_SEAMS = ["cut", "ant", "pivot", "ramp", "count"];
-  var WZ_SEAM_BARS = { cut: 0, ant: 0, ramp: 0, pivot: 2, count: 2 };
+  var WZ_SEAMS = ["cut", "ant", "pivot", "ramp", "count", "hold"];
+  var WZ_SEAM_BARS = { cut: 0, ant: 0, ramp: 0, pivot: 2, count: 2, hold: 1 };
   var WZ_GREEN = "#5be49b", WZ_AMBER = "#ffb547", WZ_RED = "#ff6b6b";
   var WZ_SONGC = ["#4cd6f5", "#c9a7ff", "#8bd45f", "#f2b441", "#f45b84", "#6f8dff"];
   var wiz = { open: false };
@@ -1369,7 +1370,7 @@
     var seams = [];
     for (var i = 0; i + 1 < parts.length; i++) {
       var auto = wzSeamAuto(parts[i], parts[i + 1]);
-      seams.push({ i: i, auto: auto, type: wiz.seamType[i] || auto });
+      seams.push({ i: i, auto: auto, type: wiz.seamType[i] || auto, bars: (wiz.seamBars || {})[i] || 4 });
     }
     var secs = 0;
     parts.forEach(function (p) { secs += p.bars * barLen() * 60 / p.tempo; });
@@ -1379,7 +1380,7 @@
 
   function wizReset() {
     wiz = { open: true, id: "", legacy: "", step: 1, picked: [], blocks: null, lift: {}, keyFix: {}, key: null, tempoMode: null, tempo: null,
-      seamType: {}, sel: { kind: "part", i: 0 }, magic: false, building: false, built: "", builtKey: "", delArmed: false };
+      seamType: {}, seamBars: {}, sel: { kind: "part", i: 0 }, magic: false, building: false, built: "", builtKey: "", delArmed: false };
   }
 
   // a new medley (mi < 0) or one made with the old wizard (mi >= 0): its songs and sections come along
@@ -1406,7 +1407,8 @@
     if (!sg || !sg.med) return;
     wizReset();
     var sp = (sg.med.spec && sg.med.spec.ui) || {};
-    ["picked", "blocks", "lift", "keyFix", "key", "tempoMode", "tempo", "seamType"].forEach(function (k) { if (sp[k] !== undefined) wiz[k] = JSON.parse(JSON.stringify(sp[k])); });
+    wiz.seamBars = {};
+    ["picked", "blocks", "lift", "keyFix", "key", "tempoMode", "tempo", "seamType", "seamBars"].forEach(function (k) { if (sp[k] !== undefined) wiz[k] = JSON.parse(JSON.stringify(sp[k])); });
     wiz.picked = wiz.picked.filter(function (n) { return wzSongByName(n) >= 0; });
     wiz.id = sg.med.id;
     wiz.built = sg.name;
@@ -1433,7 +1435,7 @@
   });
 
   function wzSig() {
-    return JSON.stringify([wiz.picked, wiz.blocks, wiz.lift, wiz.keyFix, wiz.key, wiz.tempoMode, wiz.tempo, wiz.seamType, $("wizName").value.trim()]);
+    return JSON.stringify([wiz.picked, wiz.blocks, wiz.lift, wiz.keyFix, wiz.key, wiz.tempoMode, wiz.tempo, wiz.seamType, wiz.seamBars || {}, $("wizName").value.trim()]);
   }
   function wzRender() {
     if (!wiz.open) return;
@@ -1544,7 +1546,7 @@
   }
 
   // ---------- step 3: the route and its joins
-  var WZ_SEAM_IC = { cut: '<path d="M12 4v16M5 12h4M15 12h4"/>', ant: '<path d="M13 6l-6 6 6 6M7 12h12"/>', pivot: '<path d="M3 15c2-6 4-6 6 0s4 6 6 0 4-6 6 0"/>', count: '<path d="M3 15c2-6 4-6 6 0s4 6 6 0 4-6 6 0"/>', ramp: '<path d="M3 18h5l8-12h5"/>' };
+  var WZ_SEAM_IC = { cut: '<path d="M12 4v16M5 12h4M15 12h4"/>', ant: '<path d="M13 6l-6 6 6 6M7 12h12"/>', pivot: '<path d="M3 15c2-6 4-6 6 0s4 6 6 0 4-6 6 0"/>', count: '<path d="M3 15c2-6 4-6 6 0s4 6 6 0 4-6 6 0"/>', ramp: '<path d="M3 18h5l8-12h5"/>', hold: '<path d="M8 5v14M16 5v14"/>' };
   // every section of every song in the set, to add anywhere in the medley
   function wzPalette(title) {
     var list = order().filter(function (i) { return !isMed(i) && songs()[i] && !songs()[i].med; });
@@ -1603,7 +1605,9 @@
       var canListen = wiz.built && wiz.builtKey === wzSig();
       insp = '<section class="wz-panel wz-insp"><div class="wz-ia"><h2>' + esc(A.info.name + " → " + B.info.name) + '</h2><p class="wz-advice">' + esc(why.length ? T("medWhy", { what: why.join(T("medAnd")), s: T("medSeam_" + S.auto) }) : T("medWhySame")) + '</p><div class="wz-opts" role="radiogroup">' +
         WZ_SEAMS.map(function (t) { var on = S.type === t; return '<button type="button" role="radio" class="wz-opt' + (on ? " on" : "") + '" data-act="seamtype" data-arg="' + S.i + "|" + t + '" aria-checked="' + on + '"><b>' + esc(T("medSeam_" + t)) + (t === S.auto ? " · " + esc(T("medSuggested")) : "") + "</b><small>" + esc(T("medSeamD_" + t)) + "</small></button>"; }).join("") +
-        "</div>" + (A.info.meter !== B.info.meter ? '<p class="wz-sub wz-meternote">' + esc(WZ_SEAM_BARS[S.type] ? T("medMeterCount", { n: WZ_SEAM_BARS[S.type], m: B.info.meter, song: B.info.name }) : T("medMeterCut", { m: B.info.meter, song: B.info.name, n: WZ_SEAM_BARS.count })) + "</p>" : "") +
+        "</div>" + (S.type === "ramp" ? '<div class="wz-rampbars"><span>' + esc(T("medRampBars")) + '</span><div class="seg-ctl small" role="radiogroup">' + [1, 2, 4, 8].map(function (n) { return '<button type="button" role="radio" data-act="rampbars" data-arg="' + S.i + "|" + n + '" aria-checked="' + (S.bars === n) + '">' + n + "</button>"; }).join("") + "</div></div>" : "") +
+        (S.type === "hold" ? '<p class="wz-sub">' + esc(T("medHoldNote")) + "</p>" : "") +
+        (A.info.meter !== B.info.meter ? '<p class="wz-sub wz-meternote">' + esc(WZ_SEAM_BARS[S.type] ? T("medMeterCount", { n: WZ_SEAM_BARS[S.type], m: B.info.meter, song: B.info.name }) : T("medMeterCut", { m: B.info.meter, song: B.info.name, n: WZ_SEAM_BARS.count })) + "</p>" : "") +
         '</div><div class="wz-ib2"><h2>' + esc(T("medListen")) + '</h2><p class="wz-sub">' + esc(canListen ? T("medListenSub", { key: KEYS[M.K] }) : T("medListenBuild")) + '</p><button type="button" class="wz-play" data-act="listen" data-arg="' + S.i + '"' + (canListen ? "" : " disabled") + '><svg viewBox="0 0 24 24"><path d="M7 5v14l12-7z"/></svg>' + esc(T("medListenBtn")) + "</button></div></section>";
     }
     return '<div class="wz-s3"><div class="wz-head3"><div><h2>' + esc(T("medRouteTitle")) + '</h2><p class="wz-sub">' + esc(T("medRouteSub")) + '</p></div><p class="wz-sum"><b>' + KEYS[M.K] + "</b> " + esc(T("medKey").toLowerCase()) + " · <b>" + esc(M.mode === "one" ? M.T + " BPM" : T("medTempoOwnShort")) + "</b> · <b>" + M.seams.length + "</b> " + esc(T(M.seams.length === 1 ? "medJoin1" : "medJoins")) + "</p></div>" +
@@ -1658,6 +1662,7 @@
     } else if (act === "lift") {
       var sp3 = arg.split("|"); wiz.lift[+sp3[0]] = (wiz.lift[+sp3[0]] || 0) + (+sp3[1]); wiz.seamType = {};
     } else if (act === "seamtype") { var sp4 = arg.split("|"); wiz.seamType[+sp4[0]] = sp4[1]; }
+    else if (act === "rampbars") { var sp5 = arg.split("|"); wiz.seamBars = wiz.seamBars || {}; wiz.seamBars[+sp5[0]] = +sp5[1]; }
     else if (act === "listen") { var si = wzSongByName(wiz.built); if (si >= 0) send("medlisten", si, +arg); return; }
     wzRender();
   });
@@ -1683,8 +1688,8 @@
     var keyName = KEYS[M.K];
     var medley = { id: wiz.id || ("m" + Date.now().toString(36)), name: name, key: keyName,
       parts: M.parts.map(function (p) { return { song: p.info.name, secs: p.idx, semis: p.semis, bpm: p.tempo, key: p.keyText }; }),
-      seams: M.seams.map(function (s) { return { type: s.type }; }),
-      ui: { picked: wiz.picked, blocks: wzBlocks(), lift: wiz.lift, keyFix: wiz.keyFix, key: M.K, tempoMode: M.mode, tempo: wiz.tempo, seamType: wiz.seamType } };
+      seams: M.seams.map(function (s) { return s.type === "ramp" ? { type: s.type, bars: s.bars } : { type: s.type }; }),
+      ui: { picked: wiz.picked, blocks: wzBlocks(), lift: wiz.lift, keyFix: wiz.keyFix, key: M.K, tempoMode: M.mode, tempo: wiz.tempo, seamType: wiz.seamType, seamBars: wiz.seamBars || {} } };
     wiz.id = medley.id;
     // a new medley goes into the setlist right before its first song
     var at = -1;
@@ -2052,7 +2057,16 @@
   function xpPick(v) {
     xpS.what = v;
     [].forEach.call($("xpWhat").children, function (b) { b.setAttribute("aria-checked", String(b.dataset.v === v)); });
+    $("xpPreRow").hidden = v !== "set";
+    $("xpHelpText").textContent = T(v === "set" ? "xpHelpSet" : "xpHelp");
   }
+  xpS.pre = 4;
+  $("xpPre").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    xpS.pre = +b.dataset.v;
+    [].forEach.call($("xpPre").children, function (x) { x.setAttribute("aria-checked", String(x === b)); });
+  });
   $("xpWhat").addEventListener("click", function (e) { var b = e.target.closest("button"); if (b && !b.disabled) xpPick(b.dataset.v); });
   function xpShow(msg, opts) {
     opts = opts || {};
@@ -2062,6 +2076,8 @@
     $("xpBar").hidden = opts.frac == null;
     if (opts.frac != null) $("xpFill").style.transform = "scaleX(" + Math.max(0.04, Math.min(1, opts.frac)) + ")";
     $("xpDone").hidden = !opts.done;
+    $("xpDone").textContent = opts.doneLabel || T("xpDone");
+    xpS.next = !!opts.next;
     $("xpPrefs").hidden = !opts.prefs;
     $("xpCancel").hidden = !!opts.noCancel;
   }
@@ -2069,19 +2085,25 @@
   function xpKeys() { return XP_SHORTCUTS.replace("{then}", esc(T("xpThen"))); }
   function onExport(x) {
     if (!x || !x.phase) return;
-    var ph = x.phase;
+    var ph = x.phase, of = x.b > 1 ? T("xpOf", { i: x.a, n: x.b, song: x.c }) : "";
+    var frac = x.b > 0 && +x.a > 0 ? (+x.a - 0.5) / +x.b : null;
     if (ph === "start") { xpS.busy = true; xpShow(esc(T("xpPrinting")), { frac: 0.04 }); }
     else if (ph === "progress") { xpS.busy = true; xpShow(esc(T("xpPrinting")), { frac: (+x.a || 0) / Math.max(1, +x.b || 1) }); }
-    else if (ph === "ready" || ph === "opening") xpShow(esc(T("xpOpening")));
-    else if (ph === "open") xpShow(esc(T("xpOpen")) + (x.c ? " <small>(" + esc(fmtLen(+x.c)) + ")</small>" : ""), { done: true });
-    else if (ph === "denied") xpShow(esc(T("xpDenied")) + "<br><br>" + esc(T("xpByHand")).replace("{keys}", xpKeys()), { done: true, prefs: true });
-    else if (ph === "noopen" || ph === "manual" || ph === "failed" || ph === "nolive") xpShow(esc(T("xpByHand")).replace("{keys}", xpKeys()), { done: true });
-    else if (ph === "clean") {
+    else if (ph === "ready") xpShow(esc(T("xpOpening")));
+    else if (ph === "file" || ph === "opening" || ph === "open" || ph === "saving" || ph === "rendering")
+      xpShow((of ? "<b>" + esc(of) + "</b><br>" : "") + esc(T(ph === "rendering" ? "xpRendering" : ph === "saving" ? "xpSaving" : "xpWorking")), { frac: frac });
+    else if (ph === "filemanual" || ph === "manual" || ph === "noopen" || ph === "failed" || ph === "nolive")
+      xpShow((of ? "<b>" + esc(of) + "</b><br>" : "") + esc(T("xpByHandFile")).replace("{keys}", xpKeys()), { frac: frac, done: true, doneLabel: x.b > 1 && x.a < x.b ? T("xpNext") : T("xpDone"), next: x.b > 1 });
+    else if (ph === "denied") xpShow(esc(T("xpDenied")) + "<br><br>" + (of ? "<b>" + esc(of) + "</b><br>" : "") + esc(T("xpByHandFile")).replace("{keys}", xpKeys()), { done: true, prefs: true, doneLabel: x.b > 1 && x.a < x.b ? T("xpNext") : T("xpDone"), next: x.b > 1 });
+    else if (ph === "files") {
+      xpS.filesMsg = T(+x.b === 1 ? "xpFiles1" : "xpFiles", { n: x.b, folder: String(x.a).split("/").slice(-2).join("/") }) + (x.mp3 === 0 ? " " + T("xpNoMp3") : "");
+    } else if (ph === "clean") {
       var was = xpS.busy;
       xpS.busy = false;
       $("xpSheet").hidden = true;
       $("xpForm").hidden = false; $("xpRun").hidden = true;
-      if (was && x.a !== "cancel") showToast(T("xpClean"));
+      if (was && x.a !== "cancel") showToast(xpS.filesMsg || T("xpClean"));
+      xpS.filesMsg = "";
     } else if (ph === "error") {
       xpS.busy = false;
       $("xpForm").hidden = false; $("xpRun").hidden = true;
@@ -2094,12 +2116,12 @@
   $("xpGo").addEventListener("click", function () {
     xpS.busy = true;
     xpShow(esc(T("xpPrinting")), { frac: 0.04 });
-    postJson("/export", { action: "start", what: xpS.what, song: xpS.song, guide: $("xpGuide").checked, click: $("xpClick").checked })
+    postJson("/export", { action: "start", what: xpS.what, song: xpS.song, guide: $("xpGuide").checked, click: $("xpClick").checked, pre: xpS.pre })
       .then(function (r) { if (!r.ok) { xpS.busy = false; $("xpForm").hidden = false; $("xpRun").hidden = true; showToast(T("xpErr_busy"), true); } })
       .catch(function () { });
   });
   $("xpCancel").addEventListener("click", function () { postJson("/export", { action: "cancel" }).catch(function () { }); });
-  $("xpDone").addEventListener("click", function () { postJson("/export", { action: "done" }).catch(function () { }); });
+  $("xpDone").addEventListener("click", function () { postJson("/export", { action: xpS.next ? "next" : "done" }).catch(function () { }); });
   $("xpPrefs").addEventListener("click", function () { postJson("/export", { action: "prefs" }).catch(function () { }); });
   $("xpClose").addEventListener("click", function () { $("xpSheet").hidden = true; });
   $("xpSheet").addEventListener("click", function (e) { if (e.target === $("xpSheet")) $("xpSheet").hidden = true; });

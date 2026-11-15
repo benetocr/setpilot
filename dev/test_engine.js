@@ -924,6 +924,53 @@ test("underscore: a chosen section is named and counted, then Live goes there wi
 	assert.strictEqual(u.pos().playing, 0);
 });
 
+test("a jump to a section in another tempo: the tempo holds, then moves over the last two bars and lands on it", () => {
+	const t = setup();
+	t.cmd("playsong", 0);                        // Grande y Fiel, 72
+	t.until(p => p.t > 20);                      // in Verso 1 (16..48)
+	assert.strictEqual(t.song.props.tempo, 72);
+	t.cmd("section", 1, 2, 0);                   // Cielo Abierto's Verso (128)
+	t.until(p => p.t >= 39.5);
+	assert.strictEqual(t.song.props.tempo, 72, "holds until two bars before");
+	t.until(p => p.t >= 44);
+	assert.ok(t.song.props.tempo > 90 && t.song.props.tempo < 110, "half way at 44: " + t.song.props.tempo);
+	t.until(p => p.song === 1 && p.t >= 272.5);
+	assert.strictEqual(t.song.props.tempo, 128);
+	// the same song, same tempo: nothing moves
+	const u = setup();
+	u.cmd("playsong", 0);
+	u.until(p => p.t > 20);
+	u.cmd("section", 0, 5, 0);
+	u.until(p => p.t >= 46);
+	assert.strictEqual(u.song.props.tempo, 72);
+});
+
+test("hold between songs: the next song's first bar goes round with click and pad, silent, until released", () => {
+	const t = setup({ tail: true });
+	t.cmd("transition", 0, 6);
+	t.cmd("cuefile", "Intro", "/sim/intro.wav");
+	t.cmd("section", 0, 7, 0);                   // Final (208..232)
+	t.run(200);
+	t.cmd("play");
+	t.until(p => p.song === 1 && p.t >= 256.2, 60000);
+	t.run(200);
+	const drums = t.song.tracks.find(x => x.name === "Drums");
+	assert.strictEqual(drums.mute, 1, "silent");
+	assert.deepStrictEqual([t.song.props.loop, t.song.props.loop_start, t.song.props.loop_length], [1, 256, 4]);
+	assert.strictEqual(t.song.props.tempo, 128, "the next song's tempo");
+	assert.strictEqual(t.song.clickParams.on, 1, "the click goes on");
+	assert.ok(t.song.tailLog.some(m => m[0] === "pad" && m[1] === -1 && m[2] === 2), "pad in D: " + JSON.stringify(t.song.tailLog.slice(-3)));
+	assert.ok(!t.song.audio.played.length, "nothing said while it goes round: " + JSON.stringify(t.song.audio.played.map(x => [t.song.audio.preload[x[0]], x[1]])));
+	t.run(6000);
+	assert.ok(t.pos().t >= 256 && t.pos().t < 260 && t.pos().playing === 1);
+	// released: named on the bar line, a bar of click, then the song
+	t.cmd("underscore");
+	t.until(p => p.t >= 260.5, 30000);
+	assert.strictEqual(drums.mute, 0, "the band is in");
+	assert.strictEqual(t.song.props.loop, 0);
+	assert.ok(t.song.audio.played.some(x => t.song.audio.preload[x[0]] === "/sim/intro.wav"), "Intro is named");
+});
+
 test("count-in survives Live starting from its own selection first", () => {
 	for (const sel of [10, 100]) {
 		const t = setup();

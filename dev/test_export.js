@@ -52,7 +52,7 @@ fs.mkdirSync(BANK, { recursive: true });
 	const events = [];
 	let bad = 0;
 	const ok = m => console.log("ok   " + m);
-	const waitFor = async (phase, ms = 30000) => { for (let i = 0; i < ms / 100; i++) { if (events.some(e => e.phase === phase)) return true; await sleep(100); } return false; };
+	const waitFor = async (phase, ms = 30000) => { for (let i = 0; i < ms / 100; i++) { if (events.some(e => e.phase === phase || (phase === "open" && e.open))) return true; await sleep(100); } return false; };
 	try {
 		for (let i = 0; i < 100; i++) { try { if ((await get("/state")).struct.songs.length === 2) break; } catch (e) { } await sleep(100); }
 		http.get({ host: "127.0.0.1", port: PORT, path: "/events" }, r => { r.setEncoding("utf8"); let ev = ""; r.on("data", d => { for (const line of d.split("\n")) { if (line.startsWith("event: ")) ev = line.slice(7); else if (line.startsWith("data: ") && ev === "export") events.push(JSON.parse(line.slice(6))); } }); });
@@ -98,7 +98,7 @@ fs.mkdirSync(BANK, { recursive: true });
 		assert.ok(await waitFor("clean"), "cleaned after the window closed");
 		await sleep(600);
 		const after = (await get("/state")).pos;
-		assert.ok(/export closed: print removed/.test(engineLog()));
+		assert.ok(/export (done|closed): print removed/.test(engineLog()));
 		assert.strictEqual(Math.round(after.tempo), Math.round(before.tempo));
 		assert.ok(Math.abs(after.t - before.t) < 0.01, "playhead back: " + after.t + " vs " + before.t);
 		assert.strictEqual((await get("/state")).struct.songs.length, 2);
@@ -114,19 +114,29 @@ fs.mkdirSync(BANK, { recursive: true });
 		await post("/cmd", { cmd: "stop", args: [] });
 		ok("no export while playing");
 
-		// the whole setlist: both songs, the second (128 bpm) fitted to the first one's tempo
+		// the whole setlist: printed as it flows (the second song, 128 bpm, fitted to the first one's tempo),
+		// then one file per song: the song, 4 bars of the one before, the way into the next and its first 4 bars
 		await sleep(600);
 		events.length = 0;
 		assert.ok((await post("/export", { action: "start", what: "set", guide: true, click: true })).ok);
 		assert.ok(await waitFor("open"), JSON.stringify(events.slice(-3)));
 		const sl = engineLog().split("\n").filter(l => /export Setlist:/.test(l)).pop() || "";
 		assert.ok(/2 song\(s\)/.test(sl) && /at 72 bpm/.test(sl), sl);
-		// 216 beats, a bar of silence, then Cielo Abierto's 208 beats at 72/128
-		const lv2 = await dumpLive();
-		assert.ok(Math.abs(lv2.loop_length - (216 + 4 + 208 * 72 / 128)) < 0.01, "loop " + lv2.loop_length);
+		const f1 = events.find(e => e.phase === "file");
+		assert.deepStrictEqual([f1.a, f1.b, f1.c], [1, 2, "Grande y Fiel"]);
+		// Grande y Fiel's 216 beats, then (Cue Next Song) a bar of Cielo Abierto, 4 beats at 128 = 2.25 at 72, and its first 4 bars
+		let lv2 = await dumpLive();
+		assert.deepStrictEqual([lv2.loop_start, Math.round(lv2.loop_length * 100) / 100], [480, 227.25], "file 1: " + lv2.loop_start + " + " + lv2.loop_length);
+		events.length = 0;
+		closeIt();
+		assert.ok(await waitFor("open"), "file 2 opens");
+		assert.deepStrictEqual(events.filter(e => e.phase === "file").map(e => [e.a, e.c]).slice(0, 1), [[2, "Cielo Abierto"]]);
+		lv2 = await dumpLive();
+		// 4 bars of Grande y Fiel before it, then the bar between, then the whole song
+		assert.deepStrictEqual([lv2.loop_start, Math.round(lv2.loop_length * 100) / 100], [680, 135.25], "file 2: " + lv2.loop_start + " + " + lv2.loop_length);
 		closeIt();
 		assert.ok(await waitFor("clean"));
-		ok("the setlist prints song after song at one tempo");
+		ok("the setlist goes out one file per song, each with the bars around it");
 
 		// with cues: SetPilot's own, from the bank, as clips before each block (Spanish names find the English recordings)
 		await sleep(600);
@@ -147,6 +157,34 @@ fs.mkdirSync(BANK, { recursive: true });
 		assert.ok(!lv4.tracks.find(t => t.name === "SP Export Cues"), "the cue track is gone");
 		assert.strictEqual(lv4.tracks.length, lv.tracks.length);
 		ok("the cues are the bank's, placed a bar before each block, and their track goes away");
+
+		// SetPilot drives Live's windows: each song's file lands in the export folder with its own name;
+		// a hold between the songs is two bars of the next song's pad
+		await sleep(600);
+		await post("/cmd", { cmd: "transition", args: [0, 6] });
+		await sleep(300);
+		maxApi.exportOpen = (onState, opt) => {
+			let stopped = false;
+			setTimeout(() => !stopped && onState("open"), 100);
+			setTimeout(() => {
+				if (stopped) return;
+				for (const ext of [".mp3", ".aif"]) fs.writeFileSync(path.join(opt.folder, opt.name + ext), "x");
+				onState("done", { files: [".mp3", ".aif"].map(e => path.join(opt.folder, opt.name + e)) });
+			}, 400);
+			return { stop: () => { stopped = true; } };
+		};
+		events.length = 0;
+		assert.ok((await post("/export", { action: "start", what: "set", guide: false, click: false, pre: 8 })).ok);
+		assert.ok(await waitFor("files", 60000), JSON.stringify(events.slice(-3)));
+		const fe = events.find(e => e.phase === "files");
+		assert.deepStrictEqual(fs.readdirSync(fe.a).sort(), ["01 Grande y Fiel.mp3", "02 Cielo Abierto.mp3"]);
+		assert.ok(/SetPilot Exports\/Setlist /.test(fe.a), fe.a);
+		const hl = engineLog().split("\n").filter(l => /export Setlist:/.test(l)).pop() || "";
+		// two bars of hold (8 beats at 128 = 4.5 at 72); 8 bars of the song before
+		assert.ok(/Grande y Fiel 480-709\.5/.test(hl) && /Cielo Abierto 664-/.test(hl), hl);
+		assert.ok(!/export: pad/.test(engineLog()), "the pad went in");
+		assert.ok(await waitFor("clean"));
+		ok("each song's file is named and kept; the extra AIFF goes; a hold is the next song's pad");
 		console.log("\nall passing");
 	} catch (e) { bad++; console.log("FAIL " + e.message + "\n" + logs.slice(-15).join("\n") + "\n" + liveOut.slice(-1500) + "\n" + engineLog().split("\n").slice(-25).join("\n")); }
 	if (process.env.XP_KEEP) console.log(engineLog().split("\n").filter(l => /export|warp|duplicate|clip end/.test(l)).join("\n"));

@@ -472,7 +472,10 @@ function start(engine) {
 				try {
 					const o = JSON.parse(body || "{}");
 					if (o.action === "start" && (o.what === "set" || (o.what === "song" && o.song))) {
-						engine.exportCmd({ what: o.what, song: String(o.song || ""), click: !!o.click, guide: !!o.guide });
+						engine.exportCmd({ what: o.what, song: String(o.song || ""), click: !!o.click, guide: !!o.guide, pre: Number(o.pre) === 8 ? 8 : 4 });
+						out = { ok: true };
+					} else if (o.action === "next") {
+						engine.exportNext();
 						out = { ok: true };
 					} else if (o.action === "cancel" || o.action === "done") {
 						engine.exportCancel(o.action);
@@ -606,7 +609,7 @@ if (maxApi) {
 	writeLog("server starting, node", process.version);
 	let localUrl = `http://localhost:${BASE_PORT}`;
 	let lastStoreJson = null;
-	let exportWatch = null;
+	let exportWatch = null, xpRun = null;
 	const srv = start({
 		send(cmd, args) { maxApi.outlet("js", cmd, ...args); },
 		medley(o) {
@@ -614,10 +617,16 @@ if (maxApi) {
 			maxApi.outlet("js", "medleyjson", JSON.stringify(o));
 		},
 		restore(json) { maxApi.outlet("js", "restore", json); },
-		exportCmd(o) { maxApi.outlet("js", "exportjson", JSON.stringify(Object.assign({ action: "start" }, o))); },
+		exportCmd(o) {
+			if (maxApi.padDir) maxApi.outlet("js", "paddir", maxApi.padDir);
+			xpRun = null;
+			maxApi.outlet("js", "exportjson", JSON.stringify(Object.assign({ action: "start" }, o)));
+		},
+		exportNext() { if (xpRun && xpRun.manual) xpNextFile(true); },
 		openAccessibility() { if (maxApi.openAccessibility) maxApi.openAccessibility(); },
 		exportCancel(why) {
 			if (exportWatch) { exportWatch.stop(); exportWatch = null; }
+			xpRun = null;
 			maxApi.outlet("js", "exportjson", JSON.stringify({ action: "clean", why: why === "done" ? "done" : "cancel" }));
 		},
 		audioInfo() { return maxApi.audioInfo ? maxApi.audioInfo() : null; },
@@ -883,19 +892,92 @@ if (maxApi) {
 	maxApi.addHandler("cuefired", () => {});
 	maxApi.addHandler("importmsg", (...args) => srv.setImport(args));
 	// the print is in place: open Live's Export window on it, and clean up when it closes
+	// The print is in place: one file per song (or one), each through Live's Export
+	// window, which SetPilot drives (Export, the name, the folder, Save). Files go to
+	// Music/SetPilot Exports/<title> <date>, named "01 Song.mp3"; the extra AIFF or
+	// WAV Live writes next to an MP3 goes away. When SetPilot can't drive the
+	// window (no permission, a window it doesn't know), the user exports each file
+	// and SetPilot moves on when the window closes.
+	function xpFolder(title) {
+		const { typeable } = require("../host/export_window.js");
+		const d = new Date(), pad = n => String(n).padStart(2, "0");
+		const dir = path.join(require("os").homedir(), "Music", "SetPilot Exports", typeable(title) + " " + d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + "." + pad(d.getMinutes()));
+		try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { writeLog("export folder: " + e.message); }
+		return dir;
+	}
+	function xpFinish(why) {
+		const run = xpRun;
+		xpRun = null;
+		if (exportWatch) { exportWatch.stop(); exportWatch = null; }
+		maxApi.outlet("js", "exportjson", JSON.stringify({ action: "clean", why }));
+		if (run && run.saved.length) {
+			srv.setExport({ phase: "files", a: run.folder, b: run.saved.length, c: run.files.length, mp3: run.nomp3 ? 0 : 1 });
+			if (maxApi.reveal) maxApi.reveal(run.folder);
+		}
+	}
+	function xpNextFile(skip) {
+		const run = xpRun;
+		if (!run) return;
+		if (skip) run.i++;
+		if (exportWatch) { exportWatch.stop(); exportWatch = null; }
+		if (run.i >= run.files.length) { xpFinish("done"); return; }
+		const i = run.i, f = run.files[i], multi = run.files.length > 1;
+		const nice = (multi ? String(i + 1).padStart(2, "0") + " " : "") + f.name;
+		maxApi.outlet("js", "exportrange", i);
+		srv.setExport({ phase: run.manual ? "filemanual" : "file", a: i + 1, b: run.files.length, c: f.name, secs: f.secs });
+		setTimeout(() => {
+			if (xpRun !== run || run.i !== i) return;
+			exportWatch = maxApi.exportOpen((state, extra) => {
+				if (xpRun !== run || run.i !== i) return;
+				writeLog("export file " + (i + 1) + "/" + run.files.length + ": " + state);
+				if (state === "denied" || state === "nolive" || state === "failed") {
+					// SetPilot can't drive Live: the user does it, file by file
+					srv.setExport({ phase: state === "denied" ? "denied" : "manual", a: i + 1, b: run.files.length, c: f.name, multi: multi ? 1 : 0 });
+					run.manual = true;
+					return;
+				}
+				if (state === "noopen" || state === "nofile") {
+					if (!run.manual) { run.manual = true; writeLog("export: driving Live's window didn't work, the user exports"); xpNextFile(false); return; }
+					srv.setExport({ phase: "filemanual", a: i + 1, b: run.files.length, c: f.name });
+					return;
+				}
+				if (state === "opening" || state === "open" || state === "saving" || state === "rendering")
+					srv.setExport({ phase: run.manual && state === "open" ? "filemanual" : state, a: i + 1, b: run.files.length, c: f.name, open: state === "open" ? 1 : 0 });
+				if (state === "closed") { run.i++; xpNextFile(false); return; }
+				if (state === "done") {
+					// "01 Song.mp3": Live's file gets its real name; an AIFF or WAV next to an MP3 goes
+					const files = (extra && extra.files) || [];
+					const mp3 = files.find(x => /\.mp3$/i.test(x));
+					for (const x of files) {
+						try {
+							if (mp3 && x !== mp3) { fs.unlinkSync(x); continue; }
+							const to = path.join(run.folder, nice.replace(/[\/:]/g, "-") + path.extname(x));
+							fs.renameSync(x, to);
+							run.saved.push(to);
+						} catch (e) { writeLog("export rename: " + e.message); }
+						try { fs.unlinkSync(x + ".asd"); } catch (e) { }
+					}
+					if (!mp3) run.nomp3 = true;
+					run.i++;
+					xpNextFile(false);
+				}
+			}, run.manual ? {} : { auto: true, name: "sp-export-" + run.stamp + "-" + (i + 1), folder: run.folder });
+		}, 450);
+	}
 	maxApi.addHandler("exportmsg", (kind, a, b, c) => {
+		if (kind === "ranges") {
+			let files = [];
+			try { files = JSON.parse(a); } catch (e) { }
+			xpRun = { files, i: 0, saved: [], stamp: Date.now().toString(36), manual: !maxApi.exportOpen, folder: null, nomp3: false };
+			return;
+		}
 		srv.setExport({ phase: String(kind), a, b, c });
-		if (kind !== "ready") { if (kind === "clean" && exportWatch) { exportWatch.stop(); exportWatch = null; } return; }
-		if (!maxApi.exportOpen) { srv.setExport({ phase: "manual", a, b, c }); return; }
-		exportWatch = maxApi.exportOpen(state => {
-			writeLog("export window:", state);
-			srv.setExport({ phase: state, a, b, c });
-			// closed: rendered or cancelled in Live; noopen: it never showed; denied: no permission (the user opens it by hand)
-			if (state === "closed") {
-				exportWatch = null;
-				maxApi.outlet("js", "exportjson", JSON.stringify({ action: "clean", why: state }));
-			}
-		});
+		if (kind === "clean") { if (exportWatch) { exportWatch.stop(); exportWatch = null; } return; }
+		if (kind !== "ready") return;
+		if (!xpRun) xpRun = { files: [{ name: String(a) }], i: 0, saved: [], stamp: Date.now().toString(36), manual: !maxApi.exportOpen, nomp3: false };
+		xpRun.folder = xpFolder(String(a));
+		if (!maxApi.exportOpen) { srv.setExport({ phase: "manual", a: 1, b: xpRun.files.length, c: xpRun.files[0].name }); return; }
+		xpNextFile(false);
 	});
 	// a Live Set dropped on the device
 	maxApi.addHandler("importpath", (...args) => {
