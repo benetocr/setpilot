@@ -100,13 +100,20 @@ function autoPrepare(why) {
 	const song = mirror.objs.get(mirror.roots.song);
 	if (!song || song.p.is_playing) { clearTimeout(autoTimer); autoTimer = setTimeout(() => autoPrepare(why), 3000); return; }
 	tidyNames();
-	if (why === "connect" && songCount() !== 0) return;
+	// a set with songs but without SetPilot's tracks (made on another computer, or the
+	// plug-in wasn't in Live's list yet): they go in now too, not only in an empty set
 	const have = router.roleTracks();
 	const guideTrack = (song.p.tracks || []).some(r => /^(guide|gu[ií]a)\b/i.test(String(mirror.get(r.$, "name"))));
 	if (have.cues && have.click && have.tail && (have.guide || !guideTrack)) return;
 	let r;
 	try { r = { ok: true, done: prepareSet({ mirror, router, log: x => parentPort.postMessage({ post: x }) }) }; }
-	catch (e) { r = { ok: false, err: e.message }; autoFailed = true; }
+	catch (e) {
+		r = { ok: false, err: e.message };
+		// Live doesn't list SetPilot Audio yet (plug-in folders off, no rescan): try again
+		// every half minute, so the tracks go in as soon as Live finds it
+		if (/not in Live's plug-in list/i.test(e.message)) { clearTimeout(autoTimer); autoTimer = setTimeout(() => autoPrepare(why), 30000); }
+		else autoFailed = true;
+	}
 	parentPort.postMessage({ prepared: Object.assign({ id: 0, auto: why }, r) });
 }
 

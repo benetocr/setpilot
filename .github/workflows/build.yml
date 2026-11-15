@@ -23,6 +23,7 @@ jobs:
       - run: node dev/test_import_live.js
       - run: node dev/test_medley_live.js
       - run: node dev/test_autoprep.js
+      - run: node dev/test_autoprep_songs.js
       - run: node dev/test_sets.js
       - run: node dev/test_audio_devices.js
       - run: node dev/test_songs.js
