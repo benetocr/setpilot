@@ -745,6 +745,7 @@ function tick() {
 	guard("medpad", medPadTick)();
 	guard("clicksong", clkTick)();
 	guard("underscore", underTick)();
+	guard("padramp", padRampTick)();
 	if (!job) guard("automation", autoTick)();
 	if (medPlace) guard("medplace", runMedPlace)();
 	if (clock - lastTrackScan > 3000) { lastTrackScan = clock; scanTracks(); }
@@ -780,7 +781,7 @@ function runTransport() {
 			var contiguous = cs && Math.abs(cs.end - target.start) < 0.001 && !queue.now && !under;
 			if (contiguous) {
 				queue.contiguous = 1; // the timeline already goes there
-			} else if (queue.now || !cs || t >= cs.end - bl + 0.05 || under) {
+			} else if (under ? under.count : (queue.now || !cs || t >= cs.end - bl + 0.05)) {
 				queue.savedQuant = fireJump(target.cue);
 				queue.fired = 1;
 				queue.firedAt = clock;
@@ -1673,7 +1674,9 @@ function keyRootNow() {
 function padfree(on) {
 	padFree = on === undefined || on === "" ? !padFree : !!parseInt(on, 10);
 	if (!tailPresent()) { padFree = false; send(); return; }
+	padRamp = null;
 	if (padFree) {
+		if (padScale != 1) { padScale = 1; sendPadLevel(); }
 		messnamed("setpilot_tail", "padclear");
 		padFreeRoot = -1;
 		freePadTick();
@@ -2894,6 +2897,10 @@ function cueTexts() {
 		if (n >= MED) { var ms = medSlots(n - MED); n = ms.length ? ms[0].s : -1; }
 		if (cueStyle && n >= 0 && n != i && songs[n] && songs[n].sections[firstSec(n)]) add(cleanCue(songs[n].sections[firstSec(n)].name), i);
 	}
+	// the underscore counts its song's sections in, whatever the cue style
+	if (under && songs[under.song]) {
+		for (var uj = 0; uj < songs[under.song].sections.length; uj++) { var uk = underCountKey(under.song, uj); if (uk && !seen[uk]) { seen[uk] = 1; out.push(uk); } }
+	}
 	return out;
 }
 
@@ -2920,7 +2927,15 @@ function computePlan() {
 		}
 	}
 	if (!playing || curSong < 0 || cueMode == CUE_OFF) return null;
-	if (under && !queue) return null;   // the underscore says nothing until a section is asked for
+	// the underscore says nothing until the song or a section is asked for; then it names it and counts it in, on the bar before
+	if (under) {
+		var us = songs[under.song], usec = under.go && under.cueOk && us ? us.sections[under.target] : null;
+		if (!usec) return null;
+		var utext = cleanCue(usec.name);
+		// set a hair before the bar line (inside the bar that ends: a cue set exactly on the loop's first beat could be missed as Live goes round)
+		return { cueAt: under.b - 0.02, B: under.b, text: utext, natural: false, now: false, song: under.song, wrap: 1, idxKey: underCountKey(under.song, under.target),
+			key: "under|" + utext + "|" + under.at };
+	}
 	var s = songs[curSong], sec = s.sections[curSec], bl = barLen();
 	if (!sec) return null;
 	var B = sec.end, target = null, natural = false, now = false;
@@ -2931,6 +2946,7 @@ function computePlan() {
 		if (queue.now) { now = true; B = Math.ceil((t + 0.001) / bl) * bl; }
 	} else if (loopState && loopState.song == curSong && loopState.sec == curSec) {
 		target = sec;
+		var looping = 1;
 	} else if (med) {
 		return null;
 	} else {
@@ -2962,6 +2978,8 @@ function computePlan() {
 			return { cueAt: annAt, B: cueAt, text: ann, natural: false, now: false, song: curSong, announce: 1, key: akey };
 	}
 	return {
+		// a section that goes round is named again on every pass: its cue is set again once it has played
+		wrap: looping ? 1 : 0, rearm: looping ? 1 : 0,
 		cueAt: cueAt, B: B, text: text, natural: natural, now: now, song: curSong, src: src,
 		key: text + "@" + Math.round(cueAt * 1000) + "|" + (natural ? 1 : 0) + "|" + cueMode + "|" + Math.round(B * 1000)
 	};
@@ -2985,6 +3003,7 @@ function effCueMode() { return cueMode == CUE_ALL && !voicePlayer ? CUE_FIX : cu
 function runCues() {
 	var cueMode = effCueMode();
 	var p = computePlan();
+	curPlan = p;
 	var speak = p && (cueMode == CUE_ALL || !p.natural);
 	var key = speak ? p.key : "";
 	var gp = gatePresent();
@@ -3004,9 +3023,10 @@ function runCues() {
 		} else {
 			if (p.announce) annSaid = { text: p.text, at: Math.max(t, p.cueAt), B: p.B, key: p.key };
 			var idx = p.announce ? (cueMap[p.text] || 0) : ((p.src && cueMap[cueKey(p.text, p.song, null, p.src)]) || cueMap[cueKey(p.text, p.song)] || cueMap[p.text] || 0);
+			if (p.idxKey && cueMap[p.idxKey]) idx = cueMap[p.idxKey];
 			var beat = 4 / (sigDen || 4);
 			if (cueMode == CUE_FIX && p.cueAt - 0.25 > t) setGate(1, true);
-			if (!p.now && p.cueAt > t + 0.03) {
+			if (!p.now && (p.cueAt > t + 0.03 || p.wrap)) {
 				var a = toBBU(p.cueAt);
 				outlet(1, "cueidx", idx);
 				outlet(1, "cuearm", a[0], a[1], a[2]);
@@ -3505,7 +3525,7 @@ function applyClickMutes() {
 	muteTracks(clickIds, v, mutedClick);
 }
 
-function sendPadLevel() { messnamed("setpilot_tail", "padlevel", (click.pad == null ? 80 : click.pad) / 100); }
+function sendPadLevel() { messnamed("setpilot_tail", "padlevel", (click.pad == null ? 80 : click.pad) / 100 * padScale); }
 function clickChanged() {
 	sendClick();
 	sendPadLevel();
@@ -3657,7 +3677,11 @@ function cuefile(text, path) {
 	armedKey = null; // re-arm with the right sample number
 }
 
-function cuefired(idx) { log("cue " + idx + " at " + Math.round(t * 100) / 100); }
+function cuefired(idx) {
+	log("cue " + idx + " at " + Math.round(t * 100) / 100);
+	if (curPlan && curPlan.rearm) armedKey = null;
+}
+var curPlan = null;
 function cuedone() { }
 function cueaudio() { log("cue audio playing at " + Math.round(t * 100) / 100); }
 
@@ -4743,6 +4767,7 @@ function underscore(on) {
 	moveTo(under.a);
 	startFrom(under.a);
 	log("underscore for " + sg.name + ": click and pad, the band silent");
+	publishStruct();
 	send();
 }
 
@@ -4750,12 +4775,21 @@ function underscore(on) {
 function underGo() {
 	if (!under || under.go) return;
 	var s = under.song, f = firstSec(s);
-	if (f > 0 && songs[s].sections[f]) { queueSection(s, f, 0, 0); under.go = 2; }
-	else under.go = 1;
+	if (f > 0 && songs[s].sections[f]) { queueSection(s, f, 0, 0); under.go = 2; under.target = f; }
+	else { under.go = 1; under.target = 0; }
 	send();
 }
 
-function underEnd(keepPad) {
+// the cue that counts a section in, whatever the cue style: "Verse, two, three, four" at the song's tempo
+function underCountKey(s, j) {
+	var text = cleanCue(songs[s].sections[j].name);
+	if (!text) return "";
+	var k = text + "@" + Math.round(effTempo(s) * 100) / 100 + "@" + sigNum;
+	return cueSource ? "g|" + songs[s].name + "|" + k : k;
+}
+
+// entering: the song goes on; the pad stays, goes to half or fades away, as the user set it
+function underEnd(entering) {
 	if (!under) return;
 	var u = under;
 	under = null;
@@ -4768,12 +4802,39 @@ function underEnd(keepPad) {
 		setProp("loop_start", u.loop.ls); setProp("loop_length", u.loop.ll); setProp("loop_start", u.loop.ls);
 	} catch (e) { }
 	liveLoop = 0;
-	if (u.pad && padFree && !keepPad) padfree(0);
+	if (u.pad && padFree) {
+		var mode = entering ? (click.underPad || 0) : 2;
+		if (!entering) padfree(0);
+		else if (mode == 1) padRamp = { from: padScale, to: 0.5, at: clock, ms: 3000, off: 0 };
+		else if (mode == 2) padRamp = { from: padScale, to: 0, at: clock, ms: 4000, off: 1 };
+	}
 	applyClickMutes();
 	click.lastSent = "";
 	sendClick();
 	armedKey = null;
 	autoAt = "";
+	structSig = "";
+	dirty = true;
+}
+
+// the free pad's level moves slowly: to half, or all the way down and then off
+var padScale = 1, padRamp = null;
+function padRampTick() {
+	if (!padRamp) return;
+	var r = padRamp, x = Math.min(1, (clock - r.at) / r.ms);
+	if (!padFree) { padRamp = null; return; }
+	padScale = r.from + (r.to - r.from) * x;
+	if (x >= 1 || clock - (r.sent || 0) >= 80) { r.sent = clock; sendPadLevel(); }
+	if (x >= 1) {
+		padRamp = null;
+		if (r.off) padfree(0);
+	}
+}
+
+function underpad(n) {
+	click.underPad = Math.max(0, Math.min(2, parseInt(n, 10) || 0));
+	saveStore();
+	publishStruct();
 }
 
 function underTick() {
@@ -4782,27 +4843,29 @@ function underTick() {
 	if (!playing) { if (u.started || clock - u.at > 1500) underEnd(); return; }
 	u.started = 1;
 	if (wantStart) return;
-	// a section was chosen: Live jumps on the bar line; the band is back just before it lands
-	if (queue && !u.go) u.go = 2;
-	var lead = (0.03 + writeLead) * tempo / 60;
-	if (t < lastT - 0.25) u.wrapped = 1;
-	if (u.go == 2) {
-		if (!queue) {
-			if (u.fp == null && t >= u.a - 0.01 && t < u.b + 0.01) { u.go = 0; send(); return; }   // taken back
-			underEnd();
-			return;
-		}
-		if (t >= u.b + 0.01 || t < u.a - 0.01) { underEnd(); return; }
-		if (queue.fired && u.fp == null) { u.fp = t; u.wrapped = 0; }
-		// Live jumps on the next bar line when it was asked in time; asked too late, it goes round once more
-		if (u.fp != null && t >= u.b - lead && (u.wrapped || u.b - u.fp > 0.3 * tempo / 60)) underUnmute();
+	var beat = 4 / (sigDen || 4), lead = (0.03 + writeLead) * tempo / 60;
+	var wrapped = t < lastT - 0.25 && t < u.b + 0.01;
+	// a section was chosen
+	if (queue && !u.go && !queue.fired) { u.go = 2; u.target = queue.sec; send(); }
+	if (u.go == 2 && !queue && !u.count) { u.go = 0; u.cueOk = 0; armedKey = null; send(); return; }   // taken back
+	if (!u.go) return;
+	// the section is named and counted on one whole bar: the cue is set when there is time before that bar starts
+	if (!u.cueOk) {
+		if (u.b - t >= beat * 0.5 + lead || wrapped) { u.cueOk = 1; armedKey = null; }
 		return;
 	}
-	if (u.go == 1) {
-		// the bar ends: the band is unmuted a moment before, and once Live is back at the start the loop goes off
-		if (t >= u.b - lead) { underUnmute(); u.wrap = 1; }
-		if (u.wrap && t < u.a + (u.b - u.a) / 2) { log("underscore: into " + songs[u.song].name); underEnd(); }
+	if (!u.count) {
+		if (wrapped) { u.count = 1; log("underscore: counting into " + songs[u.song].sections[u.target].name); }
+		return;
 	}
+	// the count's bar: the band is unmuted a moment before its end
+	if (u.go == 2) {
+		if (t >= u.b + 0.01 || t < u.a - 0.01 || (!queue && u.open)) { underEnd(true); return; }
+		if (queue && queue.fired && t >= u.b - lead) underUnmute();
+		return;
+	}
+	if (t >= u.b - lead && !u.wrap) { underUnmute(); u.wrap = 1; return; }
+	if (u.wrap && wrapped) { log("underscore: into " + songs[u.song].name); underEnd(true); }
 }
 
 function underUnmute() {

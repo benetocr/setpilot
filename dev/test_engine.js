@@ -828,7 +828,7 @@ test("count-in: starts bars early with the band muted, names the section, band e
 	assert.strictEqual(t.pos().sec, 2);
 });
 
-test("underscore: click and pad at the song's tempo with the band silent, then the same click counts the song in", () => {
+test("underscore: click and pad at the song's tempo with the band silent; the song is named and counted in, the pad stays", () => {
 	const t = setup({ tail: true });
 	t.cmd("clickon", 0);                         // even with SetPilot's click off
 	t.cmd("selectsong", 1, 0);                   // Cielo Abierto (128 bpm, D) at 256
@@ -840,36 +840,66 @@ test("underscore: click and pad at the song's tempo with the band silent, then t
 	assert.strictEqual(drums.mute, 1, "the band is silent");
 	assert.strictEqual(t.song.clickParams.on, 1, "SetPilot clicks");
 	assert.strictEqual(t.song.props.tempo, 128);
-	assert.strictEqual(t.song.props.loop, 1);
-	assert.deepStrictEqual([t.song.props.loop_start, t.song.props.loop_length], [256, 4], "round the song's first bar");
+	assert.deepStrictEqual([t.song.props.loop, t.song.props.loop_start, t.song.props.loop_length], [1, 256, 4], "round the song's first bar");
+	// the counted cues of this song are asked for, whatever the cue style
+	assert.ok(t.eng.dicts.setpilot_struct.cueTexts.includes("Intro@128@4"), t.eng.dicts.setpilot_struct.cueTexts.join(", "));
+	t.cmd("cuefile", "Intro@128@4", "/sim/intro-counted.wav");
 	t.run(8000);                                  // many bars later it is still there
 	assert.ok(t.pos().t >= 256 && t.pos().t < 260, "still on the first bar: " + t.pos().t);
 	assert.strictEqual(drums.mute, 1);
 	assert.ok(!t.song.audio.played.length, "nothing is announced");
-	// the song: from its start on the next bar line, the band in
+	const pads = () => t.song.tailLog.filter(m => m[0] === "pad").length, padsBefore = pads();
+	// the song: named and counted on the next whole bar, then from its start with the band in
+	const loops = () => t.song.log.filter(l => /^loop 260 -> 256/.test(l)).length;
+	t.until(p => p.t > 257 && p.t < 257.5, 20000);
+	const l0 = loops();
 	t.cmd("underscore");
-	t.until(p => p.t >= 260.5, 20000);
+	t.until(() => loops() === l0 + 1, 20000);
+	t.run(200);
+	assert.strictEqual(drums.mute, 1, "still silent while it is counted");
+	const said = t.song.audio.played.filter(x => t.song.audio.preload[x[0]] === "/sim/intro-counted.wav");
+	assert.strictEqual(said.length, 1, "Intro, two, three, four: " + JSON.stringify(t.song.audio.played));
+	assert.ok(Math.abs(said[0][1] - 260) < 0.05, "on the bar line (a hair before the loop goes round): " + said[0][1]);
+	t.until(() => loops() === l0 + 2, 20000);
+	t.run(300);
 	assert.strictEqual(drums.mute, 0, "the band is in");
 	assert.strictEqual(t.song.props.loop, 0, "the loop is off: the song goes on");
 	assert.strictEqual(t.song.clickParams.on, 0, "the click is back to its setting");
-	assert.ok(t.song.log.filter(l => /^loop 260 -> 256/.test(l)).length >= 2);
+	assert.strictEqual(t.pos().playing, 1);
+	t.run(6000);
+	assert.strictEqual(pads(), padsBefore, "the pad is left sounding");
 });
 
-test("underscore: choosing a section goes there on the bar line with the band in", () => {
-	const t = setup();
+test("underscore: a chosen section is named and counted, then Live goes there with the band in; the pad can go to half or away", () => {
+	const t = setup({ tail: true });
+	t.cmd("underpad", 1);
 	t.cmd("selectsong", 0, 0);
 	t.run(200);
 	t.cmd("underscore");
-	t.run(3000);
+	t.run(600);
+	t.cmd("cuefile", "Coro@72@4", "/sim/coro-counted.wav");
+	t.run(2400);
 	const drums = t.song.tracks.find(x => x.name === "Drums");
 	assert.strictEqual(drums.mute, 1);
+	const jumps = () => t.song.log.filter(l => /^jump 4 -> 48/.test(l)).length;
+	t.until(p => p.t > 1 && p.t < 1.5, 20000);
 	t.cmd("section", 0, 2, 0);                   // Coro at 48
-	t.until(p => p.t >= 48.5 && p.sec === 2, 20000);
+	t.run(600);
+	assert.strictEqual(jumps(), 0, "not yet: it is named first");
+	t.until(p => p.t >= 48.5 && p.sec === 2, 30000);
+	assert.strictEqual(jumps(), 1);
 	assert.strictEqual(drums.mute, 0);
 	assert.strictEqual(t.song.props.loop, 0);
-	assert.ok(t.song.log.includes("jump 4 -> 48"), t.song.log.slice(-6).join(", "));
+	const said = t.song.audio.played.filter(x => t.song.audio.preload[x[0]] === "/sim/coro-counted.wav");
+	assert.strictEqual(said.length, 1, JSON.stringify(t.song.audio.played));
+	assert.ok(Math.abs(said[0][1] - 4) < 0.05, "the count starts on the bar line before the jump: " + said[0][1]);
+	// the pad goes down to half, slowly
+	t.run(4000);
+	const lv = t.song.tailLog.filter(m => m[0] === "padlevel").map(m => m[1]);
+	assert.ok(lv.length > 5 && Math.abs(lv[lv.length - 1] - 0.4) < 0.01, "half of 0.8: " + lv.slice(-3));
+	assert.ok(lv.some(v => v > 0.45 && v < 0.75), "by steps, not at once");
 	// stop while it goes round: everything back
-	const u = setup();
+	const u = setup({ tail: true });
 	u.cmd("selectsong", 0, 0); u.run(200);
 	u.cmd("underscore"); u.run(1000);
 	u.cmd("stop"); u.run(200);

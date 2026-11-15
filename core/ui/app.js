@@ -2363,6 +2363,7 @@
     $("voiceInfo").textContent = voice && voice.bank != null ? (voice.bank ? T("bankInfo", { n: voice.bank }) : T("bankNone")) : "";
 
     var c = (struct && struct.click) || {};
+    setSeg("optUnderPad", c.underPad || 0);
     $("optClickOn").checked = c.on !== 0;
     $("optClickMute").checked = c.muteSong !== 0;
     setSeg("optClickSound", c.sound || 0);
@@ -2474,6 +2475,7 @@
     });
   }
   bindSeg("optCueMode", "cuemode");
+  bindSeg("optUnderPad", "underpad");
   bindSeg("optCueBars", "cuebars");
   bindSeg("optCueStyle", "cuestyle");
   bindSeg("optCueSource", "cuesource");

@@ -38,7 +38,7 @@ const COMMANDS = {
 	autostop: 1, setorder: -1, cuemode: 1, cuebars: 1, cuelang: 1,
 	clickon: 1, clicksound: 1, clicksub: 1, clickmute: 1, clickaccent: 2, clickreset: 0, clicklevel: 2,
 	temposet: 2, keyset: 2, clearfrom: 1, transition: 2, transdefault: 1, warpinfo: 1, rewarpsong: 1, mixvol: 2, mixmute: 2, mixsolo: 2, mixeron: 0,
-	precount: 1, cuestyle: 1, arrset: -1, arrgo: 3, selectmed: 2, medgo: 3, playmed: 1, medlisten: 2, padfree: -1, clipinfo: 1, cuesource: 1, warpcheck: 1, fadeout: 1, fadein: 1, autoset: 5, autoclear: 3, movesec: 3, wave: 1, routeopts: 0, setoutput: 2, applyoutputs: 0, settrackinstr: 2, underscore: -1
+	precount: 1, cuestyle: 1, arrset: -1, arrgo: 3, selectmed: 2, medgo: 3, playmed: 1, medlisten: 2, padfree: -1, clipinfo: 1, cuesource: 1, warpcheck: 1, fadeout: 1, fadein: 1, autoset: 5, autoclear: 3, movesec: 3, wave: 1, routeopts: 0, setoutput: 2, applyoutputs: 0, settrackinstr: 2, underscore: -1, underpad: 1
 };
 
 function lanAddress() {

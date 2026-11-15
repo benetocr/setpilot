@@ -169,9 +169,11 @@ class FakeSong {
 		}
 		p.current_song_time = nt;
 		const a = this.audio;
-		const cross = (at) => at != null && t < at - 1e-9 && nt >= at - 1e-9;
+		// a point just before a loop's end (or a jump) is crossed in the step that goes round
+		const cross = (at) => at != null && t < at - 1e-9 && (nt >= at - 1e-9 || (nt < t && t + dt >= at - 1e-9));
 		if (cross(a.gateArm)) { a.gate = a.gateVal; a.gateLog.push(["tp", a.gateArm, a.gateVal]); }
-		if (cross(a.cueArm)) { a.played.push([a.cueIdx, a.cueArm]); this.onCueFired && this.onCueFired(a.cueIdx); }
+		// like the plug-in: an armed cue plays once
+		if (cross(a.cueArm)) { const at = a.cueArm; a.cueArm = null; a.played.push([a.cueIdx, at]); this.onCueFired && this.onCueFired(a.cueIdx); }
 	}
 	fromBBU(b, bb, u) {
 		if (b >= 9999) return null;
