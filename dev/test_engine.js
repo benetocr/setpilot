@@ -554,6 +554,24 @@ test("imported clips are re-warped to the original timing, whatever Live guessed
 	check("Keys.wav", s => s <= 30 ? s * 43 / 30 : s <= 60 ? 43 + (s - 30) * 43.5 / 30 : 86.5 + (s - 60) * 42.5 / 30);
 });
 
+test("a stem Live left on a tempo a little off (one marker and its helper) is put on the song's tempo", () => {
+	const t = setup();
+	t.run(100);
+	t.song.shadowGuess = 68.93;   // the song is at 68: 1.4 % slow, four and a half seconds by the end
+	t.eng.dicts.setpilot_import = {
+		title: "Beautiful Name", key: "D", bpm: 68, meter: "4/4", gap: 4, end: 140,
+		locators: [{ time: 0, name: "Intro" }],
+		tracks: [{ name: "EG 2", clips: [{ time: 0, file: "/x/EG 2.wav", startBeat: 0, length: 140, markers: [[0, 0], [60 / 68, 1]] }] }]
+	};
+	t.cmd("importplan");
+	t.run(4000);
+	const c = t.song.clips.find(x => x.file && x.file.endsWith("EG 2.wav"));
+	const wm = JSON.parse(c.warp_markers).warp_markers, a = wm[wm.length - 2], b = wm[wm.length - 1];
+	const endSec = c.sample_length / c.sample_rate;
+	const endBeat = b.beat_time + (endSec - b.sample_time) * (b.beat_time - a.beat_time) / (b.sample_time - a.sample_time);
+	assert.ok(Math.abs(endBeat - endSec * 68 / 60) < 0.01, "the end of the file is " + (endBeat - endSec * 68 / 60).toFixed(3) + " beats off: " + JSON.stringify(wm));
+});
+
 // ---------------------------------------------------------------- warp guard
 function importDoItAgain(t) {
 	t.run(100);
@@ -841,9 +859,7 @@ test("underscore: click and pad at the song's tempo with the band silent; the so
 	assert.strictEqual(t.song.clickParams.on, 1, "SetPilot clicks");
 	assert.strictEqual(t.song.props.tempo, 128);
 	assert.deepStrictEqual([t.song.props.loop, t.song.props.loop_start, t.song.props.loop_length], [1, 256, 4], "round the song's first bar");
-	// the counted cues of this song are asked for, whatever the cue style
-	assert.ok(t.eng.dicts.setpilot_struct.cueTexts.includes("Intro@128@4"), t.eng.dicts.setpilot_struct.cueTexts.join(", "));
-	t.cmd("cuefile", "Intro@128@4", "/sim/intro-counted.wav");
+	t.cmd("cuefile", "Intro", "/sim/intro.wav");
 	t.run(8000);                                  // many bars later it is still there
 	assert.ok(t.pos().t >= 256 && t.pos().t < 260, "still on the first bar: " + t.pos().t);
 	assert.strictEqual(drums.mute, 1);
@@ -857,8 +873,8 @@ test("underscore: click and pad at the song's tempo with the band silent; the so
 	t.until(() => loops() === l0 + 1, 20000);
 	t.run(200);
 	assert.strictEqual(drums.mute, 1, "still silent while it is counted");
-	const said = t.song.audio.played.filter(x => t.song.audio.preload[x[0]] === "/sim/intro-counted.wav");
-	assert.strictEqual(said.length, 1, "Intro, two, three, four: " + JSON.stringify(t.song.audio.played));
+	const said = t.song.audio.played.filter(x => t.song.audio.preload[x[0]] === "/sim/intro.wav");
+	assert.strictEqual(said.length, 1, "Intro, then a bar of click: " + JSON.stringify(t.song.audio.played));
 	assert.ok(Math.abs(said[0][1] - 260) < 0.05, "on the bar line (a hair before the loop goes round): " + said[0][1]);
 	t.until(() => loops() === l0 + 2, 20000);
 	t.run(300);
@@ -877,7 +893,7 @@ test("underscore: a chosen section is named and counted, then Live goes there wi
 	t.run(200);
 	t.cmd("underscore");
 	t.run(600);
-	t.cmd("cuefile", "Coro@72@4", "/sim/coro-counted.wav");
+	t.cmd("cuefile", "Coro", "/sim/coro.wav");
 	t.run(2400);
 	const drums = t.song.tracks.find(x => x.name === "Drums");
 	assert.strictEqual(drums.mute, 1);
@@ -890,7 +906,7 @@ test("underscore: a chosen section is named and counted, then Live goes there wi
 	assert.strictEqual(jumps(), 1);
 	assert.strictEqual(drums.mute, 0);
 	assert.strictEqual(t.song.props.loop, 0);
-	const said = t.song.audio.played.filter(x => t.song.audio.preload[x[0]] === "/sim/coro-counted.wav");
+	const said = t.song.audio.played.filter(x => t.song.audio.preload[x[0]] === "/sim/coro.wav");
 	assert.strictEqual(said.length, 1, JSON.stringify(t.song.audio.played));
 	assert.ok(Math.abs(said[0][1] - 4) < 0.05, "the count starts on the bar line before the jump: " + said[0][1]);
 	// the pad goes down to half, slowly

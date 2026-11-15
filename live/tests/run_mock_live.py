@@ -83,9 +83,8 @@ def main():
     surface = SetPilotSurface(CInstance(song))
     # Live's application object (browser with SetPilot Audio in it)
     surface.bridge.app = mock_live.Application(song)
-    # what Live.Clip.WarpMarker is in Live (the import tests run the older fallback)
-    if os.environ.get("SP_MOCK_MARKERS") == "1":
-        surface.bridge.make_marker = lambda b, s_: mock_live.WarpMarker(b, s_)
+    # what Live.Clip.WarpMarker is in Live
+    surface.bridge.make_marker = lambda b, s_: mock_live.WarpMarker(b, s_)
     bell = None
     if a.doorbell:
         bell = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

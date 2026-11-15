@@ -2897,10 +2897,6 @@ function cueTexts() {
 		if (n >= MED) { var ms = medSlots(n - MED); n = ms.length ? ms[0].s : -1; }
 		if (cueStyle && n >= 0 && n != i && songs[n] && songs[n].sections[firstSec(n)]) add(cleanCue(songs[n].sections[firstSec(n)].name), i);
 	}
-	// the underscore counts its song's sections in, whatever the cue style
-	if (under && songs[under.song]) {
-		for (var uj = 0; uj < songs[under.song].sections.length; uj++) { var uk = underCountKey(under.song, uj); if (uk && !seen[uk]) { seen[uk] = 1; out.push(uk); } }
-	}
 	return out;
 }
 
@@ -2927,13 +2923,13 @@ function computePlan() {
 		}
 	}
 	if (!playing || curSong < 0 || cueMode == CUE_OFF) return null;
-	// the underscore says nothing until the song or a section is asked for; then it names it and counts it in, on the bar before
+	// the underscore says nothing until the song or a section is asked for; then it names it as always, and the click counts one whole bar
 	if (under) {
 		var us = songs[under.song], usec = under.go && under.cueOk && us ? us.sections[under.target] : null;
 		if (!usec) return null;
 		var utext = cleanCue(usec.name);
 		// set a hair before the bar line (inside the bar that ends: a cue set exactly on the loop's first beat could be missed as Live goes round)
-		return { cueAt: under.b - 0.02, B: under.b, text: utext, natural: false, now: false, song: under.song, wrap: 1, idxKey: underCountKey(under.song, under.target),
+		return { cueAt: under.b - 0.02, B: under.b, text: utext, natural: false, now: false, song: under.song, wrap: 1,
 			key: "under|" + utext + "|" + under.at };
 	}
 	var s = songs[curSong], sec = s.sections[curSec], bl = barLen();
@@ -3023,7 +3019,6 @@ function runCues() {
 		} else {
 			if (p.announce) annSaid = { text: p.text, at: Math.max(t, p.cueAt), B: p.B, key: p.key };
 			var idx = p.announce ? (cueMap[p.text] || 0) : ((p.src && cueMap[cueKey(p.text, p.song, null, p.src)]) || cueMap[cueKey(p.text, p.song)] || cueMap[p.text] || 0);
-			if (p.idxKey && cueMap[p.idxKey]) idx = cueMap[p.idxKey];
 			var beat = 4 / (sigDen || 4);
 			if (cueMode == CUE_FIX && p.cueAt - 0.25 > t) setGate(1, true);
 			if (!p.now && (p.cueAt > t + 0.03 || p.wrap)) {
@@ -3885,11 +3880,16 @@ function rewarp(clip, step) {
 	// so put a second marker at the end of the file (Live 12) and move that one
 	var endSec = 0;
 	try { endSec = num(clip.get("sample_length")) / (num(clip.get("sample_rate")) || 44100); } catch (e) { }
-	if (cur.length == 2 && cur[1].beat - cur[0].beat < 0.1 && endSec > cur[1].sec + 1 && Math.abs(cur[1].beat - beatForSec(src, cur[1].sec)) > 0.0005) {
-		var guess = cur[0].beat + (endSec - cur[0].sec) * (cur[1].beat - cur[0].beat) / (cur[1].sec - cur[0].sec);
+	// (the helper sits 1/32 beat away: a tempo a little off hardly shows there, and is seconds by the end of the song,
+	// so what counts is where the end of the file lands)
+	var guess = cur.length == 2 ? cur[0].beat + (endSec - cur[0].sec) * (cur[1].beat - cur[0].beat) / ((cur[1].sec - cur[0].sec) || 1) : 0;
+	if (cur.length == 2 && cur[1].beat - cur[0].beat < 0.1 && endSec > cur[1].sec + 1 && Math.abs(guess - beatForSec(src, endSec)) > 0.004) {
 		try { clip.call("add_warp_marker", { beat_time: guess, sample_time: endSec }); } catch (e) { }
 		cur = markersOf(clip);
-		if (cur.length == 2) { try { clip.call("add_warp_marker", guess, endSec); } catch (e) { } cur = markersOf(clip); }
+		// (Live may drop its helper as the new marker goes in: the count says nothing, the marker at the end does)
+		var gotEnd = false;
+		for (var ge = 0; ge < cur.length; ge++) if (Math.abs(cur[ge].sec - endSec) < 0.01) gotEnd = true;
+		if (!gotEnd) { try { clip.call("add_warp_marker", guess, endSec); } catch (e) { } cur = markersOf(clip); }
 		// the helper goes away once there is a real second marker
 	}
 	var plan = [];
@@ -3917,6 +3917,7 @@ function rewarp(clip, step) {
 		var off = Math.abs(after[k].beat - beatForSec(src, after[k].sec));
 		if (off > worst) { worst = off; if (off > 0.01 && bad < 0) bad = k; }
 	}
+	worst = Math.max(worst, warpEndOff(after, src, endSec));
 	var msg = "rewarp " + step.name + ": " + before + " -> " + after.length + " markers, " + moved + " moved" + (refused ? ", " + refused + " refused by Live" : "") + ", off by " + Math.round(worst * 1000) / 1000 + " beats";
 	if (bad >= 0) {
 		var f = function (x) { return x ? x.beat.toFixed(3) + "@" + x.sec.toFixed(3) + "->" + beatForSec(src, x.sec).toFixed(3) : "-"; };
@@ -4024,7 +4025,23 @@ function clipWarpOff(src) {
 	if (isStraight(src) && cur.length > 2) return 98;
 	var worst = 0;
 	for (var i = 0; i < cur.length; i++) worst = Math.max(worst, Math.abs(cur[i].beat - beatForSec(src, cur[i].sec)));
-	return worst;
+	var endSec = 0;
+	try { endSec = num(clipApi.get("sample_length")) / (num(clipApi.get("sample_rate")) || 44100); } catch (e) { }
+	return Math.max(worst, warpEndOff(cur, src, endSec));
+}
+
+// how far the end of the file is from where it belongs: past its last marker Live goes on at
+// the tempo of the last two, so two markers close together and a little off drift by the end
+function warpEndOff(cur, src, endSec) {
+	var n = cur.length;
+	if (n < 2 || !(endSec > cur[n - 1].sec + 0.5)) return 0;
+	var a = cur[n - 2], b = cur[n - 1];
+	if (!(b.sec > a.sec)) return 0;
+	var endBeat = b.beat + (endSec - b.sec) * (b.beat - a.beat) / (b.sec - a.sec);
+	// the source's own timing past its last marker goes on the same way
+	var m = src, sa = m[m.length - 2], sb = m[m.length - 1];
+	var want = endSec <= sb[0] ? beatForSec(src, endSec) : sb[1] + (endSec - sb[0]) * (sb[1] - sa[1]) / (sb[0] - sa[0]);
+	return Math.abs(endBeat - want);
 }
 
 // how far the clip's end is from where its audio ends (unlooped clips)
@@ -4778,14 +4795,6 @@ function underGo() {
 	if (f > 0 && songs[s].sections[f]) { queueSection(s, f, 0, 0); under.go = 2; under.target = f; }
 	else { under.go = 1; under.target = 0; }
 	send();
-}
-
-// the cue that counts a section in, whatever the cue style: "Verse, two, three, four" at the song's tempo
-function underCountKey(s, j) {
-	var text = cleanCue(songs[s].sections[j].name);
-	if (!text) return "";
-	var k = text + "@" + Math.round(effTempo(s) * 100) / 100 + "@" + sigNum;
-	return cueSource ? "g|" + songs[s].name + "|" + k : k;
 }
 
 // entering: the song goes on; the pad stays, goes to half or fades away, as the user set it

@@ -250,6 +250,8 @@ function makeDirectLiveAPI(song) {
 				// like Live's auto-warp: its own tempo guess (84.51) and a downbeat moved to 2.37 s
 				const wm = [];
 				for (let b = 0; b <= 160; b += 4) wm.push({ beat_time: b, sample_time: 2.37 + b * 60 / 84.51 });
+				// or what Live 12 sometimes leaves: one marker and its 1/32 beat helper, on a tempo a little off
+				if (song.shadowGuess) { wm.length = 0; wm.push({ beat_time: 0, sample_time: 0 }, { beat_time: 0.03125, sample_time: 0.03125 * 60 / song.shadowGuess }); }
 				song.clips.push({ id, track: tr.id, start_time: Number(args[1]), end_time: Number(args[1]) + 160, file: args[0], file_path: args[0], sample_rate: 44100, sample_length: Math.round(44100 * 140 * 60 / 86), looping: 0, loop_end: 160, pitch_coarse: 0, warp_mode: 0, warping: 1, is_audio_clip: 1,
 					start_marker: 0, end_marker: 160, warp_markers: JSON.stringify({ warp_markers: wm }) });
 				tr.arrangement_clips = song.clips.filter(c => c.track === tr.id).flatMap(c => ["id", c.id]);

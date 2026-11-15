@@ -203,6 +203,16 @@ class Clip(Observable):
             raise TypeError("expects a WarpMarker")
         self.warp_markers = tuple(sorted(self.warp_markers + (m,), key=lambda x: x.beat_time))
 
+    def remove_warp_marker(self, beat):
+        # like Live: a marker between two others goes (the 1/32 beat helper too, once a real one follows it)
+        ms = list(self.warp_markers)
+        for k, m in enumerate(ms):
+            if abs(m.beat_time - beat) < 1e-6 and 0 < k < len(ms) - 1:
+                del ms[k]
+                self.warp_markers = tuple(ms)
+                return
+        raise LiveError("no marker to remove")
+
     def move_warp_marker(self, beat, distance):
         ms = list(self.warp_markers)
         for k, m in enumerate(ms):
