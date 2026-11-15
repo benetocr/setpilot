@@ -34,7 +34,11 @@ function startHost({ log: logOut = console.log } = {}) {
 	try {
 		const libs = require("../installer/setup").findUserLibraries();
 		const lib = libs.find(l => fs.existsSync(l));
-		if (lib) { LOG_DIR = path.join(lib, "SetPilot", "Logs"); fs.mkdirSync(LOG_DIR, { recursive: true }); }
+		if (lib) {
+			LOG_DIR = path.join(lib, "SetPilot", "Logs"); fs.mkdirSync(LOG_DIR, { recursive: true });
+			// the user's own things for SetPilot (the cue bank) live next to them, where they can see the folder
+			process.env.SETPILOT_LIB = path.join(lib, "SetPilot");
+		}
 	} catch (e) { }
 	for (const f of ["host.log", "setpilot.log"]) {
 		try { if (fs.statSync(path.join(LOG_DIR, f)).size > 5e6) fs.renameSync(path.join(LOG_DIR, f), path.join(LOG_DIR, f + ".old")); } catch (e) { }

@@ -669,59 +669,16 @@ if (maxApi) {
 		catch (e) { writeLog("struct read failed: " + e.message); }
 	});
 	// ------------------------------------------------ voice cues
-	// Every section name gets a short spoken file made with the Mac's own
-	// voices (say). A file with the same name in cues/custom/ wins, so a
-	// team can record its own voice.
+	// Every section name is spoken with a recording from the cue bank. A file
+	// with the same name in cues/custom/ wins, so a team can record its own.
 	const { execFile } = require("child_process");
 	const CUE_DIR = path.join(DATA_DIR, "cues");
 	const CUSTOM_DIR = path.join(CUE_DIR, "custom");
-	let voices = null;
 	let voiceKey = "";
 	const slug = t => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "cue";
-	const ES_WORDS = /\b(verso|coro|puente|estribillo|interludio|final|precoro|pre coro|instrumental|entrada|salida|refran)\b/i;
-
-	function listVoices() {
-		return new Promise(resolve => {
-			if (voices) return resolve(voices);
-			if (process.platform !== "darwin") { voices = []; return resolve(voices); }
-			execFile("/usr/bin/say", ["-v", "?"], { maxBuffer: 4 << 20 }, (err, out) => {
-				voices = [];
-				try { fs.mkdirSync(CUE_DIR, { recursive: true }); fs.writeFileSync(path.join(CUE_DIR, "voices.txt"), (err ? "ERR " + err.message + "\n" : "") + out); } catch (e) { }
-				if (!err) for (const line of out.split("\n")) {
-					const m = line.match(/^(.+?)\s+([a-z]{2,3}_[A-Za-z0-9]{2,})\s+#/);
-					if (m) voices.push({ name: m[1].trim(), lang: m[2].replace("-", "_") });
-				}
-				resolve(voices);
-			});
-		});
-	}
-
-	function pickVoice(list, lang) {
-		const novelty = /^(Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Fred|Junior|Kathy|Ralph|Eddy|Flo|Grandma|Grandpa|Reed|Rocko|Sandy|Shelley)\b/;
-		const region = lang === "es" ? ["es_MX", "es_US", "es_419", "es_ES"] : ["en_US", "en_GB", "en_AU", "en_CA"];
-		let best = null, bestScore = -1;
-		for (const v of list) {
-			if (!v.lang.startsWith(lang + "_") || novelty.test(v.name)) continue;
-			let score = 10 - Math.max(0, region.indexOf(v.lang) < 0 ? 5 : region.indexOf(v.lang));
-			if (/premium/i.test(v.name)) score += 30;
-			else if (/enhanced|mejorad/i.test(v.name)) score += 20;
-			if (/^(Paulina|Mónica|Monica|Samantha|Ava|Zoe|Allison)\b/.test(v.name)) score += 5;
-			if (score > bestScore) { bestScore = score; best = v; }
-		}
-		return best;
-	}
-
-	function speak(voice, text, out, rate) {
-		return new Promise(resolve => {
-			const args = ["-r", String(rate || 185), "-o", out, "--file-format=WAVE", "--data-format=LEI16@44100"];
-			if (voice) args.unshift("-v", voice.name);
-			args.push(text);
-			execFile("/usr/bin/say", args, err => resolve(!err));
-		});
-	}
 
 	// Cue sources, best first: a recording in cues/custom/, the song's own guide
-	// (its Guide stem, cut at import), the Mac's voice. All of them trimmed to
+	// (its Guide stem, cut at import), the cue bank. All of them trimmed to
 	// the words and at the same speech level (normalized once, then cached).
 	const GUIDE_DIR = path.join(CUE_DIR, "guide");
 	const guides = {};   // song name -> { key, cues: { text: file }, nums: [two, three, four] | null }
@@ -731,14 +688,12 @@ if (maxApi) {
 		}
 	} catch (e) { }
 
-	async function macVoice(voice, vdir, text, rate) {
-		const file = path.join(vdir, slug(text) + (rate ? "-" + rate : "") + ".wav");
-		if (fs.existsSync(file)) return file;
-		const raw = file + ".raw.wav";
-		if (!(await speak(voice, text, raw, rate))) return null;
-		try { normalizeCueFile(raw, file); } finally { fs.unlink(raw, () => {}); }
-		return file;
-	}
+	// the cue bank: the app's own recordings, and any the user adds in cues/bank
+	const { makeBank } = require("./cue_bank.js");
+	const bank = makeBank({
+		dirs: [process.env.SETPILOT_LIB ? path.join(process.env.SETPILOT_LIB, "Cue Bank") : null, path.join(CUE_DIR, "bank"), process.resourcesPath ? path.join(process.resourcesPath, "cue-bank") : null, path.join(__dirname, "..", "assets", "cue-bank")],
+		cacheDir: path.join(CUE_DIR, "bank-ready"), log: m => writeLog(m)
+	});
 	function customCue(text) {
 		for (const ext of [".wav", ".aif", ".aiff"]) {
 			const c = path.join(CUSTOM_DIR, slug(text) + ext);
@@ -754,27 +709,17 @@ if (maxApi) {
 
 	async function prepareCues(d) {
 		const texts = (d && d.cueTexts) || [];
-		const setting = (d && d.settings && d.settings.cueLang) || 0;
-		let lang = setting === 1 ? "es" : setting === 2 ? "en" : (texts.some(t => ES_WORDS.test(t.replace(/^[gu]\|[^|]*\|/, ""))) ? "es" : "en");
-		const list = await listVoices();
-		const voice = pickVoice(list, lang) || pickVoice(list, lang === "es" ? "en" : "es");
-		if (!prepareCues.logged) {
-			prepareCues.logged = true;
-			writeLog("voices " + lang + ":", list.filter(v => v.lang.startsWith(lang)).map(v => v.name + "/" + v.lang).join(", "));
-		}
-		// "-n1": normalized files; older ones are made again
-		const vdir = path.join(CUE_DIR, slug(voice ? voice.name : "default") + "-n1");
+		bank.scan();
 		const loaded = new Set((d && d.cueLoaded) || []);
 		const gsig = Object.keys(guides).map(k => k + ":" + guides[k].key).join(",");
-		const key = (voice ? voice.name : "") + "|" + gsig + "|" + texts.join("|");
+		const key = "bank:" + bank.sig + "|" + gsig + "|" + texts.join("|");
 		const fresh = key !== voiceKey;
 		voiceKey = key;
-		srv.setVoice({ name: voice ? voice.name : "", lang });
-		fs.mkdirSync(vdir, { recursive: true });
-		const NUMS = lang === "es" ? ["dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho"] : ["two", "three", "four", "five", "six", "seven", "eight"];
+		srv.setVoice({ name: "", lang: "en", bank: bank.count });
+		const missing = [];
 		let fromGuide = 0;
 		// a medley ("u|id|Text") speaks with one voice: its song's guide when that
-		// guide has every cue of the medley, else the Mac voice for all of them
+		// guide has every cue of the medley, else the bank for all of them
 		const unit = {};
 		for (const full of texts) {
 			const u = /^u\|([^|]*)\|(.*)$/.exec(full);
@@ -806,26 +751,26 @@ if (maxApi) {
 				let nameFile = customCue(text);
 				if (!nameFile && gi && gi.cues[text] && fs.existsSync(gi.cues[text])) { nameFile = gi.cues[text]; fromGuide++; }
 				if (!m) {
-					if (!nameFile) nameFile = await macVoice(voice, vdir, text);
-					if (!nameFile) { writeLog("voice failed for", text); continue; }
+					if (!nameFile) nameFile = bank.cue(text);
+					if (!nameFile) { if (missing.indexOf(text) < 0) missing.push(text); continue; }
 					maxApi.outlet("js", "cuefile", full, nameFile);
 					continue;
 				}
 				// counted: "Chorus, two, three, four" at this tempo and meter
 				const bpm = Number(m[2]), beats = Math.max(2, Math.min(8, Number(m[3])));
 				const fromG = !!(gi && nameFile === gi.cues[text]);
-				const cdir = path.join(fromG ? path.dirname(nameFile) : vdir, "counted");
+				if (!nameFile) nameFile = bank.cue(text);
+				if (!nameFile) { if (missing.indexOf(text) < 0) missing.push(text); continue; }
+				const cdir = path.join(fromG ? path.dirname(nameFile) : path.join(CUE_DIR, "bank-ready"), "counted");
 				fs.mkdirSync(cdir, { recursive: true });
-				const out = path.join(cdir, slug(text) + "-" + bpm + "-" + beats + (fromG ? "" : "-" + slug(voice ? voice.name : "v")) + ".wav");
+				const out = path.join(cdir, slug(text) + "-" + bpm + "-" + beats + (fromG ? "" : "-" + bank.sig) + ".wav");
 				if (!fs.existsSync(out)) {
-					if (!nameFile) nameFile = await macVoice(voice, vdir, text, 215);
-					if (!nameFile) throw new Error("say failed");
 					const nums = [];
 					for (let b = 2; b <= beats; b++) {
-						// the guide's own count when it has one, else the Mac voice
+						// the guide's own count when it has one, else the bank's numbers (the count stops where they end)
 						let nf = fromG && gi.nums && gi.nums[b - 2] && fs.existsSync(gi.nums[b - 2]) ? gi.nums[b - 2] : null;
-						if (!nf) nf = await macVoice(voice, vdir, NUMS[b - 2], 215);
-						if (!nf) throw new Error("say failed");
+						if (!nf) nf = bank.number(b);
+						if (!nf) break;
 						nums.push(nf);
 					}
 					buildCounted(nameFile, nums, bpm, out);
@@ -833,7 +778,7 @@ if (maxApi) {
 				maxApi.outlet("js", "cuefile", full, out);
 			} catch (e) { writeLog("cue failed for", full, e.message); }
 		}
-		if (fresh) writeLog("cues ready:", texts.length, "voice", voice ? voice.name : "none", lang, fromGuide ? "(" + fromGuide + " from guides)" : "");
+		if (fresh) writeLog("cues ready:", texts.length, "from the bank (" + bank.count + " recordings)", fromGuide ? "(" + fromGuide + " from guides)" : "", missing.length ? "| no recording for: " + missing.join(", ") : "");
 	}
 
 	// the engine sends a song's Guide clip and sections: cut its cues once

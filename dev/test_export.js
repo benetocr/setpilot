@@ -19,6 +19,18 @@ const post = (p, body) => new Promise((res, rej) => { const d = JSON.stringify(b
 const dumpLive = async () => { const f = process.env.SP_MOCK_DUMP; try { fs.unlinkSync(f); } catch (e) { } fs.writeFileSync(f + ".req", "1"); for (let i = 0; i < 50; i++) { await sleep(50); if (fs.existsSync(f)) return JSON.parse(fs.readFileSync(f, "utf8")); } throw new Error("no dump"); };
 const engineLog = () => { try { return fs.readFileSync(path.join(home, "data", "setpilot.log"), "utf8"); } catch (e) { return ""; } };
 
+// a small cue bank: a short tone for each name, like recordings would be
+function tone(file, hz) {
+	const rate = 44100, n = Math.round(rate * 0.6), b = Buffer.alloc(44 + n * 2);
+	b.write("RIFF", 0); b.writeUInt32LE(36 + n * 2, 4); b.write("WAVE", 8); b.write("fmt ", 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+	b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write("data", 36); b.writeUInt32LE(n * 2, 40);
+	for (let i = 0; i < n; i++) b.writeInt16LE(i > 4000 && i < n - 4000 ? Math.round(12000 * Math.sin(2 * Math.PI * hz * i / rate)) : 0, 44 + i * 2);
+	fs.writeFileSync(file, b);
+}
+const BANK = path.join(home, "data", "cues", "bank", "Sections");
+fs.mkdirSync(BANK, { recursive: true });
+["Intro", "Verse 1", "Verse 2", "Chorus", "Bridge", "Ending", "Verse", "Pre Chorus", "Instrumental", "Tag"].forEach((n, i) => tone(path.join(BANK, n + ".wav"), 300 + 40 * i));
+
 (async () => {
 	const live = spawn("python3", [path.join(ROOT, "live/tests/run_mock_live.py")], { env: process.env });
 	let liveOut = "";
@@ -115,6 +127,26 @@ const engineLog = () => { try { return fs.readFileSync(path.join(home, "data", "
 		closeIt();
 		assert.ok(await waitFor("clean"));
 		ok("the setlist prints song after song at one tempo");
+
+		// with cues: SetPilot's own, from the bank, as clips before each block (Spanish names find the English recordings)
+		await sleep(600);
+		events.length = 0;
+		assert.ok((await post("/export", { action: "start", what: "song", song, guide: true, click: false })).ok);
+		assert.ok(await waitFor("open"), JSON.stringify(events.slice(-3)));
+		const cl = engineLog().split("\n").filter(l => /export cues:/.test(l)).pop() || "";
+		assert.ok(/export cues: 7 as clips$/.test(cl), cl);
+		const lv3 = await dumpLive(), ct = lv3.tracks.find(t => t.name === "SP Export Cues");
+		assert.ok(ct, "a track for the cues: " + lv3.tracks.map(t => t.name).join(", "));
+		// one bar (4 beats) before each block after the first; a bar of the fast Coro is two beats of the print
+		assert.deepStrictEqual(ct.clips.map(c => c.start).sort((a, b) => a - b), [492, 524, 542, 572, 604, 636, 668]);
+		assert.ok(!lv3.tracks.find(t => t.name === "Guide").clips.some(c => c.start >= 480), "the Guide stem is not printed");
+		closeIt();
+		assert.ok(await waitFor("clean"));
+		await sleep(800);
+		const lv4 = await dumpLive();
+		assert.ok(!lv4.tracks.find(t => t.name === "SP Export Cues"), "the cue track is gone");
+		assert.strictEqual(lv4.tracks.length, lv.tracks.length);
+		ok("the cues are the bank's, placed a bar before each block, and their track goes away");
 		console.log("\nall passing");
 	} catch (e) { bad++; console.log("FAIL " + e.message + "\n" + logs.slice(-15).join("\n") + "\n" + liveOut.slice(-1500) + "\n" + engineLog().split("\n").slice(-25).join("\n")); }
 	if (process.env.XP_KEEP) console.log(engineLog().split("\n").filter(l => /export|warp|duplicate|clip end/.test(l)).join("\n"));

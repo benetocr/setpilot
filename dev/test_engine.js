@@ -684,9 +684,14 @@ test("a clip the guard can't fix is reported once, not every few seconds", () =>
 
 test("cues come from the song's guide when the source is the guide", () => {
 	const t = setup({ guide: true });
+	// the cue bank is the source unless the user asks for the song's own cues
+	assert.ok(t.eng.dicts.setpilot_struct.cueTexts.includes("Coro"));
+	t.cmd("cuesource", 1);
+	t.run(200);
 	const texts = t.eng.dicts.setpilot_struct.cueTexts;
 	assert.ok(texts.includes("g|Grande y Fiel|Coro"), texts.slice(0, 5).join(", "));
 	t.cmd("cuesource", 0);
+	t.run(200);
 	assert.ok(t.eng.dicts.setpilot_struct.cueTexts.includes("Coro"));
 });
 

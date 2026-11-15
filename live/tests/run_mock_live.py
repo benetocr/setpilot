@@ -126,7 +126,7 @@ def main():
             os.remove(dump + ".req")
             out = {"tempo": song.tempo, "loop_start": song.loop_start, "loop_length": song.loop_length, "tracks": [
                 {"name": tr.name, "mute": bool(tr.mute), "clips": [
-                    {"start": c.start_time, "end": c.end_time, "ls": c.loop_start, "le": c.loop_end, "pitch": c.pitch_coarse,
+                    {"start": c.start_time, "end": c.end_time, "ls": c.loop_start, "le": c.loop_end, "pitch": c.pitch_coarse, "warp": bool(c.warping), "file": c.file_path,
                      "markers": [[m.beat_time, m.sample_time] for m in c.warp_markers]} for c in tr.arrangement_clips]} for tr in song.tracks]}
             with open(dump + ".tmp", "w") as f:
                 json.dump(out, f)

@@ -128,7 +128,8 @@ var paramApi = null;
 // practice and show helpers
 var precountBars = 1;   // bars of count-in when playback starts after the first section (1 or 2)
 var cueStyle = 0;       // 0: "Chorus"   1: "Chorus, two, three, four"
-var cueSource = 1;      // 1: the song's own guide when it has the cue, 0: always the Mac voice
+var cueSource = 0;      // 0: the cue bank for every cue (one voice), 1: the song's own guide when it has the cue
+var cuePaths = {};      // cue key -> its audio file (an export prints them as clips)
 var GUIDE_DICT = "setpilot_guide";
 var guideSent = {}, guideAt = 0;
 var warpGuard = { at: 0, rr: 0, fixing: null, soon: [], gaveUp: {} };
@@ -522,7 +523,8 @@ function loadStore() {
 	if (restored.cueLang !== undefined) cueLang = restored.cueLang;
 	if (restored.precount !== undefined) precountBars = Math.max(1, Math.min(2, restored.precount || 1));
 	if (restored.cueStyle !== undefined) cueStyle = restored.cueStyle;
-	if (restored.cueSource !== undefined) cueSource = restored.cueSource ? 1 : 0;
+	// stores from before the cue bank had the song's guide as the default: the bank is the default now
+	if (restored.cueSource !== undefined && restored.cueBank) cueSource = restored.cueSource ? 1 : 0;
 	if (restored.medleys && restored.medleys.length !== undefined) medleys = restored.medleys;
 	if (restored.click) for (var k in restored.click) if (restored.click.hasOwnProperty(k)) click[k] = restored.click[k];
 	if (restored.songs) {
@@ -556,7 +558,7 @@ function restore() {
 
 function saveStore() {
 	var names = orderNames();
-	restored = { order: names, medleys: medleys, autostop: autoStop, trDefault: trDefault, cueMode: cueMode, cueBars: cueBars, cueLang: cueLang, precount: precountBars, cueStyle: cueStyle, cueSource: cueSource, click: click, songs: songOpts, instr: instr };
+	restored = { order: names, medleys: medleys, autostop: autoStop, trDefault: trDefault, cueMode: cueMode, cueBars: cueBars, cueLang: cueLang, precount: precountBars, cueStyle: cueStyle, cueSource: cueSource, cueBank: 1, click: click, songs: songOpts, instr: instr };
 	var json = JSON.stringify(restored);
 	lastStored = json;
 	var d = new Dict(STORE_DICT);
@@ -3644,6 +3646,7 @@ function cuefile(text, path) {
 	text = str(text);
 	var idx = cueMap[text];
 	if (!idx) { idx = cueNext++; cueMap[text] = idx; }
+	cuePaths[text] = str(path);
 	outlet(1, "preload", idx, str(path));
 	armedKey = null; // re-arm with the right sample number
 }
@@ -4299,6 +4302,16 @@ function runJob() {
 		runDup(step);
 	} else if (step.type == "rmclips") {
 		rmClips(step.from, step.to);
+	} else if (step.type == "xpcue") {
+		// a spoken cue as a clip at its own speed (no warp), on the export's cue track
+		if (!step.created) {
+			step.created = 1;
+			trackApi.id = job.dest.xpcues;
+			trackApi.call("create_audio_clip", step.file, step.pos);
+			var xc = findClipAt(job.dest.xpcues, step.pos);
+			if (xc) { clipApi.id = xc; if (num(clipApi.get("warping"))) clipApi.set("warping", 0); }
+			else log("export: cue " + step.name + " not placed");
+		}
 	} else if (step.type == "xpready") {
 		exportReady();
 		return;
@@ -4473,7 +4486,7 @@ function printPieces(s) {
 	if (medOf(s)) {
 		for (var j = 0; j < sg.sections.length; j++) {
 			var sc = sg.sections[j];
-			out.push({ a: sc.start, b: sc.end, bpm: medBpmAt(s, sc.start), semis: null, mute: {} });
+			out.push({ a: sc.start, b: sc.end, bpm: medBpmAt(s, sc.start), semis: null, mute: {}, head: 1, name: sc.name });
 		}
 		return out;
 	}
@@ -4490,9 +4503,11 @@ function printPieces(s) {
 		var e2 = k + 1 < L.length ? evAt(s, L, k + 1) : {}, rampBars = 0, target = 0;
 		if (e2.t && e2.t.ramp > 0) { target = e2.t.bpm || base; rampBars = Math.min(e2.t.ramp, Math.floor((sec.end - sec.start) / bl)); }
 		var rs = rampBars && target && Math.abs(target - bpm) > 0.01 ? sec.end - rampBars * bl : sec.end;
-		if (rs > sec.start + 0.01) out.push({ a: sec.start, b: rs, bpm: bpm, semis: st.semis, mute: mute });
+		var head = 1;
+		if (rs > sec.start + 0.01) { out.push({ a: sec.start, b: rs, bpm: bpm, semis: st.semis, mute: mute, head: head, name: sec.name }); head = 0; }
 		for (var r = 0; rs < sec.end - 0.01 && r < rampBars; r++) {
-			out.push({ a: rs + r * bl, b: Math.min(sec.end, rs + (r + 1) * bl), bpm: bpm + (target - bpm) * (r + 0.5) / rampBars, semis: st.semis, mute: mute });
+			out.push({ a: rs + r * bl, b: Math.min(sec.end, rs + (r + 1) * bl), bpm: bpm + (target - bpm) * (r + 0.5) / rampBars, semis: st.semis, mute: mute, head: head, name: sec.name });
+			head = 0;
 		}
 	}
 	return out;
@@ -4508,7 +4523,8 @@ function printClips(a, b, guide, clickToo) {
 		if (num(trackApi.get("has_midi_input"))) continue;
 		var nm = str(trackApi.get("name")), isClick = normTrack(nm) == "click" || CLICK_RE.test(nm) || id == clickTrackId;
 		if (isClick && !clickToo) continue;
-		if (!isClick && GUIDEV_RE.test(nm) && !guide) continue;
+		// the Guide stem stays out: its words follow the original order, not the arrangement
+		if (!isClick && (GUIDEV_RE.test(nm) || guideIds.indexOf(id) >= 0)) continue;
 		var raw = trackApi.get("arrangement_clips") || [];
 		for (var k = 0; k < raw.length; k++) {
 			if (raw[k] != "id") continue;
@@ -4537,13 +4553,23 @@ function exportStart(o) {
 	if (!list.length) { exportMsg("error", "nothing"); return; }
 	var bl = barLen(), guide = !!o.guide, clickToo = !!o.click;
 	var last = songEndBeats();
-	var P = Math.ceil((last + 4 * bl) / bl - 1e-6) * bl, Q = P, T = 0, steps = [], n = 0;
+	var P = Math.ceil((last + 4 * bl) / bl - 1e-6) * bl, Q = P, T = 0, steps = [], n = 0, cueSteps = [], noCue = {};
+	var lead = cueStyle ? 1 : cueBars;
 	for (var q = 0; q < list.length; q++) {
 		var s = list[q], pcs = printPieces(s);
 		if (!T && pcs.length) T = pcs[0].bpm || songBpm(s) || tempo;
 		if (q > 0) Q += bl;   // a bar of silence between songs
+		var sbl = meterBeats(songs[s].meter) || bl, prevHead = Q, prevSc = 1;
 		for (var p = 0; p < pcs.length; p++) {
 			var pc = pcs[p], sc = T / (pc.bpm || T), under = printClips(pc.a, pc.b, guide, clickToo);
+			// the cue of the block that starts here, said as SetPilot says it live: its bars before, never before the block before it
+			if (guide && pc.head && p > 0) {
+				var ctext = cleanCue(pc.name), cfile = cuePathFor(ctext, s);
+				if (cfile) cueSteps.push({ type: "xpcue", file: cfile, pos: Math.max(prevHead, Q - lead * sbl * prevSc), name: ctext });
+				else if (ctext) noCue[ctext] = 1;
+			}
+			if (pc.head) prevHead = Q;
+			prevSc = sc;
 			for (var c = 0; c < under.length; c++) {
 				var cl = under[c];
 				if (pc.mute[cl.norm]) continue;
@@ -4562,9 +4588,12 @@ function exportStart(o) {
 	xp = { P: P, Q: Q, T: T, title: title, guide: guide, click: clickToo, phase: "print",
 		saved: { tempo: tempo, loop: num(getProp("loop")), ls: num(getProp("loop_start")), ll: num(getProp("loop_length")), time: num(getProp("current_song_time")), clickOn: click.on } };
 	steps.unshift({ type: "tempo", bpm: T });
+	if (cueSteps.length) { steps.push({ type: "track", name: "SP Export Cues", key: "xpcues" }); steps = steps.concat(cueSteps); }
 	steps.push({ type: "xpready" });
 	job = { steps: steps, i: 0, P: P, dest: {}, title: title, savedTempo: xp.saved.tempo, warp: {}, xp: 1 };
 	exportMsg("start", title, steps.length, Math.round((Q - P) / bl));
+	var nc = Object.keys(noCue);
+	if (guide) log("export cues: " + cueSteps.length + " as clips" + (nc.length ? ", no recording for " + nc.join(", ") : ""));
 	log("export " + title + ": " + list.length + " song(s), " + n + " clips printed at bar " + (Math.round(P / bl) + 1) + ", " + Math.round((Q - P) / bl) + " bars at " + Math.round(T * 100) / 100 + " bpm" + (guide ? ", guide" : "") + (clickToo ? ", click" : ""));
 }
 
@@ -4583,8 +4612,8 @@ function exportReady() {
 	// SetPilot's own click and its guide gate stay out of the render; the songs' stems decide
 	click.lastSent = "";
 	sendClick();
-	if (xp.guide) { setGate(1, true); muteTracks(guideIds, 0, mutedGuide); }
 	if (xp.click) muteTracks(clickIds, 0, mutedClick);
+	xp.cueTrack = job && job.dest ? job.dest.xpcues || 0 : 0;
 	xp.phase = "ready";
 	job = null;
 	exportMsg("ready", xp.title, Math.round((xp.Q - xp.P) / barLen()), Math.round((xp.Q - xp.P) * 60 / xp.T));
@@ -4593,8 +4622,12 @@ function exportReady() {
 // the Export window closed (or the export was called off): the print goes, everything as it was
 function exportClean(why) {
 	if (!xp) { exportMsg("clean", why || ""); return; }
+	var ct = xp.cueTrack || (job && job.dest && job.dest.xpcues) || 0;
 	if (job && job.xp) job = null;
 	try { rmClips(xp.P - 0.001, 1e9); } catch (e) { log("export clean: " + e.message); }
+	if (ct) {
+		try { var ti = trackIds().indexOf(ct); if (ti >= 0) song.call("delete_track", ti); } catch (e) { log("export clean: cue track " + e.message); }
+	}
 	var sv = xp.saved;
 	try {
 		setProp("loop_start", sv.ls); setProp("loop_length", sv.ll); setProp("loop_start", sv.ls);
@@ -4648,4 +4681,19 @@ function scaleWarp(clip, sm, em, f, name) {
 		else { clip.set("loop_end", end); clip.set("end_marker", end); }
 	} catch (e) { log("export: " + name + " end " + e.message); }
 	if (refused) log("export: " + name + " " + refused + " warp markers refused");
+}
+
+// the file SetPilot says a section's name with, for a song (as loaded for playing)
+function cuePathFor(text, s) {
+	if (!text) return "";
+	var k = cueKey(text, s);
+	if (cuePaths[k]) return cuePaths[k];
+	var best = "";
+	for (var key in cuePaths) {
+		if (!cuePaths.hasOwnProperty(key)) continue;
+		var bare = key.replace(/^[gu]\|[^|]*\|/, "");
+		if (bare == text) return cuePaths[key];
+		if (!best && bare.replace(/@[\d.]+@\d+$/, "") == text) best = cuePaths[key];
+	}
+	return best;
 }

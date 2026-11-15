@@ -2349,13 +2349,12 @@
     var st = (struct && struct.settings) || { cueMode: 2, cueBars: 1, cueLang: 2 };
     setSeg("optCueMode", st.cueMode);
     setSeg("optCueBars", st.cueBars);
-    setSeg("optCueLang", st.cueLang);
     setSeg("optCueStyle", st.cueStyle || 0);
-    setSeg("optCueSource", st.cueSource == null ? 1 : st.cueSource);
+    setSeg("optCueSource", st.cueSource == null ? 0 : st.cueSource);
     setSeg("countIn", st.precount || 0);
     setSeg("optLang", window.SPI18N.lang);
     $("cueModeHelp").textContent = T(["cueHelpOff", "cueHelpFix", "cueHelpAll"][st.cueMode] || "cueHelpAll");
-    $("voiceInfo").textContent = voice && voice.name ? T("voiceName", { name: voice.name }) : "";
+    $("voiceInfo").textContent = voice && voice.bank != null ? (voice.bank ? T("bankInfo", { n: voice.bank }) : T("bankNone")) : "";
 
     var c = (struct && struct.click) || {};
     $("optClickOn").checked = c.on !== 0;
@@ -2470,7 +2469,6 @@
   }
   bindSeg("optCueMode", "cuemode");
   bindSeg("optCueBars", "cuebars");
-  bindSeg("optCueLang", "cuelang");
   bindSeg("optCueStyle", "cuestyle");
   bindSeg("optCueSource", "cuesource");
   bindSeg("optClickSound", "clicksound");
