@@ -731,7 +731,7 @@ function tick() {
 	if (ramp) guard("ramp", runRamp)();
 	if (pre) guard("countin", runCountIn)();
 	if (fade) guard("fade", runFade)();
-	if (playing && curSong >= 0 && !pre) guard("auto", applyAuto)(curSong, curSec);
+	if (playing && curSong >= 0 && !pre && !(under && !under.open)) guard("auto", applyAuto)(curSong, curSec);
 	if (curSong >= 0 && !playing && armSong < 0) armSong = curSong;
 
 	if (playing && !wasPlaying) tickLog = 0;
@@ -744,6 +744,7 @@ function tick() {
 	guard("listen", listenTick)();
 	guard("medpad", medPadTick)();
 	guard("clicksong", clkTick)();
+	guard("underscore", underTick)();
 	if (!job) guard("automation", autoTick)();
 	if (medPlace) guard("medplace", runMedPlace)();
 	if (clock - lastTrackScan > 3000) { lastTrackScan = clock; scanTracks(); }
@@ -775,10 +776,11 @@ function runTransport() {
 			landed(); // the timeline got there on its own
 		} else if (!queue.fired) {
 			var cs = (curSong >= 0) ? songs[curSong].sections[curSec] : null;
-			var contiguous = cs && Math.abs(cs.end - target.start) < 0.001 && !queue.now;
+			// the underscore goes round one bar: nothing is reached on its own, the jump lands on its bar line
+			var contiguous = cs && Math.abs(cs.end - target.start) < 0.001 && !queue.now && !under;
 			if (contiguous) {
 				queue.contiguous = 1; // the timeline already goes there
-			} else if (queue.now || !cs || t >= cs.end - bl + 0.05) {
+			} else if (queue.now || !cs || t >= cs.end - bl + 0.05 || under) {
 				queue.savedQuant = fireJump(target.cue);
 				queue.fired = 1;
 				queue.firedAt = clock;
@@ -2181,7 +2183,8 @@ function send() {
 		q && q.arrK != null ? q.arrK : -1, q && q.auto ? 1 : 0,
 		med ? med.i : -1, med ? med.k : -1, q && q.medK != null ? q.medK : (q && q.medStart != null ? 0 : -1),
 		padFree ? 1 : 0,
-		autoKeyNow(curSong)
+		autoKeyNow(curSong),
+		under ? (under.go ? 2 : 1) : 0
 	];
 	var key = msg.slice(2).join(" ");
 	// the dashboard runs its own clock between messages: the time alone is sent 20 times a second
@@ -2195,6 +2198,7 @@ function send() {
 // ------------------------------------------------------------------ commands from the dashboard
 
 function play() {
+	if (under) { underGo(); return; }
 	if (playing) return;
 	if (armSong < 0 && order.length && order[0] >= MED && !med) prepareMedley(order[0] - MED);
 	var s = armSong >= 0 ? armSong : (order.length ? order[0] : -1);
@@ -2723,6 +2727,7 @@ function stop() {
 		playing = 0;
 		if (queue) { restoreQuant(queue); queue = null; }
 		finishRamp();
+		underEnd();
 		endCountIn();
 		restoreFade();
 		clearAuto();
@@ -2915,6 +2920,7 @@ function computePlan() {
 		}
 	}
 	if (!playing || curSong < 0 || cueMode == CUE_OFF) return null;
+	if (under && !queue) return null;   // the underscore says nothing until a section is asked for
 	var s = songs[curSong], sec = s.sections[curSec], bl = barLen();
 	if (!sec) return null;
 	var B = sec.end, target = null, natural = false, now = false;
@@ -3483,11 +3489,11 @@ function sendClick() {
 	// the song's own bar lines (a 6/8 song may not sit on Live's grid from the set's start)
 	var mo = s >= 0 && songs[s] && medOf(s) ? medMeterAt(s, playing ? t + 0.1 * tempo / 120 : songs[s].start) : null;
 	var origin = mo ? mo.origin : s >= 0 && songs[s] ? songs[s].start : 0;
-	var P = ["on", !xp && (click.on || clkSong >= 0 || (playing && medCountForce)) ? 1 : 0, "beats", sigNum, "sub", sub, "accmask", m.acc, "mutemask", m.mute, "midmask", m.mid, "softmask", m.soft, "origin", Math.round(origin * 1000) / 1000,
+	var P = ["on", !xp && (click.on || clkSong >= 0 || under || (playing && medCountForce)) ? 1 : 0, "beats", sigNum, "sub", sub, "accmask", m.acc, "mutemask", m.mute, "midmask", m.mid, "softmask", m.soft, "origin", Math.round(origin * 1000) / 1000,
 		"lvlacc", click.acc / 100, "lvlbeat", click.beat / 100, "lvlsub", click.subl / 100,
 		"sound", click.sound, "gain", click.gain / 100,
 		// songs' click stems land on this track too: heard only when SetPilot's click doesn't replace them
-		"thru", click.on && click.muteSong && !xp ? 0 : 1];
+		"thru", ((click.on && click.muteSong) || (under && !under.open)) && !xp ? 0 : 1];
 	var sig = P.join(",");
 	if (sig == click.lastSent && clock - (click.sentAt || 0) < 5000) return;
 	click.lastSent = sig; click.sentAt = clock;
@@ -3495,7 +3501,7 @@ function sendClick() {
 }
 
 function applyClickMutes() {
-	var v = click.on && click.muteSong && clickPresent() ? 1 : 0;
+	var v = ((click.on && click.muteSong) || (under && !under.open)) && clickPresent() ? 1 : 0;
 	muteTracks(clickIds, v, mutedClick);
 }
 
@@ -4696,4 +4702,115 @@ function cuePathFor(text, s) {
 		if (!best && bare.replace(/@[\d.]+@\d+$/, "") == text) best = cuePaths[key];
 	}
 	return best;
+}
+
+// ------------------------------------------------------------------ underscore
+// A moment of prayer before a song: SetPilot's click at the song's tempo and
+// time signature and the pad in its key, without the song. Live goes round
+// the song's first bar with the band silent. When the song is asked for (the
+// button again, or a section), the same click counts it in: the band comes in
+// on the next bar line.
+var under = null;   // { song, ids: [muted here], a, b, go, pad, loop: { on, ls, ll }, at }
+
+function underscore(on) {
+	var want = on === undefined || on === "" ? !under : !!parseInt(on, 10);
+	if (under && !want) { underGo(); return; }
+	if (under || !want) return;
+	if (xp || job || pre) return;
+	if (playing) { outlet(0, "notice", "underplaying"); return; }
+	var s = armSong >= 0 ? armSong : (curSong >= 0 ? curSong : (order.length && order[0] < MED ? order[0] : -1));
+	if (s < 0 || s >= songs.length || !songs[s] || clkOf(s)) return;
+	if (!clickPresent()) { outlet(0, "notice", "undernoclick"); return; }
+	prepareSong(s);
+	var sg = songs[s], bl = meterBeats(sg.meter) || barLen();
+	var muted = [], list = songTrackIds(true);
+	for (var i = 0; i < list.length; i++) {
+		trackApi.id = list[i].id;
+		if (num(trackApi.get("mute"))) continue;
+		trackApi.set("mute", 1);
+		muted.push(list[i].id);
+	}
+	under = { song: s, ids: muted, a: sg.start, b: sg.start + bl, go: 0, pad: 0, at: clock, started: 0,
+		loop: { on: num(getProp("loop")), ls: num(getProp("loop_start")), ll: num(getProp("loop_length")) } };
+	guard("tempo", applyTempo)(s);
+	applyClickMutes();
+	click.lastSent = "";
+	sendClick();
+	setProp("loop_start", under.a); setProp("loop_length", bl); setProp("loop_start", under.a);
+	setProp("loop", 1);
+	if (tailPresent() && !padFree) { padfree(1); under.pad = 1; }
+	armedKey = null;
+	moveTo(under.a);
+	startFrom(under.a);
+	log("underscore for " + sg.name + ": click and pad, the band silent");
+	send();
+}
+
+// the song itself: from its start at the next bar line, or wherever a section was asked for
+function underGo() {
+	if (!under || under.go) return;
+	var s = under.song, f = firstSec(s);
+	if (f > 0 && songs[s].sections[f]) { queueSection(s, f, 0, 0); under.go = 2; }
+	else under.go = 1;
+	send();
+}
+
+function underEnd(keepPad) {
+	if (!under) return;
+	var u = under;
+	under = null;
+	for (var i = 0; i < u.ids.length; i++) {
+		trackApi.id = u.ids[i];
+		try { trackApi.set("mute", 0); } catch (e) { }
+	}
+	try {
+		if (num(getProp("loop"))) setProp("loop", 0);
+		setProp("loop_start", u.loop.ls); setProp("loop_length", u.loop.ll); setProp("loop_start", u.loop.ls);
+	} catch (e) { }
+	liveLoop = 0;
+	if (u.pad && padFree && !keepPad) padfree(0);
+	applyClickMutes();
+	click.lastSent = "";
+	sendClick();
+	armedKey = null;
+	autoAt = "";
+}
+
+function underTick() {
+	if (!under) return;
+	var u = under;
+	if (!playing) { if (u.started || clock - u.at > 1500) underEnd(); return; }
+	u.started = 1;
+	if (wantStart) return;
+	// a section was chosen: Live jumps on the bar line; the band is back just before it lands
+	if (queue && !u.go) u.go = 2;
+	var lead = (0.03 + writeLead) * tempo / 60;
+	if (t < lastT - 0.25) u.wrapped = 1;
+	if (u.go == 2) {
+		if (!queue) {
+			if (u.fp == null && t >= u.a - 0.01 && t < u.b + 0.01) { u.go = 0; send(); return; }   // taken back
+			underEnd();
+			return;
+		}
+		if (t >= u.b + 0.01 || t < u.a - 0.01) { underEnd(); return; }
+		if (queue.fired && u.fp == null) { u.fp = t; u.wrapped = 0; }
+		// Live jumps on the next bar line when it was asked in time; asked too late, it goes round once more
+		if (u.fp != null && t >= u.b - lead && (u.wrapped || u.b - u.fp > 0.3 * tempo / 60)) underUnmute();
+		return;
+	}
+	if (u.go == 1) {
+		// the bar ends: the band is unmuted a moment before, and once Live is back at the start the loop goes off
+		if (t >= u.b - lead) { underUnmute(); u.wrap = 1; }
+		if (u.wrap && t < u.a + (u.b - u.a) / 2) { log("underscore: into " + songs[u.song].name); underEnd(); }
+	}
+}
+
+function underUnmute() {
+	if (!under || under.open) return;
+	under.open = 1;
+	for (var i = 0; i < under.ids.length; i++) {
+		trackApi.id = under.ids[i];
+		try { trackApi.set("mute", 0); } catch (e) { }
+	}
+	under.ids = [];
 }

@@ -50,7 +50,8 @@
     "extraResources": [
       { "from": "plugin-dist", "to": "plugins", "filter": ["**/*"] },
       { "from": "native-dist", "to": "bin", "filter": ["**/*"] },
-      { "from": "assets/pads", "to": "pads", "filter": ["**/*"] }
+      { "from": "assets/pads", "to": "pads", "filter": ["**/*"] },
+      { "from": "assets/cue-bank", "to": "cue-bank", "filter": ["**/*.wav"] }
     ],
     "mac": {
       "target": [

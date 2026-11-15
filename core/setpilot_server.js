@@ -38,7 +38,7 @@ const COMMANDS = {
 	autostop: 1, setorder: -1, cuemode: 1, cuebars: 1, cuelang: 1,
 	clickon: 1, clicksound: 1, clicksub: 1, clickmute: 1, clickaccent: 2, clickreset: 0, clicklevel: 2,
 	temposet: 2, keyset: 2, clearfrom: 1, transition: 2, transdefault: 1, warpinfo: 1, rewarpsong: 1, mixvol: 2, mixmute: 2, mixsolo: 2, mixeron: 0,
-	precount: 1, cuestyle: 1, arrset: -1, arrgo: 3, selectmed: 2, medgo: 3, playmed: 1, medlisten: 2, padfree: -1, clipinfo: 1, cuesource: 1, warpcheck: 1, fadeout: 1, fadein: 1, autoset: 5, autoclear: 3, movesec: 3, wave: 1, routeopts: 0, setoutput: 2, applyoutputs: 0, settrackinstr: 2
+	precount: 1, cuestyle: 1, arrset: -1, arrgo: 3, selectmed: 2, medgo: 3, playmed: 1, medlisten: 2, padfree: -1, clipinfo: 1, cuesource: 1, warpcheck: 1, fadeout: 1, fadein: 1, autoset: 5, autoclear: 3, movesec: 3, wave: 1, routeopts: 0, setoutput: 2, applyoutputs: 0, settrackinstr: 2, underscore: -1
 };
 
 function lanAddress() {
@@ -77,7 +77,7 @@ function start(engine) {
 			song: a[5], sec: a[6],
 			qSong: a[7], qSec: a[8], qFired: a[9],
 			loopSong: a[10], loopSec: a[11], loopOnce: a[12], liveLoop: a[13],
-			armSong: a[14], pendingSong: a[15], autoStop: a[16], version: a[17], fade: a[18] || 0, countIn: a[19] || 0, arrK: a[20] == null ? -1 : a[20], qArrK: a[21] == null ? -1 : a[21], qAuto: a[22] || 0, med: a[23] == null ? -1 : a[23], medK: a[24] == null ? -1 : a[24], qMedK: a[25] == null ? -1 : a[25], padFree: a[26] || 0, autoKey: a[27] == null ? -99 : a[27],
+			armSong: a[14], pendingSong: a[15], autoStop: a[16], version: a[17], fade: a[18] || 0, countIn: a[19] || 0, arrK: a[20] == null ? -1 : a[20], qArrK: a[21] == null ? -1 : a[21], qAuto: a[22] || 0, med: a[23] == null ? -1 : a[23], medK: a[24] == null ? -1 : a[24], qMedK: a[25] == null ? -1 : a[25], padFree: a[26] || 0, autoKey: a[27] == null ? -99 : a[27], under: a[28] || 0,
 			at: Date.now()
 		};
 		broadcast("pos", pos);
@@ -688,6 +688,67 @@ if (maxApi) {
 		}
 	} catch (e) { }
 
+	// Song names have no recording: the Mac says them (a Spanish voice for a
+	// Spanish title), only them. Everything else comes from the cue bank.
+	let voices = null;
+	function listVoices() {
+		return new Promise(resolve => {
+			if (voices) return resolve(voices);
+			if (process.platform !== "darwin") { voices = []; return resolve(voices); }
+			execFile("/usr/bin/say", ["-v", "?"], { maxBuffer: 4 << 20 }, (err, out) => {
+				voices = [];
+				try { fs.mkdirSync(CUE_DIR, { recursive: true }); fs.writeFileSync(path.join(CUE_DIR, "voices.txt"), (err ? "ERR " + err.message + "\n" : "") + out); } catch (e) { }
+				if (!err) for (const line of out.split("\n")) {
+					const m = line.match(/^(.+?)\s+([a-z]{2,3}_[A-Za-z0-9]{2,})\s+#/);
+					if (m) voices.push({ name: m[1].trim(), lang: m[2].replace("-", "_") });
+				}
+				resolve(voices);
+			});
+		});
+	}
+
+	function pickVoice(list, lang) {
+		const novelty = /^(Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Fred|Junior|Kathy|Ralph|Eddy|Flo|Grandma|Grandpa|Reed|Rocko|Sandy|Shelley)\b/;
+		const region = lang === "es" ? ["es_MX", "es_US", "es_419", "es_ES"] : ["en_US", "en_GB", "en_AU", "en_CA"];
+		let best = null, bestScore = -1;
+		for (const v of list) {
+			if (!v.lang.startsWith(lang + "_") || novelty.test(v.name)) continue;
+			let score = 10 - Math.max(0, region.indexOf(v.lang) < 0 ? 5 : region.indexOf(v.lang));
+			if (/premium/i.test(v.name)) score += 30;
+			else if (/enhanced|mejorad/i.test(v.name)) score += 20;
+			if (/^(Paulina|Mónica|Monica|Samantha|Ava|Zoe|Allison)\b/.test(v.name)) score += 5;
+			if (score > bestScore) { bestScore = score; best = v; }
+		}
+		return best;
+	}
+
+	function speak(voice, text, out, rate) {
+		return new Promise(resolve => {
+			const args = ["-r", String(rate || 185), "-o", out, "--file-format=WAVE", "--data-format=LEI16@44100"];
+			if (voice) args.unshift("-v", voice.name);
+			args.push(text);
+			execFile("/usr/bin/say", args, err => resolve(!err));
+		});
+	}
+
+	async function macVoice(voice, vdir, text, rate) {
+		const file = path.join(vdir, slug(text) + (rate ? "-" + rate : "") + ".wav");
+		if (fs.existsSync(file)) return file;
+		const raw = file + ".raw.wav";
+		if (!(await speak(voice, text, raw, rate))) return null;
+		try { normalizeCueFile(raw, file); } finally { fs.unlink(raw, () => {}); }
+		return file;
+	}
+	const ES_TITLE = /[áéíóúñ¿¡]|\b(el|la|los|las|de|del|y|tu|tus|mi|mis|es|en|que|con|por|para|dios|señor|senor|rey|santo|santa|gracia|amor|cielo|fiel|grande|nombre|digno|eres|te|al|un|una|como|más|mas|aquí|aqui|vida|luz|fuego|gloria|aleluya|cristo|jesús|espíritu|espiritu|corazón|corazon|alabanza|nada|todo|siempre|nuestro|nuestra)\b/i;
+	async function songNameCue(text) {
+		const list = await listVoices();
+		const lang = ES_TITLE.test(text) ? "es" : "en";
+		const voice = pickVoice(list, lang) || pickVoice(list, lang === "es" ? "en" : "es");
+		if (!voice && process.platform !== "darwin") return null;
+		const vdir = path.join(CUE_DIR, "names-" + slug(voice ? voice.name : "default"));
+		fs.mkdirSync(vdir, { recursive: true });
+		return macVoice(voice, vdir, text);
+	}
 	// the cue bank: the app's own recordings, and any the user adds in cues/bank
 	const { makeBank } = require("./cue_bank.js");
 	const bank = makeBank({
@@ -717,6 +778,9 @@ if (maxApi) {
 		voiceKey = key;
 		srv.setVoice({ name: "", lang: "en", bank: bank.count });
 		const missing = [];
+		// what a song or a medley is called, as the engine says it
+		const titles = new Set();
+		for (const x of ((d && d.songs) || []).concat((d && d.medleys) || [])) if (x && x.name) { titles.add(String(x.name)); titles.add(String(x.name).replace(/\s*[\(\[]?\s*x\s*\d+\s*[\)\]]?\s*$/i, "").replace(/[_]+/g, " ").replace(/\s+/g, " ").trim()); titles.add(String(x.name).replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim()); }
 		let fromGuide = 0;
 		// a medley ("u|id|Text") speaks with one voice: its song's guide when that
 		// guide has every cue of the medley, else the bank for all of them
@@ -752,6 +816,7 @@ if (maxApi) {
 				if (!nameFile && gi && gi.cues[text] && fs.existsSync(gi.cues[text])) { nameFile = gi.cues[text]; fromGuide++; }
 				if (!m) {
 					if (!nameFile) nameFile = bank.cue(text);
+					if (!nameFile && titles.has(text)) nameFile = await songNameCue(text);
 					if (!nameFile) { if (missing.indexOf(text) < 0) missing.push(text); continue; }
 					maxApi.outlet("js", "cuefile", full, nameFile);
 					continue;

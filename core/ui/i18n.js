@@ -5,7 +5,7 @@
   var STR = {
     en: {
       setPad: "Pad", setOutputsShort: "Outputs", lvlPad: "Pad level", padSetHelp: "The recorded pad under medley joins and the Pad button. It plays on the SetPilot Crossfade track, so it goes to that track's output.",
-      padBtn: "Pad", padHelp: "A pad in the key of the song, any time. It fades in, follows the key, and fades out when you turn it off.",
+      underBtn: "Underscore", underGo: "Start song", underGoing: "Coming in...", underHelp: "For a moment of prayer before the song: the click at its tempo and the pad in its key, without the song. Press again, or choose a section, and the same click counts the song in.", ntUnderPlaying: "Stop playback to start the underscore.", ntUnderNoClick: "The underscore needs SetPilot Click in the set.", padBtn: "Pad", padHelp: "A pad in the key of the song, any time. It fades in, follows the key, and fades out when you turn it off.",
       outSpTitle: "SetPilot channels", outSongsTitle: "Song tracks, by instrument", outSpClick: "Click", outSpCues: "Spoken cues", outSpTail: "Crossfade",
       outFollowClick: "Same as the song clicks", outFollowGuide: "Same as the guide", outRefresh: "Look for outputs again",
       outMain: "Main (Live's master)", outIface: "Outputs of {device}", outIfaceNone: "Interface outputs", outTracks: "Other tracks (advanced)",
@@ -131,7 +131,7 @@
     },
     es: {
       setPad: "Pad", setOutputsShort: "Salidas", lvlPad: "Volumen del pad", padSetHelp: "El pad grabado de las uniones de los medleys y del botón Pad. Suena por la pista SetPilot Crossfade, así que va a la salida de esa pista.",
-      padBtn: "Pad", padHelp: "Un pad en el tono de la canción, cuando quieras. Entra suave, sigue el tono y se va suave cuando lo apagas.",
+      underBtn: "Fondo", underGo: "Entrar", underGoing: "Entrando...", underHelp: "Para un momento de oración antes de la canción: el click a su tempo y el pad en su tono, sin la canción. Presiona de nuevo, o elige una sección, y el mismo click da la entrada.", ntUnderPlaying: "Detén la reproducción para empezar el fondo.", ntUnderNoClick: "El fondo necesita SetPilot Click en el set.", padBtn: "Pad", padHelp: "Un pad en el tono de la canción, cuando quieras. Entra suave, sigue el tono y se va suave cuando lo apagas.",
       outSpTitle: "Canales de SetPilot", outSongsTitle: "Pistas de las canciones, por instrumento", outSpClick: "Click", outSpCues: "Cues hablados", outSpTail: "Crossfade",
       outFollowClick: "Igual que el click de las canciones", outFollowGuide: "Igual que la guía", outRefresh: "Buscar salidas otra vez",
       outMain: "Main (master de Live)", outIface: "Salidas de {device}", outIfaceNone: "Salidas de la interfaz", outTracks: "Otras pistas (avanzado)",

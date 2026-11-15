@@ -828,6 +828,56 @@ test("count-in: starts bars early with the band muted, names the section, band e
 	assert.strictEqual(t.pos().sec, 2);
 });
 
+test("underscore: click and pad at the song's tempo with the band silent, then the same click counts the song in", () => {
+	const t = setup({ tail: true });
+	t.cmd("clickon", 0);                         // even with SetPilot's click off
+	t.cmd("selectsong", 1, 0);                   // Cielo Abierto (128 bpm, D) at 256
+	t.run(200);
+	t.cmd("underscore");
+	t.run(400);
+	const drums = t.song.tracks.find(x => x.name === "Drums");
+	assert.strictEqual(t.pos().playing, 1);
+	assert.strictEqual(drums.mute, 1, "the band is silent");
+	assert.strictEqual(t.song.clickParams.on, 1, "SetPilot clicks");
+	assert.strictEqual(t.song.props.tempo, 128);
+	assert.strictEqual(t.song.props.loop, 1);
+	assert.deepStrictEqual([t.song.props.loop_start, t.song.props.loop_length], [256, 4], "round the song's first bar");
+	t.run(8000);                                  // many bars later it is still there
+	assert.ok(t.pos().t >= 256 && t.pos().t < 260, "still on the first bar: " + t.pos().t);
+	assert.strictEqual(drums.mute, 1);
+	assert.ok(!t.song.audio.played.length, "nothing is announced");
+	// the song: from its start on the next bar line, the band in
+	t.cmd("underscore");
+	t.until(p => p.t >= 260.5, 20000);
+	assert.strictEqual(drums.mute, 0, "the band is in");
+	assert.strictEqual(t.song.props.loop, 0, "the loop is off: the song goes on");
+	assert.strictEqual(t.song.clickParams.on, 0, "the click is back to its setting");
+	assert.ok(t.song.log.filter(l => /^loop 260 -> 256/.test(l)).length >= 2);
+});
+
+test("underscore: choosing a section goes there on the bar line with the band in", () => {
+	const t = setup();
+	t.cmd("selectsong", 0, 0);
+	t.run(200);
+	t.cmd("underscore");
+	t.run(3000);
+	const drums = t.song.tracks.find(x => x.name === "Drums");
+	assert.strictEqual(drums.mute, 1);
+	t.cmd("section", 0, 2, 0);                   // Coro at 48
+	t.until(p => p.t >= 48.5 && p.sec === 2, 20000);
+	assert.strictEqual(drums.mute, 0);
+	assert.strictEqual(t.song.props.loop, 0);
+	assert.ok(t.song.log.includes("jump 4 -> 48"), t.song.log.slice(-6).join(", "));
+	// stop while it goes round: everything back
+	const u = setup();
+	u.cmd("selectsong", 0, 0); u.run(200);
+	u.cmd("underscore"); u.run(1000);
+	u.cmd("stop"); u.run(200);
+	assert.strictEqual(u.song.tracks.find(x => x.name === "Drums").mute, 0);
+	assert.strictEqual(u.song.props.loop, 0);
+	assert.strictEqual(u.pos().playing, 0);
+});
+
 test("count-in survives Live starting from its own selection first", () => {
 	for (const sel of [10, 100]) {
 		const t = setup();

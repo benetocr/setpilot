@@ -2065,8 +2065,8 @@
     $("xpPrefs").hidden = !opts.prefs;
     $("xpCancel").hidden = !!opts.noCancel;
   }
-  var KEYS = "<kbd>⌘⇧L</kbd> " + "{then}" + " <kbd>⌘⇧R</kbd>";
-  function xpKeys() { return KEYS.replace("{then}", esc(T("xpThen"))); }
+  var XP_SHORTCUTS = "<kbd>⌘⇧L</kbd> " + "{then}" + " <kbd>⌘⇧R</kbd>";
+  function xpKeys() { return XP_SHORTCUTS.replace("{then}", esc(T("xpThen"))); }
   function onExport(x) {
     if (!x || !x.phase) return;
     var ph = x.phase;
@@ -2319,6 +2319,12 @@
     var pf = !!(pos && pos.padFree);
     $("btnPad").classList.toggle("on", pf);
     $("btnPad").setAttribute("aria-pressed", pf ? "true" : "false");
+    var un = pos ? pos.under || 0 : 0;
+    $("btnUnder").classList.toggle("on", !!un);
+    $("btnUnder").setAttribute("aria-pressed", un ? "true" : "false");
+    $("btnUnder").disabled = playing && !un;
+    $("btnUnderText").textContent = un === 2 ? T("underGoing") : un ? T("underGo") : T("underBtn");
+    $("app").classList.toggle("is-under", !!un);
     $("app").classList.toggle("counting-in", !!(pos && pos.countIn));
     $("app").classList.toggle("is-playing", playing);
     $("liveChip").classList.toggle("playing", playing);
@@ -2929,6 +2935,8 @@
     else if (n.kind === "warpnoref") { warn = true; txt = T("ntWarpNoRef", { song: n.a }); }
     else if (n.kind === "blknew") { warn = true; txt = T(+n.b === 1 ? "ntBlkNew1" : "ntBlkNew", { song: n.a, n: n.b }); }
     else if (n.kind === "guideready") txt = +n.b > 0 ? T("ntGuide", { song: n.a, found: n.b, total: n.c }) : T("ntGuideNone", { song: n.a });
+    else if (n.kind === "underplaying") { warn = true; txt = T("ntUnderPlaying"); }
+    else if (n.kind === "undernoclick") { warn = true; txt = T("ntUnderNoClick"); }
     if (!txt) return;
     showToast(txt, warn);
   }
@@ -3264,6 +3272,7 @@
   $("btnFadeOut").addEventListener("click", function () { send("fadeout", 4000); });
   $("btnFadeIn").addEventListener("click", function () { send("fadein", 3000); });
   $("btnPad").addEventListener("click", function () { send("padfree"); });
+  $("btnUnder").addEventListener("click", function () { send("underscore"); });
 
   function closeSetlist() { $("app").classList.remove("setlist-open"); }
   $("btnSetlist").addEventListener("click", function () { $("app").classList.toggle("setlist-open"); });
