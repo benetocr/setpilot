@@ -135,7 +135,7 @@ jobs:
             rm -rf "$stage"; mkdir -p "$stage"
             ditto "$dir/SetPilot.app" "$stage/SetPilot.app"
             ln -s /Applications "$stage/Applications"
-            hdiutil create -volname "SetPilot" -srcfolder "$stage" -ov -format UDZO "$GITHUB_WORKSPACE/SetPilot-mac-$arch.dmg"
+            for try in 1 2 3 4 5; do hdiutil create -volname "SetPilot" -srcfolder "$stage" -ov -format UDZO "$GITHUB_WORKSPACE/SetPilot-mac-$arch.dmg" && break; [ $try = 5 ] && exit 1; sleep 10; done
           }
           pack dist/mac-arm64 arm64
           pack dist/mac x64
