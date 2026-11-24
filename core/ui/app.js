@@ -2489,6 +2489,41 @@
     }).join("");
   }
 
+  // ---- system check: what this computer needs, and what to do about what's missing
+  var health = null, healthBusy = false;
+  var HC_FIX = { access: "access", tracks: "prepare", bank: "bank" };
+  function loadHealth() {
+    return fetch("/health", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
+      health = j.items || [];
+      var bad = health.some(function (x) { return x.level === "fail" && x.ok === false; });
+      $("btnSettings").classList.toggle("alert", bad);
+      if (!$("settings").hidden) renderHealth();
+    }).catch(function () { });
+  }
+  function renderHealth() {
+    if (!health) { $("healthList").innerHTML = ""; return; }
+    $("healthList").innerHTML = health.map(function (x) {
+      var cls = x.ok === true ? "ok" : x.ok === null ? "unknown" : x.level === "fail" ? "bad" : "missing";
+      var mark = x.ok === true ? "✓" : x.ok === null ? "?" : "!";
+      var title = T("hc_" + x.id + (x.ok === true ? "_ok" : ""), { d: x.detail || "" });
+      var help = x.ok === true ? (x.id === "live" && x.detail ? T("hcLiveVer", { d: x.detail }) : "") : T("hc_" + x.id + "_fix", { d: x.detail || "" });
+      var fix = x.ok !== true && HC_FIX[x.id] ? '<button class="text-btn fix" data-fix="' + HC_FIX[x.id] + '">' + esc(T("hcDo_" + HC_FIX[x.id])) + "</button>" : "";
+      return '<li class="' + cls + '"><span class="mark">' + mark + "</span><div><strong>" + esc(title) + "</strong>" +
+        (help ? "<small>" + esc(help) + "</small>" : "") + fix + "</div></li>";
+    }).join("");
+  }
+  $("healthList").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-fix]");
+    if (!b || healthBusy) return;
+    healthBusy = true; b.disabled = true; b.textContent = T("hcWorking");
+    fetch("/health/fix", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: b.dataset.fix }) })
+      .then(function (r) { return r.json(); }).catch(function () { return {}; })
+      .then(function () { healthBusy = false; setTimeout(loadHealth, 1500); });
+  });
+  $("btnHealth").addEventListener("click", function () { $("healthList").classList.add("busy"); loadHealth().then(function () { $("healthList").classList.remove("busy"); }); });
+  loadHealth();
+  setInterval(loadHealth, 30000);
+
   function bindSeg(id, cmd, numeric) {
     $(id).addEventListener("click", function (e) {
       var b = e.target.closest("button");
@@ -3313,6 +3348,7 @@
     el.hidden = false;
     $("btnSettings").setAttribute("aria-expanded", "true");
     updateSettings();
+    renderHealth(); loadHealth();
     $("setBody").scrollTop = 0;
     markSetNav("general");
     setTimeout(function () { try { $("setClose").focus({ preventScroll: true }); } catch (e) { } }, 60);

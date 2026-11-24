@@ -559,6 +559,25 @@ function start(engine) {
 			});
 			return;
 		}
+		if (req.method === "GET" && url.pathname === "/health") {
+			let items = [];
+			try { items = engine.health ? engine.health() : []; } catch (e) { items = []; }
+			res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+			res.end(JSON.stringify({ items }));
+			return;
+		}
+		if (req.method === "POST" && url.pathname === "/health/fix") {
+			let body = "";
+			req.on("data", c => { body += c; if (body.length > 1e4) req.destroy(); });
+			req.on("end", async () => {
+				let out = { ok: false };
+				try { const q = JSON.parse(body || "{}"); out = engine.healthFix ? await engine.healthFix(String(q.action || "")) : out; }
+				catch (e) { out = { ok: false, error: e.message }; }
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify(out));
+			});
+			return;
+		}
 		if (req.method === "GET" && url.pathname === "/state") {
 			res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
 			res.end(JSON.stringify({ struct, pos, cue, voice, mixer, routes }));
@@ -624,6 +643,22 @@ if (maxApi) {
 		},
 		exportNext() { if (xpRun && xpRun.manual) xpNextFile(true); },
 		openAccessibility() { if (maxApi.openAccessibility) maxApi.openAccessibility(); },
+		// the system check: the host's (Live, the script, the plug-in, the set, permissions) and the cue bank
+		health() {
+			let items = [];
+			try { items = maxApi.health ? maxApi.health() : []; } catch (e) { writeLog("system check failed:", e.message); }
+			try { bank.scan(); } catch (e) { }
+			items.push({ id: "bank", level: "fail", ok: bank.count > 0, detail: String(bank.count) });
+			if (bank.count > 0) items.push({ id: "missing", level: "warn", ok: cueMissing.length === 0, detail: cueMissing.join(", ") });
+			items.push({ id: "pads", level: "warn", ok: !!maxApi.padDir });
+			return items;
+		},
+		async healthFix(action) {
+			if (action === "access") { if (maxApi.openAccessibility) maxApi.openAccessibility(); return { ok: true }; }
+			if (action === "prepare") { if (!maxApi.prepareSet) return { ok: false, error: "no_host" }; const r = await maxApi.prepareSet(); return { ok: !!r.ok, done: r.done, error: r.err }; }
+			if (action === "bank") { if (maxApi.reveal) { const dir = path.join(process.env.SETPILOT_LIB || CUE_DIR, "Cue Bank"); try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { } maxApi.reveal(dir); } return { ok: true }; }
+			return { ok: false, error: "unknown" };
+		},
 		exportCancel(why) {
 			if (exportWatch) { exportWatch.stop(); exportWatch = null; }
 			xpRun = null;
@@ -760,6 +795,7 @@ if (maxApi) {
 	}
 	// the cue bank: the app's own recordings, and any the user adds in cues/bank
 	const { makeBank } = require("./cue_bank.js");
+	let cueMissing = [];
 	const bank = makeBank({
 		dirs: [process.env.SETPILOT_LIB ? path.join(process.env.SETPILOT_LIB, "Cue Bank") : null, path.join(CUE_DIR, "bank"), process.resourcesPath ? path.join(process.resourcesPath, "cue-bank") : null, path.join(__dirname, "..", "assets", "cue-bank")],
 		cacheDir: path.join(CUE_DIR, "bank-ready"), log: m => writeLog(m)
@@ -852,6 +888,7 @@ if (maxApi) {
 				maxApi.outlet("js", "cuefile", full, out);
 			} catch (e) { writeLog("cue failed for", full, e.message); }
 		}
+		if (fresh) cueMissing = missing.slice();
 		if (fresh) writeLog("cues ready:", texts.length, "from the bank (" + bank.count + " recordings)", fromGuide ? "(" + fromGuide + " from guides)" : "", missing.length ? "| no recording for: " + missing.join(", ") : "");
 	}
 

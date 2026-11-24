@@ -262,6 +262,9 @@ function initImpl() {
 
 	// a new connection numbers Live's objects anew: forget ids from before
 	mutedGuide = {}; mutedClick = {};
+	// the players say hello again in a moment with their new track ids; an
+	// old id may now be a clip or a device of the new set
+	tailTrackId = 0; tailSeen = -99999; clickTrackId = 0; clickSeen = -99999; gateTrackId = 0; gateSeen = -99999;
 	mix.tracks = []; mix.ids = ""; mix.sig = ""; mix.curve = null; mix.dirty = true;
 	loadStore();
 	scanTracks();
@@ -2882,6 +2885,13 @@ function cleanCue(name) {
 		.replace(/^\s+|\s+$/g, "");
 }
 
+// markers that only mark the file, not a part the band plays: never announced
+var SILENT_SECTION = /^(count[\s-]*(off|in)|start|click|silence|pre[\s-]*roll|cuenta|inicio)$/i;
+function secCue(name) {
+	var c = cleanCue(name);
+	return SILENT_SECTION.test(c) ? "" : c;
+}
+
 function loadedCues() {
 	var out = [];
 	for (var k in cueMap) if (cueMap.hasOwnProperty(k)) out.push(k);
@@ -2916,13 +2926,13 @@ function cueTexts() {
 	// medleys: one voice and one tempo for all their cues
 	for (var mi = 0; mi < medleys.length; mi++) {
 		var sl = medSlots(mi);
-		for (var q = 0; q < sl.length; q++) add(cleanCue(songs[sl[q].s].sections[sl[q].j].name), sl[q].s, mi);
+		for (var q = 0; q < sl.length; q++) add(secCue(songs[sl[q].s].sections[sl[q].j].name), sl[q].s, mi);
 	}
 	for (var i = 0; i < songs.length; i++) {
 		var md = medOf(i);
 		for (var j = 0; j < songs[i].sections.length; j++) {
-			add(cleanCue(songs[i].sections[j].name), i);
-			if (md) add(cleanCue(songs[i].sections[j].name), i, null, songIdentityAt(i, songs[i].sections[j].start));
+			add(secCue(songs[i].sections[j].name), i);
+			if (md) add(secCue(songs[i].sections[j].name), i, null, songIdentityAt(i, songs[i].sections[j].start));
 		}
 		// a change of song is announced by its name (plain, never counted)
 		var names = [songs[i].name];
@@ -2931,7 +2941,7 @@ function cueTexts() {
 		// the next song's first section is announced in this song's tempo
 		var n = order.length ? order[(setlistPos(i) + 1) % order.length] : -1;
 		if (n >= MED) { var ms = medSlots(n - MED); n = ms.length ? ms[0].s : -1; }
-		if (cueStyle && n >= 0 && n != i && songs[n] && songs[n].sections[firstSec(n)]) add(cleanCue(songs[n].sections[firstSec(n)].name), i);
+		if (cueStyle && n >= 0 && n != i && songs[n] && songs[n].sections[firstSec(n)]) add(secCue(songs[n].sections[firstSec(n)].name), i);
 	}
 	return out;
 }
@@ -2952,7 +2962,7 @@ function computePlan() {
 	if (pre && playing && cueMode != CUE_OFF) {
 		var ps = songs[pre.song], psec = ps && ps.sections[pre.sec];
 		if (psec) {
-			var pbl = barLen(), ptext = cleanCue(psec.name);
+			var pbl = barLen(), ptext = secCue(psec.name);
 			if (precountBars >= 2 && pre.S - pre.from > pbl + 0.01 && t < pre.S - pbl - 0.05) {
 				var ck = countKey(pre.song);
 				if (ck && cueMap[ck]) return { cueAt: pre.from, B: pre.S - pbl, text: "1", natural: false, now: false, song: pre.song, idxKey: ck, key: "precount|" + pre.from + "|" + cueMode };
@@ -2967,7 +2977,7 @@ function computePlan() {
 		if (medHold.rel != 1) return null;
 		var hn = songs[curSong].sections[curSec + 1];
 		if (!hn) return null;
-		var htx = cleanCue(hn.name);
+		var htx = secCue(hn.name);
 		if (precountBars >= 2 && !(medHold.passes >= 1)) {
 			var hck = countKey(curSong);
 			if (hck && cueMap[hck]) return { cueAt: medHold.b - 0.02, B: medHold.b, text: "1", natural: false, now: false, song: curSong, wrap: 1, idxKey: hck, key: "mhcount|" + medHold.at };
@@ -2979,7 +2989,7 @@ function computePlan() {
 	if (under) {
 		var us = songs[under.song], usec = under.go && under.cueOk && !under.count && us ? us.sections[under.target] : null;
 		if (!usec) return null;
-		var utext = cleanCue(usec.name);
+		var utext = secCue(usec.name);
 		if (precountBars >= 2 && !(under.passes >= 1)) {
 			var uck = countKey(under.song);
 			if (uck && cueMap[uck]) return { cueAt: under.b - 0.02, B: under.b, text: "1", natural: false, now: false, song: under.song, wrap: 1, idxKey: uck, key: "ucount|" + under.at };
@@ -3016,7 +3026,7 @@ function computePlan() {
 	}
 	if (!target) return null;
 	var cueAt = now ? t : Math.max(sec.start, B - (cueStyle ? 1 : cueBars) * bl);
-	var text = cleanCue(target.name);
+	var text = secCue(target.name);
 	// going into another song (the next part of a medley, a jump to another song's
 	// section, the next song in the setlist): its name first, two bars before the
 	// section's cue, so the band knows where they are going
@@ -3332,8 +3342,8 @@ function routeName(api) {
 // Ext. Out channels are only listed while a track uses Ext. Out, so SP Tail
 // (silent between songs) is switched there for a moment to read them.
 function routeopts() {
-	var probe = tailTrackId || 0;
 	var sample = 0, ids = trackIds();
+	var probe = tailPresent() && ids.indexOf(tailTrackId) >= 0 ? tailTrackId : 0;
 	for (var i = 0; i < ids.length && !sample; i++) {
 		if (ids[i] == ownTrackId || ids[i] == clickTrackId || ids[i] == tailTrackId) continue;
 		trackApi.id = ids[i];
@@ -4709,7 +4719,7 @@ function exportStart(o) {
 			mk.scB = sc;
 			// the cue of the block that starts here, said as SetPilot says it live: its bars before, never before the block before it
 			if (guide && pc.head && p > 0) {
-				var ctext = cleanCue(pc.name), cfile = cuePathFor(ctext, s);
+				var ctext = secCue(pc.name), cfile = cuePathFor(ctext, s);
 				if (cfile) cueSteps.push({ type: "xpcue", file: cfile, pos: Math.max(prevHead, Q - lead * sbl * prevSc), name: ctext });
 				else if (ctext) noCue[ctext] = 1;
 			}

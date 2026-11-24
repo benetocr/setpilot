@@ -444,6 +444,14 @@ input[type="range"] { accent-color: var(--live); width: 100%; }
 .setup .mark { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; }
 .setup .ok .mark { background: color-mix(in oklab, var(--live) 18%, transparent); color: var(--live); }
 .setup .missing .mark { background: color-mix(in oklab, var(--queued) 18%, transparent); color: var(--queued); }
+.setup .bad .mark { background: color-mix(in oklab, var(--danger, #e5484d) 18%, transparent); color: var(--danger, #e5484d); }
+.setup .unknown .mark { background: color-mix(in oklab, var(--dim) 18%, transparent); color: var(--dim); }
+.setup .fix { margin-top: 6px; }
+.set-sub { margin: 14px 0 8px; font-size: 13px; font-weight: 600; color: var(--dim); }
+.set-sub:first-of-type { margin-top: 4px; }
+#btnHealth { margin-top: 8px; }
+#btnSettings { position: relative; }
+#btnSettings.alert::after { content: ""; position: absolute; top: 9px; right: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger, #e5484d); }
 .instr-list { display: grid; gap: 6px; max-height: 320px; overflow-y: auto; }
 .instr-row { display: grid; grid-template-columns: 1fr minmax(130px, 54%); gap: 10px; align-items: center; font-size: 14px; }
 .instr-row span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

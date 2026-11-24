@@ -175,6 +175,39 @@ function startHost({ log: logOut = console.log } = {}) {
 	}
 	const recal = setInterval(() => { if (link.state === "connected") calibrate(); }, 60000);
 
+	// ---------------------------------------------------------------- system check
+	// what SetPilot needs from this computer, each with what to do when it's missing
+	const prepareSet = () => new Promise(resolve => { const id = ++prepReq; prepWait.set(id, r => { log("prepare set:", r.ok ? (r.done.join(", ") || "nothing to do") : r.err); resolve(r); }); worker.postMessage({ prepareSet: id }); });
+	maxApi.prepareSet = prepareSet;
+	maxApi.health = () => {
+		const out = [];
+		const connected = status.live === "connected";
+		out.push({ id: "live", level: "fail", ok: connected, detail: connected ? ((status.liveInfo && status.liveInfo.live) || "") : status.live });
+		let surf = { selected: null };
+		try { surf = require("../installer/setup").surfaceState(); } catch (e) { }
+		const steps = ((status.setup && status.setup.steps) || []).map(x => x.id);
+		if (steps.includes("no-live")) out.push({ id: "nolive", level: "fail", ok: false });
+		if (steps.includes("install-failed") || steps.includes("plugin-failed")) out.push({ id: "install", level: "fail", ok: false, detail: (status.setup.steps.find(x => /failed/.test(x.id)) || {}).text });
+		// Live talks to the script: it is chosen, whatever the log says
+		out.push({ id: "surface", level: "fail", ok: connected || surf.selected === true });
+		if ((connected || surf.selected) && surf.input != null) out.push({ id: "midi", level: "warn", ok: surf.input === "SetPilot Bridge", detail: surf.input || "None" });
+		const roles = status.plugins || {}, inSet = status.setRoles || {};
+		const ap = status.autoPrepared;
+		const notListed = !!(ap && !ap.ok && /not in Live's plug-in list/i.test(ap.err || ""));
+		const anyPlugin = Object.keys(roles).length > 0 || ["cues", "click", "tail"].some(r => inSet[r]);
+		out.push({ id: "plugin", level: "fail", ok: anyPlugin ? true : notListed ? false : null });
+		if (connected) {
+			const miss = ["cues", "click", "tail"].filter(r => !inSet[r] && !roles[r]);
+			out.push({ id: "tracks", level: "fail", ok: notListed ? false : miss.length === 0, detail: miss.join(", ") });
+		}
+		let trusted = null;
+		if (process.platform === "darwin") {
+			try { const { systemPreferences } = require("electron"); if (systemPreferences && systemPreferences.isTrustedAccessibilityClient) trusted = systemPreferences.isTrustedAccessibilityClient(false); } catch (e) { }
+		}
+		if (process.platform === "darwin") out.push({ id: "access", level: "warn", ok: trusted });
+		return out;
+	};
+
 	// ---------------------------------------------------------------- dashboard
 	require(path.join(__dirname, "..", "core", "setpilot_server.js"));
 	let ann = null;
@@ -191,7 +224,7 @@ function startHost({ log: logOut = console.log } = {}) {
 		link, worker, status, log, dataDir: DATA,
 		qrSvg: () => (ann ? ann.qrSvg() : Promise.resolve("")),
 		// add SetPilot Audio tracks to the open set
-		prepareSet: () => new Promise(resolve => { const id = ++prepReq; prepWait.set(id, r => { log("prepare set:", r.ok ? (r.done.join(", ") || "nothing to do") : r.err); resolve(r); }); worker.postMessage({ prepareSet: id }); }),
+		prepareSet,
 		// put back what the engine changed in the set (muted Guide, faders
 		// mid-fade...), give Live a moment to apply it, then close
 		async stop() {

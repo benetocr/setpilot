@@ -973,6 +973,16 @@ test("hold between songs: the next song's first bar goes round with click and pa
 	assert.ok(t.song.audio.played.some(x => t.song.audio.preload[x[0]] === "/sim/intro.wav"), "Intro is named");
 });
 
+test("markers like Count Off and Start are never announced", () => {
+	const cues = DEMO_CUES.map(c => c.slice());
+	cues[1] = ["Count Off", 0];
+	const t = setup({ cues });
+	t.run(300);
+	const texts = t.eng.dicts.setpilot_struct.cueTexts;
+	assert.ok(!texts.some(k => /Count Off/.test(k)), "not asked for: " + texts.join(", "));
+	assert.ok(texts.some(k => /Coro/.test(k)), "the parts still are");
+});
+
 test("two-bar entry: from a section, a spoken count on the first bar, the section's name on the second, then the band", () => {
 	const t = setup({ entry2: true });
 	const texts = t.eng.dicts.setpilot_struct.cueTexts;
